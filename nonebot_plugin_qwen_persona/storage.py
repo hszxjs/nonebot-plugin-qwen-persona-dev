@@ -146,6 +146,27 @@ class PersonaStore:
                 """
             )
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inference_events (
+                    event_id TEXT PRIMARY KEY,
+                    created_at REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    trigger_reason TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    adapter TEXT NOT NULL,
+                    latency_seconds REAL,
+                    tps REAL,
+                    media_count INTEGER NOT NULL DEFAULT 0,
+                    response_chars INTEGER NOT NULL DEFAULT 0,
+                    error_summary TEXT NOT NULL,
+                    input_preview TEXT NOT NULL,
+                    output_preview TEXT NOT NULL,
+                    group_id TEXT,
+                    user_id TEXT
+                )
+                """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_samples_group_time "
                 "ON chat_samples(group_id, created_at)"
             )
@@ -165,6 +186,196 @@ class PersonaStore:
                 "CREATE INDEX IF NOT EXISTS idx_media_assets_source_time "
                 "ON media_assets(source, created_at)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_inference_events_time "
+                "ON inference_events(created_at DESC)"
+            )
+
+    async def record_inference_event(
+        self,
+        *,
+        event_id: str,
+        status: str,
+        trigger_reason: str,
+        model: str,
+        adapter: str = "",
+        latency_seconds: float | None = None,
+        tps: float | None = None,
+        media_count: int = 0,
+        response_chars: int = 0,
+        error_summary: str = "",
+        input_text: str = "",
+        output_text: str = "",
+        group_id: str | None = None,
+        user_id: str | None = None,
+        created_at: float | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._record_inference_event_sync,
+            event_id=event_id,
+            status=status,
+            trigger_reason=trigger_reason,
+            model=model,
+            adapter=adapter,
+            latency_seconds=latency_seconds,
+            tps=tps,
+            media_count=media_count,
+            response_chars=response_chars,
+            error_summary=error_summary,
+            input_text=input_text,
+            output_text=output_text,
+            group_id=group_id,
+            user_id=user_id,
+            created_at=created_at,
+        )
+
+    def _record_inference_event_sync(
+        self,
+        *,
+        event_id: str,
+        status: str,
+        trigger_reason: str,
+        model: str,
+        adapter: str = "",
+        latency_seconds: float | None = None,
+        tps: float | None = None,
+        media_count: int = 0,
+        response_chars: int = 0,
+        error_summary: str = "",
+        input_text: str = "",
+        output_text: str = "",
+        group_id: str | None = None,
+        user_id: str | None = None,
+        created_at: float | None = None,
+    ) -> dict[str, Any]:
+        self._init_sync()
+        timestamp = float(created_at if created_at is not None else time.time())
+        item = {
+            "event_id": str(event_id or f"inference-{timestamp:.6f}"),
+            "created_at": timestamp,
+            "status": str(status or "unknown"),
+            "trigger_reason": str(trigger_reason or "unknown"),
+            "model": str(model or ""),
+            "adapter": str(adapter or ""),
+            "latency_seconds": None if latency_seconds is None else float(latency_seconds),
+            "tps": None if tps is None else float(tps),
+            "media_count": max(0, int(media_count or 0)),
+            "response_chars": max(0, int(response_chars or 0)),
+            "error_summary": self._preview_text(error_summary, limit=240),
+            "input_preview": self._preview_text(input_text, limit=240),
+            "output_preview": self._preview_text(output_text, limit=240),
+            "group_id": None if group_id is None else str(group_id),
+            "user_id": None if user_id is None else str(user_id),
+        }
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO inference_events (
+                    event_id, created_at, status, trigger_reason, model, adapter,
+                    latency_seconds, tps, media_count, response_chars, error_summary,
+                    input_preview, output_preview, group_id, user_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item["event_id"],
+                    item["created_at"],
+                    item["status"],
+                    item["trigger_reason"],
+                    item["model"],
+                    item["adapter"],
+                    item["latency_seconds"],
+                    item["tps"],
+                    item["media_count"],
+                    item["response_chars"],
+                    item["error_summary"],
+                    item["input_preview"],
+                    item["output_preview"],
+                    item["group_id"],
+                    item["user_id"],
+                ),
+            )
+            conn.execute(
+                """
+                DELETE FROM inference_events
+                WHERE event_id NOT IN (
+                    SELECT event_id
+                    FROM inference_events
+                    ORDER BY created_at DESC
+                    LIMIT 1000
+                )
+                """
+            )
+        return item
+
+    async def list_inference_events(
+        self,
+        *,
+        limit: int = 300,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._list_inference_events_sync,
+            limit=limit,
+            offset=offset,
+        )
+
+    def _list_inference_events_sync(
+        self,
+        *,
+        limit: int = 300,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        self._init_sync()
+        limit = max(1, min(int(limit or 300), 300))
+        offset = max(0, int(offset or 0))
+        with self._connection() as conn:
+            total = int(conn.execute("SELECT COUNT(*) FROM inference_events").fetchone()[0])
+            rows = conn.execute(
+                """
+                SELECT event_id, created_at, status, trigger_reason, model, adapter,
+                       latency_seconds, tps, media_count, response_chars, error_summary,
+                       input_preview, output_preview, group_id, user_id
+                FROM inference_events
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        return {
+            "items": [self._inference_event_row_payload(row) for row in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @staticmethod
+    def _preview_text(value: str, *, limit: int = 240) -> str:
+        text = " ".join(str(value or "").split())
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)] + "…"
+
+    @staticmethod
+    def _inference_event_row_payload(row: sqlite3.Row) -> dict[str, Any]:
+        created_at = float(row["created_at"])
+        return {
+            "event_id": row["event_id"],
+            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created_at)),
+            "created_at": created_at,
+            "status": row["status"],
+            "trigger_reason": row["trigger_reason"],
+            "model": row["model"],
+            "adapter": row["adapter"],
+            "latency_seconds": row["latency_seconds"],
+            "tps": row["tps"],
+            "media_count": int(row["media_count"] or 0),
+            "response_chars": int(row["response_chars"] or 0),
+            "error_summary": row["error_summary"],
+            "input_preview": row["input_preview"],
+            "output_preview": row["output_preview"],
+            "group_id": row["group_id"],
+            "user_id": row["user_id"],
+        }
 
     async def cleanup_empty_chat_artifacts(self) -> dict[str, int]:
         return await asyncio.to_thread(self._cleanup_empty_chat_artifacts_sync)

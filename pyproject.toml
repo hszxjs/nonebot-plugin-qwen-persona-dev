@@ -23,6 +23,12 @@ dev = ["nb-cli>=1.5.0"]
 [tool.setuptools]
 packages = ["nonebot_plugin_qwen_persona"]
 
+[tool.setuptools.package-data]
+nonebot_plugin_qwen_persona = [
+    "webui_static/index.html",
+    "webui_static/assets/*",
+]
+
 [tool.nonebot]
 plugin_dirs = []
 builtin_plugins = []

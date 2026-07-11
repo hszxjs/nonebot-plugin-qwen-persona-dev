@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import random
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,7 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
-from .admin_web import AdminWebServer
+from .admin_server import AdminWebServer
 from .command_discovery import discover_picmenu_command_regexes
 from .config import QwenPersonaConfig, load_plugin_config, normalize_matcher_priorities
 from .filters import (
@@ -28,6 +29,7 @@ from .filters import (
     should_random_reply,
     should_use_sticker_reply,
 )
+from .inference_events import record_inference_event
 from .media import (
     context_text_from_sample,
     filter_training_text_sticker_tokens,
@@ -682,7 +684,6 @@ async def _startup() -> None:
     except Exception as exc:
         logger.warning(f"qwen persona sticker dedupe skipped: {exc!r}")
     try:
-        admin_web.set_event_loop(asyncio.get_running_loop())
         admin_web.start()
     except Exception as exc:
         logger.exception(f"qwen persona admin web failed to start: {exc!r}")
@@ -858,11 +859,46 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         sticker_reply_allowed=sticker_reply_allowed,
         incoming_has_sticker=bool(incoming_sticker_keys),
     )
+    inference_started = time.perf_counter()
     try:
         raw_reply = await client.chat(model_messages, media_parts=media_parts)
     except Exception as exc:
+        await record_inference_event(
+            store=store,
+            ids=ids,
+            trigger_reason="auto_reply",
+            model=plugin_config.qwen_persona_mlx_model,
+            adapter=plugin_config.qwen_persona_mlx_adapter_path,
+            started_at=inference_started,
+            finished_at=time.perf_counter(),
+            input_text=reply_input_text,
+            output_text="",
+            media_count=len(media_parts),
+            status="failed",
+            error_summary=f"{type(exc).__name__}: {exc}",
+            tps=None,
+        )
         logger.warning(f"qwen persona chat failed: {exc!r}")
         return
+
+    metrics = client.metrics_snapshot() if hasattr(client, "metrics_snapshot") else {"last": None}
+    last_metric = metrics.get("last") if isinstance(metrics, dict) else None
+    tps = last_metric.get("tps") if isinstance(last_metric, dict) else None
+    await record_inference_event(
+        store=store,
+        ids=ids,
+        trigger_reason="auto_reply",
+        model=plugin_config.qwen_persona_mlx_model,
+        adapter=plugin_config.qwen_persona_mlx_adapter_path,
+        started_at=inference_started,
+        finished_at=time.perf_counter(),
+        input_text=reply_input_text,
+        output_text=raw_reply,
+        media_count=len(media_parts),
+        status="success",
+        error_summary="",
+        tps=tps,
+    )
 
     raw_reply = sanitize_model_reply_media_text(raw_reply)
     reply_text, sticker_keys = parse_sticker_tokens(raw_reply)
