@@ -1,0 +1,1622 @@
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import sqlite3
+import time
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Iterable, Iterator
+
+from .filters import is_command_like, is_training_noise, normalize_text
+from .media import context_text_from_sample
+from .sticker import (
+    build_training_text,
+    is_image_sticker_data,
+    is_transient_image_sticker_data,
+    meaningful_protocol_summary,
+    parse_sticker_tokens,
+    sticker_to_record,
+)
+
+
+class PersonaStore:
+    def __init__(self, data_dir: Path) -> None:
+        self.data_dir = data_dir
+        self.db_path = data_dir / "persona.sqlite3"
+
+    async def init(self) -> None:
+        await asyncio.to_thread(self._init_sync)
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        conn = self._connect()
+        try:
+            yield conn
+        except Exception:
+            conn.rollback()
+            raise
+        else:
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _init_sync(self) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        with self._connection() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_samples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    platform TEXT,
+                    user_id TEXT,
+                    group_id TEXT,
+                    message_id TEXT,
+                    plain_text TEXT NOT NULL,
+                    training_text TEXT NOT NULL,
+                    raw_segments TEXT NOT NULL,
+                    sticker_keys TEXT NOT NULL,
+                    learn_reason TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS stickers (
+                    key TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    summary TEXT,
+                    uri TEXT,
+                    data_json TEXT NOT NULL,
+                    group_id TEXT,
+                    user_id TEXT,
+                    first_seen REAL NOT NULL,
+                    last_seen REAL NOT NULL,
+                    count INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS training_runs (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    started_at REAL NOT NULL,
+                    finished_at REAL,
+                    dataset_path TEXT,
+                    output_dir TEXT,
+                    sample_count INTEGER NOT NULL DEFAULT 0,
+                    log TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_patterns (
+                    group_id TEXT NOT NULL,
+                    trigger_signature TEXT NOT NULL,
+                    trigger_text TEXT NOT NULL,
+                    response_signature TEXT NOT NULL,
+                    response_text TEXT NOT NULL,
+                    response_sticker_keys TEXT NOT NULL,
+                    first_seen REAL NOT NULL,
+                    last_seen REAL NOT NULL,
+                    count INTEGER NOT NULL,
+                    PRIMARY KEY (group_id, trigger_signature, response_signature)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS external_corpus_samples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    UNIQUE(source, source_id)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chat_samples_group_time "
+                "ON chat_samples(group_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_stickers_group_count "
+                "ON stickers(group_id, count)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversation_patterns_lookup "
+                "ON conversation_patterns(group_id, trigger_signature, count)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_external_corpus_source_time "
+                "ON external_corpus_samples(source, created_at)"
+            )
+
+    async def cleanup_empty_chat_artifacts(self) -> dict[str, int]:
+        return await asyncio.to_thread(self._cleanup_empty_chat_artifacts_sync)
+
+    def _cleanup_empty_chat_artifacts_sync(self) -> dict[str, int]:
+        self._init_sync()
+        with self._connection() as conn:
+            sample_cursor = conn.execute(
+                """
+                DELETE FROM chat_samples
+                WHERE trim(coalesce(plain_text, '')) = ''
+                  AND trim(coalesce(training_text, '')) = ''
+                  AND trim(coalesce(sticker_keys, '[]')) IN ('', '[]')
+                """
+            )
+            pattern_cursor = conn.execute(
+                """
+                DELETE FROM conversation_patterns
+                WHERE trim(coalesce(response_text, '')) = ''
+                  AND trim(coalesce(response_sticker_keys, '[]')) IN ('', '[]')
+                """
+            )
+        return {
+            "samples_deleted": max(0, sample_cursor.rowcount),
+            "patterns_deleted": max(0, pattern_cursor.rowcount),
+        }
+
+    async def cleanup_training_noise(
+        self,
+        *,
+        command_prefixes: Iterable[str] = (),
+        command_regexes: Iterable[str] = (),
+    ) -> dict[str, int]:
+        return await asyncio.to_thread(
+            self._cleanup_training_noise_sync,
+            command_prefixes=command_prefixes,
+            command_regexes=command_regexes,
+        )
+
+    def _cleanup_training_noise_sync(
+        self,
+        *,
+        command_prefixes: Iterable[str] = (),
+        command_regexes: Iterable[str] = (),
+    ) -> dict[str, int]:
+        self._init_sync()
+        with self._connection() as conn:
+            sample_rows = conn.execute(
+                "SELECT id, training_text FROM chat_samples WHERE training_text != ''"
+            ).fetchall()
+            sample_ids = [
+                int(row["id"])
+                for row in sample_rows
+                if self._is_training_noise_text(
+                    str(row["training_text"] or ""),
+                    command_prefixes=command_prefixes,
+                    command_regexes=command_regexes,
+                )
+            ]
+            if sample_ids:
+                placeholders = ",".join("?" for _ in sample_ids)
+                conn.execute(
+                    f"DELETE FROM chat_samples WHERE id IN ({placeholders})",
+                    sample_ids,
+                )
+
+            pattern_rows = conn.execute(
+                """
+                SELECT rowid, trigger_text, response_text
+                FROM conversation_patterns
+                """
+            ).fetchall()
+            pattern_ids = [
+                int(row["rowid"])
+                for row in pattern_rows
+                if self._is_training_noise_text(
+                    str(row["trigger_text"] or ""),
+                    command_prefixes=command_prefixes,
+                    command_regexes=command_regexes,
+                )
+                or self._is_training_noise_text(
+                    str(row["response_text"] or ""),
+                    command_prefixes=command_prefixes,
+                    command_regexes=command_regexes,
+                )
+            ]
+            if pattern_ids:
+                placeholders = ",".join("?" for _ in pattern_ids)
+                conn.execute(
+                    f"DELETE FROM conversation_patterns WHERE rowid IN ({placeholders})",
+                    pattern_ids,
+                )
+        return {
+            "samples_deleted": len(sample_ids),
+            "patterns_deleted": len(pattern_ids),
+        }
+
+    async def record_sample(
+        self,
+        *,
+        platform: str | None,
+        user_id: str | None,
+        group_id: str | None,
+        message_id: str | None,
+        plain_text: str,
+        training_text: str,
+        raw_segments: list[dict[str, Any]],
+        stickers: list[dict[str, Any]],
+        learn_reason: str,
+    ) -> None:
+        await asyncio.to_thread(
+            self._record_sample_sync,
+            platform,
+            user_id,
+            group_id,
+            message_id,
+            plain_text,
+            training_text,
+            raw_segments,
+            stickers,
+            learn_reason,
+        )
+
+    async def import_external_corpus_samples(
+        self,
+        *,
+        source: str,
+        records: Iterable[dict[str, Any]],
+        min_chars: int,
+        max_chars: int,
+        command_prefixes: Iterable[str] = (),
+        command_regexes: Iterable[str] = (),
+    ) -> dict[str, int]:
+        return await asyncio.to_thread(
+            self._import_external_corpus_samples_sync,
+            source=source,
+            records=records,
+            min_chars=min_chars,
+            max_chars=max_chars,
+            command_prefixes=command_prefixes,
+            command_regexes=command_regexes,
+        )
+
+    def _import_external_corpus_samples_sync(
+        self,
+        *,
+        source: str,
+        records: Iterable[dict[str, Any]],
+        min_chars: int,
+        max_chars: int,
+        command_prefixes: Iterable[str] = (),
+        command_regexes: Iterable[str] = (),
+    ) -> dict[str, int]:
+        self._init_sync()
+        source = normalize_text(source) or "external"
+        inserted = 0
+        skipped = 0
+        duplicates = 0
+        with self._connection() as conn:
+            for record in records:
+                text = normalize_text(str(record.get("text") or ""))
+                if (
+                    len(text) < max(1, int(min_chars))
+                    or len(text) > max(1, int(max_chars))
+                    or self._is_training_noise_text(
+                        text,
+                        command_prefixes=command_prefixes,
+                        command_regexes=command_regexes,
+                    )
+                ):
+                    skipped += 1
+                    continue
+
+                source_id = normalize_text(str(record.get("source_id") or ""))
+                if not source_id:
+                    source_id = hashlib.sha256(f"{source}\0{text}".encode("utf-8")).hexdigest()
+                metadata = record.get("metadata")
+                metadata_json = json.dumps(
+                    metadata if isinstance(metadata, dict) else {},
+                    ensure_ascii=False,
+                    default=str,
+                )
+                created_at = record.get("created_at")
+                try:
+                    created_at_value = float(created_at)
+                except (TypeError, ValueError):
+                    created_at_value = time.time()
+                cursor = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO external_corpus_samples (
+                        source, source_id, text, metadata_json, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (source, source_id, text, metadata_json, created_at_value),
+                )
+                if cursor.rowcount:
+                    inserted += 1
+                else:
+                    duplicates += 1
+        return {"inserted": inserted, "skipped": skipped, "duplicates": duplicates}
+
+    def _record_sample_sync(
+        self,
+        platform: str | None,
+        user_id: str | None,
+        group_id: str | None,
+        message_id: str | None,
+        plain_text: str,
+        training_text: str,
+        raw_segments: list[dict[str, Any]],
+        stickers: list[dict[str, Any]],
+        learn_reason: str,
+    ) -> None:
+        self._init_sync()
+        now = time.time()
+        sticker_keys = [item["key"] for item in stickers]
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_samples (
+                    created_at, platform, user_id, group_id, message_id,
+                    plain_text, training_text, raw_segments, sticker_keys, learn_reason
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    now,
+                    platform,
+                    user_id,
+                    group_id,
+                    message_id,
+                    plain_text,
+                    training_text,
+                    json.dumps(raw_segments, ensure_ascii=False, default=str),
+                    json.dumps(sticker_keys, ensure_ascii=False),
+                    learn_reason,
+                ),
+            )
+            for sticker in stickers:
+                conn.execute(
+                    """
+                    INSERT INTO stickers (
+                        key, type, summary, uri, data_json, group_id, user_id,
+                        first_seen, last_seen, count
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    ON CONFLICT(key) DO UPDATE SET
+                        summary=excluded.summary,
+                        uri=CASE
+                            WHEN COALESCE(stickers.uri, '') LIKE 'file://%' THEN stickers.uri
+                            WHEN COALESCE(excluded.uri, '') != '' THEN excluded.uri
+                            ELSE stickers.uri
+                        END,
+                        data_json=excluded.data_json,
+                        group_id=excluded.group_id,
+                        user_id=excluded.user_id,
+                        last_seen=excluded.last_seen,
+                        count=stickers.count + 1
+                    """,
+                    (
+                        sticker["key"],
+                        sticker["type"],
+                        sticker.get("summary"),
+                        sticker.get("uri"),
+                        json.dumps(sticker.get("data") or {}, ensure_ascii=False, default=str),
+                        group_id,
+                        user_id,
+                        now,
+                        now,
+                    ),
+                )
+
+    async def record_conversation_pattern(
+        self,
+        *,
+        group_id: str,
+        trigger_signature: str,
+        trigger_text: str,
+        response_signature: str,
+        response_text: str,
+        response_sticker_keys: list[str],
+    ) -> None:
+        await asyncio.to_thread(
+            self._record_conversation_pattern_sync,
+            group_id=group_id,
+            trigger_signature=trigger_signature,
+            trigger_text=trigger_text,
+            response_signature=response_signature,
+            response_text=response_text,
+            response_sticker_keys=response_sticker_keys,
+        )
+
+    def _record_conversation_pattern_sync(
+        self,
+        *,
+        group_id: str,
+        trigger_signature: str,
+        trigger_text: str,
+        response_signature: str,
+        response_text: str,
+        response_sticker_keys: list[str],
+    ) -> None:
+        self._init_sync()
+        now = time.time()
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO conversation_patterns (
+                    group_id, trigger_signature, trigger_text,
+                    response_signature, response_text, response_sticker_keys,
+                    first_seen, last_seen, count
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(group_id, trigger_signature, response_signature)
+                DO UPDATE SET
+                    trigger_text=excluded.trigger_text,
+                    response_text=excluded.response_text,
+                    response_sticker_keys=excluded.response_sticker_keys,
+                    last_seen=excluded.last_seen,
+                    count=conversation_patterns.count + 1
+                """,
+                (
+                    group_id,
+                    trigger_signature,
+                    trigger_text,
+                    response_signature,
+                    response_text,
+                    json.dumps(response_sticker_keys, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+
+    async def get_conversation_pattern(
+        self,
+        *,
+        group_id: str,
+        trigger_signature: str,
+        min_count: int,
+    ) -> dict[str, Any] | None:
+        return await asyncio.to_thread(
+            self._get_conversation_pattern_sync,
+            group_id=group_id,
+            trigger_signature=trigger_signature,
+            min_count=min_count,
+        )
+
+    def _get_conversation_pattern_sync(
+        self,
+        *,
+        group_id: str,
+        trigger_signature: str,
+        min_count: int,
+    ) -> dict[str, Any] | None:
+        self._init_sync()
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT trigger_text, response_signature, response_text,
+                       response_sticker_keys, count, last_seen
+                FROM conversation_patterns
+                WHERE group_id = ?
+                  AND trigger_signature = ?
+                  AND count >= ?
+                ORDER BY count DESC, last_seen DESC
+                LIMIT 1
+                """,
+                (group_id, trigger_signature, max(1, int(min_count))),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["response_sticker_keys"] = self._json_list(
+            item.get("response_sticker_keys")
+        )
+        return item
+
+    async def recent_samples(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._recent_samples_sync, group_id, limit)
+
+    def _recent_samples_sync(self, group_id: str | None, limit: int) -> list[dict[str, Any]]:
+        self._init_sync()
+        where = "WHERE group_id = ?" if group_id else ""
+        params: tuple[Any, ...] = (group_id, limit) if group_id else (limit,)
+        with self._connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT user_id, group_id, plain_text, training_text, sticker_keys, created_at
+                FROM chat_samples
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    async def top_stickers(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(self._top_stickers_sync, group_id, limit)
+
+    def _top_stickers_sync(self, group_id: str | None, limit: int) -> list[dict[str, Any]]:
+        self._init_sync()
+        where = "WHERE group_id = ?" if group_id else ""
+        params: tuple[Any, ...] = (group_id, limit) if group_id else (limit,)
+        with self._connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT key, type, summary, uri, data_json, count, last_seen
+                FROM stickers
+                {where}
+                ORDER BY count DESC, last_seen DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["data"] = json.loads(item.pop("data_json") or "{}")
+            result.append(item)
+        return result
+
+    async def get_sticker(self, key: str) -> dict[str, Any] | None:
+        return await asyncio.to_thread(self._get_sticker_sync, key)
+
+    def _get_sticker_sync(self, key: str) -> dict[str, Any] | None:
+        self._init_sync()
+        with self._connection() as conn:
+            row = conn.execute(
+                """
+                SELECT key, type, summary, uri, data_json, count, last_seen
+                FROM stickers
+                WHERE key = ?
+                """,
+                (key,),
+            ).fetchone()
+        if not row:
+            return None
+        item = dict(row)
+        item["data"] = json.loads(item.pop("data_json") or "{}")
+        return item
+
+    async def list_stickers(
+        self,
+        *,
+        limit: int = 80,
+        offset: int = 0,
+        query: str = "",
+        segment_type: str = "",
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._list_stickers_sync,
+            limit,
+            offset,
+            query,
+            segment_type,
+        )
+
+    def _list_stickers_sync(
+        self,
+        limit: int = 80,
+        offset: int = 0,
+        query: str = "",
+        segment_type: str = "",
+    ) -> dict[str, Any]:
+        self._init_sync()
+        limit = max(1, min(int(limit or 80), 200))
+        offset = max(0, int(offset or 0))
+        query = str(query or "").strip()
+        segment_type = str(segment_type or "").strip()
+
+        where_parts: list[str] = []
+        params: list[Any] = []
+        if segment_type:
+            where_parts.append("type = ?")
+            params.append(segment_type)
+        if query:
+            like = f"%{query}%"
+            where_parts.append(
+                """
+                (
+                    key LIKE ?
+                    OR type LIKE ?
+                    OR COALESCE(summary, '') LIKE ?
+                    OR COALESCE(uri, '') LIKE ?
+                    OR COALESCE(group_id, '') LIKE ?
+                    OR COALESCE(user_id, '') LIKE ?
+                    OR data_json LIKE ?
+                )
+                """
+            )
+            params.extend([like, like, like, like, like, like, like])
+        where = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+
+        with self._connection() as conn:
+            total = int(
+                conn.execute(f"SELECT COUNT(*) FROM stickers {where}", params).fetchone()[0]
+            )
+            rows = conn.execute(
+                f"""
+                SELECT key, type, summary, uri, data_json, group_id, user_id,
+                       first_seen, last_seen, count
+                FROM stickers
+                {where}
+                ORDER BY last_seen DESC, count DESC, key ASC
+                LIMIT ? OFFSET ?
+                """,
+                (*params, limit, offset),
+            ).fetchall()
+            type_rows = conn.execute(
+                """
+                SELECT type, COUNT(*) AS count
+                FROM stickers
+                GROUP BY type
+                ORDER BY count DESC, type ASC
+                """
+            ).fetchall()
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["data"] = self._json_object(item.pop("data_json"))
+            item["count"] = int(item.get("count") or 0)
+            if item.get("first_seen") is not None:
+                item["first_seen"] = float(item["first_seen"])
+            if item.get("last_seen") is not None:
+                item["last_seen"] = float(item["last_seen"])
+            items.append(item)
+
+        return {
+            "items": items,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "query": query,
+            "type": segment_type,
+            "type_counts": {str(row["type"]): int(row["count"] or 0) for row in type_rows},
+        }
+
+    async def delete_stickers(self, keys: list[str]) -> dict[str, int]:
+        return await asyncio.to_thread(self._delete_stickers_sync, keys)
+
+    def _delete_stickers_sync(self, keys: list[str]) -> dict[str, int]:
+        self._init_sync()
+        unique_keys: list[str] = []
+        seen: set[str] = set()
+        for key in keys:
+            value = str(key or "").strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            unique_keys.append(value)
+        if not unique_keys:
+            return {"requested": 0, "deleted": 0}
+        if len(unique_keys) > 500:
+            raise ValueError("too many stickers selected")
+
+        placeholders = ",".join("?" for _ in unique_keys)
+        with self._connection() as conn:
+            cursor = conn.execute(
+                f"DELETE FROM stickers WHERE key IN ({placeholders})",
+                unique_keys,
+            )
+            deleted = cursor.rowcount if cursor.rowcount is not None else 0
+        return {"requested": len(unique_keys), "deleted": int(deleted)}
+
+    async def update_sticker_summary(self, key: str, summary: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self._update_sticker_summary_sync, key, summary)
+
+    def _update_sticker_summary_sync(self, key: str, summary: str) -> dict[str, Any]:
+        self._init_sync()
+        key = str(key or "").strip()
+        if not key:
+            raise ValueError("key is required")
+        summary = " ".join(str(summary or "").split())[:200]
+
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT data_json FROM stickers WHERE key = ?",
+                (key,),
+            ).fetchone()
+            if not row:
+                return {"updated": 0, "item": None}
+            data = self._json_object(row["data_json"])
+            data["summary"] = summary
+            cursor = conn.execute(
+                """
+                UPDATE stickers
+                SET summary = ?, data_json = ?
+                WHERE key = ?
+                """,
+                (summary, json.dumps(data, ensure_ascii=False), key),
+            )
+            updated = int(cursor.rowcount or 0)
+
+        return {"updated": updated, "item": self._get_sticker_sync(key)}
+
+    async def normalize_sticker_summaries_from_protocol(self) -> dict[str, int]:
+        return await asyncio.to_thread(self._normalize_sticker_summaries_from_protocol_sync)
+
+    def _normalize_sticker_summaries_from_protocol_sync(self) -> dict[str, int]:
+        self._init_sync()
+        updated = 0
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT key, summary, data_json FROM stickers"
+            ).fetchall()
+            for row in rows:
+                data = self._json_object(row["data_json"])
+                protocol_summary = meaningful_protocol_summary(data)
+                if not protocol_summary:
+                    continue
+                if str(row["summary"] or "") == protocol_summary:
+                    continue
+                data["summary"] = protocol_summary
+                cursor = conn.execute(
+                    """
+                    UPDATE stickers
+                    SET summary = ?, data_json = ?
+                    WHERE key = ?
+                    """,
+                    (
+                        protocol_summary,
+                        json.dumps(data, ensure_ascii=False),
+                        row["key"],
+                    ),
+                )
+                updated += int(cursor.rowcount or 0)
+        return {"updated": updated}
+
+    async def deduplicate_stickers_by_canonical_key(
+        self,
+        sticker_segment_types: Iterable[str],
+    ) -> dict[str, int]:
+        return await asyncio.to_thread(
+            self._deduplicate_stickers_by_canonical_key_sync,
+            sticker_segment_types,
+        )
+
+    def _deduplicate_stickers_by_canonical_key_sync(
+        self,
+        sticker_segment_types: Iterable[str],
+    ) -> dict[str, int]:
+        self._init_sync()
+        enabled_types = {str(item) for item in sticker_segment_types}
+        merged_stickers = 0
+        rekeyed_stickers = 0
+        rewritten_samples = 0
+        with self._connection() as conn:
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT key, type, summary, uri, data_json, group_id, user_id,
+                           first_seen, last_seen, count
+                    FROM stickers
+                    ORDER BY first_seen ASC
+                    """
+                ).fetchall()
+            ]
+            groups: dict[str, list[dict[str, Any]]] = {}
+            key_map: dict[str, str] = {}
+            for row in rows:
+                data = self._json_object(row.get("data_json"))
+                canonical = sticker_to_record(
+                    {"type": row.get("type"), "data": data},
+                    enabled_types,
+                )
+                if canonical is None:
+                    continue
+                canonical_key = str(canonical["key"])
+                groups.setdefault(canonical_key, []).append(row)
+                old_key = str(row["key"])
+                if old_key != canonical_key:
+                    key_map[old_key] = canonical_key
+
+            for canonical_key, grouped_rows in groups.items():
+                old_keys = [str(row["key"]) for row in grouped_rows]
+                if len(grouped_rows) == 1 and old_keys[0] == canonical_key:
+                    continue
+                preferred = max(
+                    grouped_rows,
+                    key=lambda row: (
+                        str(row.get("uri") or "").startswith("file://"),
+                        bool(str(row.get("summary") or "").strip()),
+                        float(row.get("last_seen") or 0),
+                    ),
+                )
+                summary = str(preferred.get("summary") or "").strip()
+                if not summary:
+                    summary = next(
+                        (
+                            str(row.get("summary") or "").strip()
+                            for row in grouped_rows
+                            if str(row.get("summary") or "").strip()
+                        ),
+                        "",
+                    )
+                uri = str(preferred.get("uri") or "").strip() or None
+                if not uri:
+                    uri = next(
+                        (
+                            str(row.get("uri") or "").strip()
+                            for row in grouped_rows
+                            if str(row.get("uri") or "").strip()
+                        ),
+                        None,
+                    )
+                placeholders = ",".join("?" for _ in old_keys)
+                conn.execute(
+                    f"DELETE FROM stickers WHERE key IN ({placeholders})",
+                    old_keys,
+                )
+                conn.execute(
+                    """
+                    INSERT INTO stickers (
+                        key, type, summary, uri, data_json, group_id, user_id,
+                        first_seen, last_seen, count
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        canonical_key,
+                        preferred["type"],
+                        summary,
+                        uri,
+                        preferred["data_json"],
+                        preferred.get("group_id"),
+                        preferred.get("user_id"),
+                        min(float(row["first_seen"]) for row in grouped_rows),
+                        max(float(row["last_seen"]) for row in grouped_rows),
+                        sum(int(row["count"]) for row in grouped_rows),
+                    ),
+                )
+                merged_stickers += max(0, len(grouped_rows) - 1)
+                rekeyed_stickers += sum(
+                    1 for old_key in old_keys if old_key != canonical_key
+                )
+
+            if key_map:
+                samples = conn.execute(
+                    "SELECT id, training_text, sticker_keys FROM chat_samples"
+                ).fetchall()
+                for row in samples:
+                    current_keys = [
+                        str(key)
+                        for key in self._json_list(row["sticker_keys"])
+                        if str(key).strip()
+                    ]
+                    mapped_keys = list(
+                        dict.fromkeys(key_map.get(key, key) for key in current_keys)
+                    )
+                    training_text = str(row["training_text"] or "")
+                    base_text, embedded_keys = parse_sticker_tokens(training_text)
+                    mapped_embedded_keys = list(
+                        dict.fromkeys(key_map.get(key, key) for key in embedded_keys)
+                    )
+                    next_training_text = training_text
+                    if mapped_embedded_keys != embedded_keys:
+                        next_training_text = build_training_text(
+                            base_text,
+                            mapped_embedded_keys,
+                        )
+                    next_sticker_keys = json.dumps(mapped_keys, ensure_ascii=False)
+                    if (
+                        next_training_text == training_text
+                        and next_sticker_keys == str(row["sticker_keys"] or "[]")
+                    ):
+                        continue
+                    conn.execute(
+                        """
+                        UPDATE chat_samples
+                        SET training_text = ?, sticker_keys = ?
+                        WHERE id = ?
+                        """,
+                        (next_training_text, next_sticker_keys, row["id"]),
+                    )
+                    rewritten_samples += 1
+
+        return {
+            "merged_stickers": merged_stickers,
+            "rekeyed_stickers": rekeyed_stickers,
+            "rewritten_samples": rewritten_samples,
+        }
+
+    async def cleanup_legacy_media_artifacts(self) -> dict[str, int]:
+        return await asyncio.to_thread(self._cleanup_legacy_media_artifacts_sync)
+
+    def _cleanup_legacy_media_artifacts_sync(self) -> dict[str, int]:
+        self._init_sync()
+        deleted_image_stickers = 0
+        updated_samples = 0
+        with self._connection() as conn:
+            invalid_image_keys = {
+                str(row["key"])
+                for row in conn.execute(
+                    "SELECT key, data_json FROM stickers WHERE type = 'image'"
+                ).fetchall()
+                if not is_image_sticker_data(self._json_object(row["data_json"]))
+            }
+            if invalid_image_keys:
+                placeholders = ",".join("?" for _ in invalid_image_keys)
+                cursor = conn.execute(
+                    f"DELETE FROM stickers WHERE key IN ({placeholders})",
+                    list(invalid_image_keys),
+                )
+                deleted_image_stickers = int(cursor.rowcount or 0)
+
+            rows = conn.execute(
+                """
+                SELECT id, plain_text, training_text, sticker_keys
+                FROM chat_samples
+                """
+            ).fetchall()
+            for row in rows:
+                sample = dict(row)
+                training_text = str(sample.get("training_text") or "")
+                has_legacy_media_description = (
+                    "图片：" in training_text
+                    or "表情：" in training_text
+                    or "图：" in training_text
+                )
+                sticker_keys = [
+                    key
+                    for key in self._json_list(sample.get("sticker_keys"))
+                    if str(key).strip() and str(key) not in invalid_image_keys
+                ]
+                if has_legacy_media_description:
+                    sample["sticker_keys"] = json.dumps(sticker_keys, ensure_ascii=False)
+                    safe_text = context_text_from_sample(sample)
+                elif invalid_image_keys:
+                    base_text, _removed_keys = parse_sticker_tokens(training_text)
+                    safe_text = build_training_text(base_text, sticker_keys)
+                else:
+                    continue
+                next_sticker_keys = json.dumps(sticker_keys, ensure_ascii=False)
+                if safe_text == training_text and next_sticker_keys == str(
+                    sample.get("sticker_keys") or "[]"
+                ):
+                    continue
+                conn.execute(
+                    """
+                    UPDATE chat_samples
+                    SET training_text = ?, sticker_keys = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        safe_text,
+                        next_sticker_keys,
+                        sample["id"],
+                    ),
+                )
+                updated_samples += 1
+        return {
+            "deleted_image_stickers": deleted_image_stickers,
+            "updated_samples": updated_samples,
+        }
+
+    async def backfill_stickers_from_raw_segments(
+        self,
+        sticker_segment_types: Iterable[str],
+    ) -> dict[str, int]:
+        return await asyncio.to_thread(
+            self._backfill_stickers_from_raw_segments_sync,
+            sticker_segment_types,
+        )
+
+    def _backfill_stickers_from_raw_segments_sync(
+        self,
+        sticker_segment_types: Iterable[str],
+    ) -> dict[str, int]:
+        self._init_sync()
+        enabled_types = {str(item) for item in sticker_segment_types}
+        samples_updated = 0
+        stickers_upserted = 0
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, created_at, user_id, group_id, plain_text, training_text,
+                       raw_segments, sticker_keys
+                FROM chat_samples
+                WHERE raw_segments LIKE '%"type": "image"%'
+                   OR raw_segments LIKE '%"type": "face"%'
+                   OR raw_segments LIKE '%"type": "mface"%'
+                   OR raw_segments LIKE '%"type": "emoji"%'
+                   OR raw_segments LIKE '%"type": "sticker"%'
+                """
+            ).fetchall()
+            for row in rows:
+                sample = dict(row)
+                try:
+                    raw_segments = json.loads(sample.get("raw_segments") or "[]")
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(raw_segments, list):
+                    continue
+
+                recovered: list[dict[str, Any]] = []
+                seen_recovered: set[str] = set()
+                for segment in raw_segments:
+                    if not isinstance(segment, dict):
+                        continue
+                    if (
+                        str(segment.get("type") or "") == "image"
+                        and is_transient_image_sticker_data(dict(segment.get("data") or {}))
+                    ):
+                        continue
+                    record = sticker_to_record(segment, enabled_types)
+                    if record is None or record["key"] in seen_recovered:
+                        continue
+                    seen_recovered.add(record["key"])
+                    recovered.append(record)
+                if not recovered:
+                    continue
+
+                for sticker in recovered:
+                    conn.execute(
+                        """
+                        INSERT INTO stickers (
+                            key, type, summary, uri, data_json, group_id, user_id,
+                            first_seen, last_seen, count
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                        ON CONFLICT(key) DO UPDATE SET
+                            summary=COALESCE(NULLIF(stickers.summary, ''), excluded.summary),
+                            uri=CASE
+                                WHEN COALESCE(stickers.uri, '') LIKE 'file://%' THEN stickers.uri
+                                WHEN COALESCE(excluded.uri, '') != '' THEN excluded.uri
+                                ELSE stickers.uri
+                            END,
+                            data_json=excluded.data_json,
+                            group_id=COALESCE(stickers.group_id, excluded.group_id),
+                            user_id=COALESCE(stickers.user_id, excluded.user_id),
+                            last_seen=MAX(stickers.last_seen, excluded.last_seen),
+                            count=MAX(stickers.count, 1)
+                        """,
+                        (
+                            sticker["key"],
+                            sticker["type"],
+                            sticker.get("summary"),
+                            sticker.get("uri"),
+                            json.dumps(sticker.get("data") or {}, ensure_ascii=False, default=str),
+                            sample.get("group_id"),
+                            sample.get("user_id"),
+                            float(sample.get("created_at") or time.time()),
+                            float(sample.get("created_at") or time.time()),
+                        ),
+                    )
+                    stickers_upserted += 1
+
+                current_keys = [str(key) for key in self._json_list(sample.get("sticker_keys")) if str(key).strip()]
+                merged_keys: list[str] = []
+                seen_keys: set[str] = set()
+                for key in [*current_keys, *(item["key"] for item in recovered)]:
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+                    merged_keys.append(key)
+
+                training_text = str(sample.get("training_text") or "")
+                base_text, embedded_keys = parse_sticker_tokens(training_text)
+                if not base_text:
+                    base_text = str(sample.get("plain_text") or "").strip()
+                if not base_text:
+                    summaries = [
+                        f"表情：{item.get('summary')}"
+                        for item in recovered
+                        if str(item.get("summary") or "").strip()
+                    ]
+                    base_text = " ".join(summaries)
+                for key in embedded_keys:
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        merged_keys.append(key)
+
+                next_training_text = build_training_text(base_text, merged_keys)
+                next_sticker_keys = json.dumps(merged_keys, ensure_ascii=False)
+                if (
+                    next_training_text != training_text
+                    or next_sticker_keys != str(sample.get("sticker_keys") or "[]")
+                ):
+                    conn.execute(
+                        """
+                        UPDATE chat_samples
+                        SET training_text = ?, sticker_keys = ?
+                        WHERE id = ?
+                        """,
+                        (next_training_text, next_sticker_keys, sample["id"]),
+                    )
+                    samples_updated += 1
+        return {"samples_updated": samples_updated, "stickers_upserted": stickers_upserted}
+
+    @staticmethod
+    def _json_object(raw: Any) -> dict[str, Any]:
+        try:
+            data = json.loads(raw or "{}")
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _json_list(raw: Any) -> list[Any]:
+        try:
+            data = json.loads(raw or "[]")
+        except (TypeError, json.JSONDecodeError):
+            return []
+        return data if isinstance(data, list) else []
+
+    async def export_sft_dataset(
+        self,
+        *,
+        output_path: Path,
+        limit: int,
+        history_window: int,
+        system_prompt: str,
+        command_prefixes: Iterable[str] = (),
+        command_regexes: Iterable[str] = (),
+        external_limit: int = 0,
+    ) -> int:
+        return await asyncio.to_thread(
+            self._export_sft_dataset_sync,
+            output_path,
+            limit,
+            history_window,
+            system_prompt,
+            command_prefixes,
+            command_regexes,
+            external_limit,
+        )
+
+    def _export_sft_dataset_sync(
+        self,
+        output_path: Path,
+        limit: int,
+        history_window: int,
+        system_prompt: str,
+        command_prefixes: Iterable[str] = (),
+        command_regexes: Iterable[str] = (),
+        external_limit: int = 0,
+    ) -> int:
+        self._init_sync()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        dataset_limit = max(int(limit or 0), 0)
+        unlimited_dataset = dataset_limit <= 0
+        with self._connection() as conn:
+            if unlimited_dataset:
+                rows = conn.execute(
+                    """
+                    SELECT id, user_id, group_id, plain_text, training_text, sticker_keys, created_at
+                    FROM chat_samples
+                    WHERE training_text != ''
+                    ORDER BY created_at DESC
+                    """
+                ).fetchall()
+            else:
+                fetch_limit = max(dataset_limit + history_window + 32, dataset_limit)
+                rows = conn.execute(
+                    """
+                    SELECT id, user_id, group_id, plain_text, training_text, sticker_keys, created_at
+                    FROM chat_samples
+                    WHERE training_text != ''
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (fetch_limit,),
+                ).fetchall()
+
+        ordered = [dict(row) for row in reversed(rows)]
+        exported = 0
+        with output_path.open("w", encoding="utf-8", newline="\n") as file:
+            for idx, row in enumerate(ordered):
+                if not unlimited_dataset and exported >= dataset_limit:
+                    break
+                history = ordered[max(0, idx - history_window) : idx]
+                history_lines = []
+                for item in history:
+                    context_text = context_text_from_sample(item)
+                    if context_text and not self._is_training_noise_text(
+                        context_text,
+                        command_prefixes=command_prefixes,
+                        command_regexes=command_regexes,
+                    ):
+                        history_lines.append(f"{item.get('user_id') or 'someone'}: {context_text}")
+                prompt = "\n".join(history_lines) or "群聊刚开始，请自然接一句。"
+                assistant_text = context_text_from_sample(row)
+                if not assistant_text or self._is_training_noise_text(
+                    assistant_text,
+                    command_prefixes=command_prefixes,
+                    command_regexes=command_regexes,
+                ):
+                    continue
+                record = {
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": "下面是群聊上下文，请按这个群的风格自然接话：\n" + prompt,
+                        },
+                        {"role": "assistant", "content": assistant_text},
+                    ],
+                    "metadata": {
+                        "source": "chat_samples",
+                        "sample_id": row["id"],
+                        "group_id": row.get("group_id"),
+                        "user_id": row.get("user_id"),
+                        "created_at": row.get("created_at"),
+                    },
+                }
+                file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                exported += 1
+            external_limit = int(external_limit or 0)
+            external_enabled = external_limit >= 0
+            has_dataset_room = unlimited_dataset or exported < dataset_limit
+            if external_enabled and has_dataset_room:
+                if external_limit > 0:
+                    row_limit = external_limit if unlimited_dataset else min(external_limit, dataset_limit - exported)
+                else:
+                    row_limit = 0 if unlimited_dataset else max(dataset_limit - exported, 0)
+                for row in self._external_corpus_rows(limit=row_limit):
+                    text = normalize_text(str(row.get("text") or ""))
+                    if not text or self._is_training_noise_text(
+                        text,
+                        command_prefixes=command_prefixes,
+                        command_regexes=command_regexes,
+                    ):
+                        continue
+                    metadata = self._json_object(row.get("metadata_json"))
+                    user_prompt = normalize_text(str(metadata.get("user_prompt") or ""))
+                    user_content = (
+                        "下面是外部公开社区语境，请按这种口吻自然接话：\n" + user_prompt
+                        if user_prompt
+                        else "下面是一条公开社区语料，请学习其自然口吻，不要输出来源信息："
+                    )
+                    record = {
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_content},
+                            {"role": "assistant", "content": text},
+                        ],
+                        "metadata": {
+                            "source": row.get("source"),
+                            "source_id": row.get("source_id"),
+                            "external_sample_id": row.get("id"),
+                            "created_at": row.get("created_at"),
+                            "external": True,
+                            "extra": metadata,
+                        },
+                    }
+                    file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                    exported += 1
+                    if not unlimited_dataset and exported >= dataset_limit:
+                        break
+        return exported
+
+    def _external_corpus_rows(self, *, limit: int) -> list[dict[str, Any]]:
+        if limit < 0:
+            return []
+        with self._connection() as conn:
+            if limit == 0:
+                rows = conn.execute(
+                    """
+                    SELECT id, source, source_id, text, metadata_json, created_at
+                    FROM external_corpus_samples
+                    ORDER BY created_at DESC
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, source, source_id, text, metadata_json, created_at
+                    FROM external_corpus_samples
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (int(limit),),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _is_training_noise_text(
+        text: str,
+        *,
+        command_prefixes: Iterable[str] = (),
+        command_regexes: Iterable[str] = (),
+    ) -> bool:
+        return is_training_noise(text) or is_command_like(
+            text,
+            prefixes=command_prefixes,
+            regexes=command_regexes,
+        )
+
+    async def begin_training_run(
+        self,
+        *,
+        run_id: str,
+        reason: str,
+        dataset_path: str,
+        output_dir: str,
+        sample_count: int,
+    ) -> None:
+        await asyncio.to_thread(
+            self._begin_training_run_sync,
+            run_id,
+            reason,
+            dataset_path,
+            output_dir,
+            sample_count,
+        )
+
+    def _begin_training_run_sync(
+        self,
+        run_id: str,
+        reason: str,
+        dataset_path: str,
+        output_dir: str,
+        sample_count: int,
+    ) -> None:
+        self._init_sync()
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO training_runs (
+                    id, status, reason, started_at, dataset_path, output_dir, sample_count, log
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    "running",
+                    reason,
+                    time.time(),
+                    dataset_path,
+                    output_dir,
+                    sample_count,
+                    "",
+                ),
+            )
+
+    async def finish_training_run(self, *, run_id: str, status: str, log: str) -> None:
+        await asyncio.to_thread(self._finish_training_run_sync, run_id, status, log)
+
+    def _finish_training_run_sync(self, run_id: str, status: str, log: str) -> None:
+        self._init_sync()
+        with self._connection() as conn:
+            conn.execute(
+                """
+                UPDATE training_runs
+                SET status = ?, finished_at = ?, log = ?
+                WHERE id = ?
+                """,
+                (status, time.time(), log[-12000:], run_id),
+            )
+
+    async def stats(self) -> dict[str, int]:
+        return await asyncio.to_thread(self._stats_sync)
+
+    def _stats_sync(self) -> dict[str, int]:
+        self._init_sync()
+        with self._connection() as conn:
+            samples = conn.execute("SELECT COUNT(*) FROM chat_samples").fetchone()[0]
+            stickers = conn.execute("SELECT COUNT(*) FROM stickers").fetchone()[0]
+            training_runs = conn.execute("SELECT COUNT(*) FROM training_runs").fetchone()[0]
+        return {
+            "samples": int(samples),
+            "stickers": int(stickers),
+            "training_runs": int(training_runs),
+        }
+
+    async def dashboard_stats(self, *, days: int = 14, group_limit: int = 8) -> dict[str, Any]:
+        return await asyncio.to_thread(self._dashboard_stats_sync, days, group_limit)
+
+    def _dashboard_stats_sync(self, days: int = 14, group_limit: int = 8) -> dict[str, Any]:
+        self._init_sync()
+        days = max(1, min(int(days), 60))
+        group_limit = max(1, min(int(group_limit), 20))
+        now = time.time()
+        start_day = time.localtime(now - (days - 1) * 86400)
+        start_epoch = time.mktime(
+            (
+                start_day.tm_year,
+                start_day.tm_mon,
+                start_day.tm_mday,
+                0,
+                0,
+                0,
+                start_day.tm_wday,
+                start_day.tm_yday,
+                start_day.tm_isdst,
+            )
+        )
+
+        with self._connection() as conn:
+            total_samples = int(conn.execute("SELECT COUNT(*) FROM chat_samples").fetchone()[0])
+            trainable_samples = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM chat_samples WHERE training_text != ''"
+                ).fetchone()[0]
+            )
+            stickers = int(conn.execute("SELECT COUNT(*) FROM stickers").fetchone()[0])
+            external_corpus_samples = int(
+                conn.execute("SELECT COUNT(*) FROM external_corpus_samples").fetchone()[0]
+            )
+            training_runs = int(conn.execute("SELECT COUNT(*) FROM training_runs").fetchone()[0])
+            groups = int(
+                conn.execute(
+                    "SELECT COUNT(DISTINCT group_id) FROM chat_samples WHERE group_id IS NOT NULL"
+                ).fetchone()[0]
+            )
+            users = int(
+                conn.execute(
+                    "SELECT COUNT(DISTINCT user_id) FROM chat_samples WHERE user_id IS NOT NULL"
+                ).fetchone()[0]
+            )
+            samples_with_stickers = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM chat_samples WHERE sticker_keys != '[]'"
+                ).fetchone()[0]
+            )
+            today_start = time.mktime(
+                (
+                    time.localtime(now).tm_year,
+                    time.localtime(now).tm_mon,
+                    time.localtime(now).tm_mday,
+                    0,
+                    0,
+                    0,
+                    time.localtime(now).tm_wday,
+                    time.localtime(now).tm_yday,
+                    time.localtime(now).tm_isdst,
+                )
+            )
+            today_samples = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM chat_samples WHERE created_at >= ?",
+                    (today_start,),
+                ).fetchone()[0]
+            )
+            last_24h_samples = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM chat_samples WHERE created_at >= ?",
+                    (now - 86400,),
+                ).fetchone()[0]
+            )
+            minmax = conn.execute(
+                """
+                SELECT MIN(created_at), MAX(created_at), AVG(LENGTH(training_text))
+                FROM chat_samples
+                """
+            ).fetchone()
+            last_success = conn.execute(
+                """
+                SELECT id, status, reason, started_at, finished_at, sample_count, dataset_path, output_dir
+                FROM training_runs
+                WHERE status = 'success'
+                ORDER BY COALESCE(finished_at, started_at) DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            last_training = conn.execute(
+                """
+                SELECT id, status, reason, started_at, finished_at, sample_count, dataset_path, output_dir
+                FROM training_runs
+                ORDER BY started_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            pending_since = (
+                float(last_success["finished_at"] or last_success["started_at"])
+                if last_success
+                else 0.0
+            )
+            pending_samples = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM chat_samples
+                    WHERE training_text != '' AND created_at > ?
+                    """,
+                    (pending_since,),
+                ).fetchone()[0]
+            )
+            sample_times = [
+                float(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT created_at
+                    FROM chat_samples
+                    WHERE training_text != '' AND created_at >= ?
+                    """,
+                    (start_epoch,),
+                ).fetchall()
+            ]
+            group_rows = conn.execute(
+                """
+                SELECT group_id, COUNT(*) AS count
+                FROM chat_samples
+                WHERE training_text != ''
+                GROUP BY group_id
+                ORDER BY count DESC
+                LIMIT ?
+                """,
+                (group_limit,),
+            ).fetchall()
+
+        buckets: dict[str, int] = {}
+        for offset in range(days):
+            bucket_time = start_epoch + offset * 86400
+            buckets[time.strftime("%m-%d", time.localtime(bucket_time))] = 0
+        for created_at in sample_times:
+            label = time.strftime("%m-%d", time.localtime(created_at))
+            if label in buckets:
+                buckets[label] += 1
+
+        return {
+            "totals": {
+                "learned_messages": total_samples,
+                "trainable_samples": trainable_samples,
+                "pending_training_samples": pending_samples,
+                "stickers": stickers,
+                "external_corpus_samples": external_corpus_samples,
+                "training_runs": training_runs,
+                "groups": groups,
+                "users": users,
+                "samples_with_stickers": samples_with_stickers,
+                "today_samples": today_samples,
+                "last_24h_samples": last_24h_samples,
+                "first_sample_at": float(minmax[0]) if minmax and minmax[0] is not None else None,
+                "last_sample_at": float(minmax[1]) if minmax and minmax[1] is not None else None,
+                "avg_training_chars": round(float(minmax[2]), 1) if minmax and minmax[2] is not None else None,
+            },
+            "training": {
+                "last_success": self._training_row_payload(last_success),
+                "last_run": self._training_row_payload(last_training),
+                "pending_since": pending_since or None,
+            },
+            "charts": {
+                "learning_trend": [
+                    {"label": label, "count": count} for label, count in buckets.items()
+                ],
+                "group_contribution": [
+                    {
+                        "label": self._mask_group_id(row["group_id"]),
+                        "count": int(row["count"]),
+                    }
+                    for row in group_rows
+                ],
+            },
+        }
+
+    @staticmethod
+    def _training_row_payload(row: sqlite3.Row | None) -> dict[str, Any] | None:
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "status": row["status"],
+            "reason": row["reason"],
+            "started_at": row["started_at"],
+            "finished_at": row["finished_at"],
+            "sample_count": int(row["sample_count"] or 0),
+            "dataset_path": row["dataset_path"],
+            "output_dir": row["output_dir"],
+        }
+
+    @staticmethod
+    def _mask_group_id(group_id: Any) -> str:
+        value = str(group_id or "unknown")
+        if value == "unknown":
+            return "unknown"
+        if len(value) <= 4:
+            return "*" * len(value)
+        return f"{value[:2]}...{value[-2:]}"
+
+
+
