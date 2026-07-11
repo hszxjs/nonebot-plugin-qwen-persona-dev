@@ -11,6 +11,11 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+raise unittest.SkipTest(
+    "Legacy llama.cpp/vision sidecar observability suite is retired by the MLX-VLM migration; "
+    "see tests/test_qwen_persona_mlx_migration.py."
+)
+
 PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_qwen_persona"
 package = types.ModuleType("nonebot_plugin_qwen_persona")
 package.__path__ = [str(PLUGIN_DIR)]  # type: ignore[attr-defined]

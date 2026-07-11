@@ -66,6 +66,7 @@ async def prepare_message_learning(
     parts = message_to_parts(message)
     plain_chunks: list[str] = []
     training_chunks: list[str] = []
+    media_context_chunks: list[str] = []
     sticker_keys: list[str] = []
     stickers: list[dict[str, Any]] = []
 
@@ -94,7 +95,7 @@ async def prepare_message_learning(
             else:
                 caption = await _caption_or_fallback(captioner, part, image_fallback_text)
                 if caption:
-                    training_chunks.append(f"图片：{caption}")
+                    media_context_chunks.append(f"图片：{caption}")
             continue
 
         if part_type in MEDIA_SEGMENT_TYPES:
@@ -117,6 +118,7 @@ async def prepare_message_learning(
     return {
         "plain_text": plain_text,
         "training_text": training_text,
+        "media_context_text": _clean_text(" ".join(media_context_chunks)),
         "raw_segments": parts,
         "stickers": stickers,
         "media_parts": [part for part in parts if part.get("type") != "text"],
@@ -150,9 +152,20 @@ def reply_context_text_from_learning(learning: Mapping[str, Any]) -> str:
     plain_text = _clean_text(str(learning.get("plain_text") or ""))
     training_text = str(learning.get("training_text") or "")
     without_sticker_tokens = STICKER_TOKEN_RE.sub("", training_text)
-    if not plain_text and not context_text_from_training_text(without_sticker_tokens):
+    media_context = _clean_text(str(learning.get("media_context_text") or ""))
+    if (
+        not plain_text
+        and not media_context
+        and not context_text_from_training_text(without_sticker_tokens)
+    ):
         return ""
-    return _clean_text(without_sticker_tokens)
+    chunks = []
+    base = _clean_text(without_sticker_tokens)
+    if base:
+        chunks.append(base)
+    if media_context:
+        chunks.append(media_context)
+    return _clean_text(" ".join(chunks))
 
 
 def filter_training_text_sticker_tokens(

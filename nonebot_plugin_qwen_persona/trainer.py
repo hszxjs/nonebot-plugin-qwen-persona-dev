@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import json
 import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,7 +12,7 @@ from typing import Any
 
 import httpx
 
-from .config import QwenPersonaConfig, effective_chat_model
+from .config import QwenPersonaConfig, effective_chat_model, normalized_lora_modules
 from .storage import PersonaStore
 
 
@@ -174,6 +176,9 @@ class PersonaTrainer:
             command_prefixes=self.config.qwen_persona_command_prefixes,
             command_regexes=self.config.qwen_persona_command_regexes,
             external_limit=external_limit,
+            include_multimodal_assets=bool(
+                self.config.qwen_persona_multimodal_training_enabled
+            ),
         )
         self._set_progress(stage="dataset_exported", sample_count=sample_count)
 
@@ -208,37 +213,7 @@ class PersonaTrainer:
                 output_dir=str(output_dir),
             )
 
-        api_url = self.config.qwen_persona_lora_api_url.strip()
         command_template = self.config.qwen_persona_lora_train_command.strip()
-        if not api_url and not command_template:
-            log = "qwen_persona_lora_api_url and qwen_persona_lora_train_command are empty"
-            self._set_progress(stage="waiting_train_target", log=log)
-            await self.store.begin_training_run(
-                run_id=run_id,
-                reason=reason,
-                dataset_path=str(raw_dataset_path),
-                output_dir=str(output_dir),
-                sample_count=sample_count,
-            )
-            await self.store.finish_training_run(
-                run_id=run_id,
-                status="skipped_no_train_target",
-                log=log,
-            )
-            self._finish_progress(
-                status="skipped_no_train_target",
-                sample_count=sample_count,
-                dataset_path=str(raw_dataset_path),
-                output_dir=str(output_dir),
-                log=log,
-            )
-            return TrainingResult(
-                status="skipped_no_train_target",
-                sample_count=sample_count,
-                dataset_path=str(raw_dataset_path),
-                output_dir=str(output_dir),
-                log=log,
-            )
 
         if self.config.qwen_persona_lora_helper_api_url.strip():
             self._set_progress(stage="assisting_dataset", sample_count=sample_count)
@@ -271,16 +246,11 @@ class PersonaTrainer:
             data_dir=str(data_dir),
         )
         self._set_progress(stage="running_train", sample_count=sample_count)
-        if api_url:
-            train_status, train_log = await self._run_lora_api(
-                api_url=api_url,
-                mapping=mapping,
-                sample_count=sample_count,
-                reason=reason,
-            )
-        else:
+        if command_template:
             train_command = command_template.format_map(mapping)
             train_status, train_log = await self._run_shell(train_command, mapping)
+        else:
+            train_status, train_log = await self._run_mlx_lora(mapping, sample_count)
 
         final_status = train_status
         final_log = (helper_log + "\n\n" if helper_log else "") + train_log
@@ -390,33 +360,114 @@ class PersonaTrainer:
             assisted["metadata"] = record["metadata"]
         return assisted
 
-    async def _run_lora_api(
+    async def _run_mlx_lora(
         self,
-        *,
-        api_url: str,
         mapping: SafeFormatDict,
         sample_count: int,
-        reason: str,
     ) -> tuple[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.config.qwen_persona_lora_api_key.strip():
-            headers["Authorization"] = f"Bearer {self.config.qwen_persona_lora_api_key.strip()}"
+        if importlib.util.find_spec("mlx_vlm") is None:
+            log = (
+                "mlx-vlm is not installed; install project dependencies before MLX LoRA training."
+            )
+            return "skipped_missing_mlx_vlm", log
 
-        payload = {
-            "run_id": str(mapping["run_id"]),
-            "dataset": str(mapping["dataset"]),
-            "raw_dataset": str(mapping["raw_dataset"]),
-            "output_dir": str(mapping["output_dir"]),
-            "model": str(mapping["model"]),
-            "data_dir": str(mapping["data_dir"]),
-            "sample_count": sample_count,
-            "reason": reason,
-            **self.config.qwen_persona_lora_api_extra_body,
-        }
-        async with httpx.AsyncClient(timeout=self.config.qwen_persona_lora_api_timeout) as client:
-            response = await client.post(api_url, headers=headers, json=payload)
-        log = response.text
-        return ("success" if response.is_success else f"failed_http_{response.status_code}", log)
+        output_dir = Path(str(mapping["output_dir"]))
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "adapters.safetensors"
+        command = [
+            sys.executable,
+            "-m",
+            "mlx_vlm.lora",
+            "--model-path",
+            str(mapping["model"]),
+            "--dataset",
+            str(mapping["dataset"]),
+            "--split",
+            "train",
+            "--output-path",
+            str(output_path),
+            "--learning-rate",
+            str(float(self.config.qwen_persona_mlx_lora_learning_rate)),
+            "--batch-size",
+            str(max(1, int(self.config.qwen_persona_mlx_lora_batch_size))),
+            "--steps-per-report",
+            str(max(1, int(self.config.qwen_persona_mlx_lora_steps_per_report))),
+            "--steps-per-save",
+            str(max(1, int(self.config.qwen_persona_mlx_lora_save_every))),
+            "--max-seq-length",
+            str(max(128, int(self.config.qwen_persona_mlx_lora_max_seq_length))),
+            "--gradient-accumulation-steps",
+            str(max(1, int(self.config.qwen_persona_mlx_lora_grad_accum_steps))),
+            "--lora-alpha",
+            str(float(self.config.qwen_persona_mlx_lora_scale)),
+            "--lora-rank",
+            str(max(1, int(self.config.qwen_persona_mlx_lora_rank))),
+            "--lora-dropout",
+            str(float(self.config.qwen_persona_mlx_lora_dropout)),
+        ]
+        if int(self.config.qwen_persona_mlx_lora_epochs) > 0:
+            command.extend(["--epochs", str(int(self.config.qwen_persona_mlx_lora_epochs))])
+        else:
+            command.extend(["--iters", str(max(1, int(self.config.qwen_persona_mlx_lora_iters or 1)))])
+        if self.config.qwen_persona_mlx_lora_grad_checkpoint:
+            command.append("--grad-checkpoint")
+        if self.config.qwen_persona_mlx_lora_mask_prompt:
+            command.append("--train-on-completions")
+        adapter_path = self.config.qwen_persona_mlx_adapter_path.strip()
+        if adapter_path:
+            command.extend(["--adapter-path", adapter_path])
+
+        modules = normalized_lora_modules(self.config)
+        warnings: list[str] = []
+        if "vision_tower" in modules:
+            command.append("--train-vision")
+            warnings.append(
+                "vision_tower training is enabled; this can exceed 16GB unified memory."
+            )
+        if "projection" in modules:
+            warnings.append(
+                "projection module selection is recorded for review; mlx-vlm CLI trains language LoRA and optionally unfreezes the vision stack."
+            )
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "QWEN_PERSONA_RUN_ID": str(mapping["run_id"]),
+                "QWEN_PERSONA_DATASET": str(mapping["dataset"]),
+                "QWEN_PERSONA_RAW_DATASET": str(mapping["raw_dataset"]),
+                "QWEN_PERSONA_OUTPUT_DIR": str(mapping["output_dir"]),
+                "QWEN_PERSONA_MODEL": str(mapping["model"]),
+                "QWEN_PERSONA_SAMPLE_COUNT": str(sample_count),
+            }
+        )
+        cwd = self.config.qwen_persona_train_cwd.strip() or None
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=cwd,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            timeout = self.config.qwen_persona_train_timeout_seconds or None
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except TimeoutError:
+            process.kill()
+            stdout, _ = await process.communicate()
+            log = stdout.decode(errors="replace")
+            return "timeout", self._mlx_train_log(command, warnings, log)
+        log = stdout.decode(errors="replace")
+        return (
+            "success" if process.returncode == 0 else f"failed_{process.returncode}",
+            self._mlx_train_log(command, warnings, log),
+        )
+
+    @staticmethod
+    def _mlx_train_log(command: list[str], warnings: list[str], output: str) -> str:
+        prefix = "[mlx_vlm_lora]\ncommand=" + json.dumps(command, ensure_ascii=False)
+        if warnings:
+            prefix += "\nwarnings=" + json.dumps(warnings, ensure_ascii=False)
+        return prefix + "\n\n" + output
 
     async def _run_shell(
         self,

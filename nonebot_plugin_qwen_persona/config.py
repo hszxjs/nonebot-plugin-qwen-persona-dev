@@ -2,91 +2,35 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
-LLAMA_MODEL_PRESETS: list[dict[str, str]] = [
+MLX_MODEL_PRESETS: list[dict[str, str]] = [
     {
-        "value": "Qwen/Qwen3-0.6B-GGUF:Q8_0",
-        "label": "Qwen3 0.6B Q8_0 - light",
-        "description": "Fast local baseline for CPU and small devices.",
+        "value": "mlx-community/Qwen3.5-9B-MLX-4bit",
+        "label": "Qwen 3.5 VL 9B 4bit - recommended",
+        "description": "Default Apple Silicon VLM target for 16GB unified memory.",
     },
     {
-        "value": "Qwen/Qwen3-1.7B-GGUF:Q6_K",
-        "label": "Qwen3 1.7B Q6_K - small",
-        "description": "Better chat quality while still practical on laptops.",
-    },
-    {
-        "value": "Qwen/Qwen3-4B-GGUF:Q4_K_M",
-        "label": "Qwen3 4B Q4_K_M - medium",
-        "description": "Recommended default for capable local machines.",
-    },
-    {
-        "value": "Qwen/Qwen3-8B-GGUF:Q4_K_M",
-        "label": "Qwen3 8B Q4_K_M - large",
-        "description": "Higher quality, needs more memory and patience.",
-    },
-    {
-        "value": "Qwen/Qwen3-14B-GGUF:Q4_K_M",
-        "label": "Qwen3 14B Q4_K_M - high quality",
-        "description": "Strong local chat quality for high-memory machines.",
-    },
-    {
-        "value": "Qwen/Qwen3-32B-GGUF:Q4_K_M",
-        "label": "Qwen3 32B Q4_K_M - workstation",
-        "description": "Large Qwen preset for workstation or external llama.cpp backends.",
-    },
-    {
-        "value": "Qwen/Qwen3.6-27B-FP8",
-        "label": "Qwen 27B FP8 - custom/external",
-        "description": "Reserved for high-memory backends or external API mode.",
-    },
-    {
-        "value": "google/gemma-2-9b-it-GGUF:Q4_K_M",
-        "label": "Gemma 2 9B IT Q4_K_M",
-        "description": "Compact instruction model with strong multilingual baseline.",
-    },
-    {
-        "value": "google/gemma-2-27b-it-GGUF:Q4_K_M",
-        "label": "Gemma 2 27B IT Q4_K_M",
-        "description": "Larger Gemma option for external or high-memory llama.cpp setups.",
-    },
-    {
-        "value": "meta-llama/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M",
-        "label": "Llama 3.1 8B Instruct Q4_K_M",
-        "description": "General-purpose open instruction model.",
-    },
-    {
-        "value": "mistralai/Mistral-7B-Instruct-v0.3-GGUF:Q4_K_M",
-        "label": "Mistral 7B Instruct v0.3 Q4_K_M",
-        "description": "Fast general instruction model with modest memory needs.",
-    },
-    {
-        "value": "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B-GGUF:Q4_K_M",
-        "label": "DeepSeek R1 Distill Qwen 14B Q4_K_M",
-        "description": "Reasoning-oriented Qwen distill for larger local deployments.",
+        "value": "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+        "label": "Qwen2.5 VL 7B 4bit - lighter fallback",
+        "description": "Smaller VL fallback when the 9B model is too tight.",
     },
 ]
 
+MLX_LORA_MODULES: tuple[str, ...] = ("language", "projection", "vision_tower")
+
 
 class QwenPersonaConfig(BaseModel):
-    qwen_persona_runtime: Literal["llama_cpp", "external_llama", "external_api"] = "llama_cpp"
-    qwen_persona_api_base: str = "http://127.0.0.1:8000/v1"
-    qwen_persona_api_key: str = ""
-    qwen_persona_model: str = "Qwen/Qwen3.6-27B-FP8"
+    qwen_persona_mlx_model: str = "mlx-community/Qwen3.5-9B-MLX-4bit"
+    qwen_persona_mlx_adapter_path: str = ""
+    qwen_persona_mlx_auto_load: bool = False
+    qwen_persona_mlx_trust_remote_code: bool = False
+    qwen_persona_model_dir: str = "data/qwen_persona/models"
     qwen_persona_request_timeout: float = 120.0
     qwen_persona_temperature: float = 0.85
     qwen_persona_top_p: float = 0.9
     qwen_persona_max_tokens: int = 256
-
-    qwen_persona_llama_server_path: str = ""
-    qwen_persona_llama_auto_install: bool = True
-    qwen_persona_llama_model: str = "Qwen/Qwen3-0.6B-GGUF:Q8_0"
-    qwen_persona_llama_model_file: str = ""
-    qwen_persona_llama_host: str = "127.0.0.1"
-    qwen_persona_llama_port: int = 18080
-    qwen_persona_llama_ctx_size: int = 4096
-    qwen_persona_llama_extra_args: list[str] | str = Field(default_factory=list)
 
     qwen_persona_admin_enabled: bool = True
     qwen_persona_admin_host: str = "127.0.0.1"
@@ -95,7 +39,6 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_admin_config_file: str = ""
 
     qwen_persona_data_dir: str = "data/qwen_persona"
-    qwen_persona_model_dir: str = "data/qwen_persona/models"
     qwen_persona_enabled_groups: set[str] = Field(default_factory=set)
 
     qwen_persona_enable_learning: bool = True
@@ -160,16 +103,8 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_sticker_repo_url: str = ""
     qwen_persona_enable_sending_stickers: bool = True
     qwen_persona_max_reply_stickers: int = 2
-
-    qwen_persona_vision_enabled: bool = True
-    qwen_persona_vision_auto_start: bool = True
-    qwen_persona_vision_python: str = ""
-    qwen_persona_vision_host: str = "127.0.0.1"
-    qwen_persona_vision_port: int = 18081
-    qwen_persona_vision_model: str = "Salesforce/blip-image-captioning-base"
-    qwen_persona_vision_timeout: float = 20.0
-    qwen_persona_vision_image_fallback_text: str = "[图片]"
-    qwen_persona_vision_sticker_fallback_text: str = "[表情]"
+    qwen_persona_media_image_fallback_text: str = "[图片]"
+    qwen_persona_media_sticker_fallback_text: str = "[表情]"
 
     qwen_persona_enable_training: bool = True
     qwen_persona_train_times: list[str] = Field(default_factory=lambda: ["06:10", "23:50"])
@@ -182,10 +117,23 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_external_corpus_enabled: bool = True
     qwen_persona_external_corpus_limit: int = 0
     qwen_persona_min_train_samples: int = 20
-    qwen_persona_lora_api_url: str = ""
-    qwen_persona_lora_api_key: str = ""
-    qwen_persona_lora_api_timeout: float = 120.0
-    qwen_persona_lora_api_extra_body: dict[str, Any] = Field(default_factory=dict)
+    qwen_persona_multimodal_training_enabled: bool = True
+    qwen_persona_mlx_lora_train_modules: list[str] = Field(
+        default_factory=lambda: ["language"]
+    )
+    qwen_persona_mlx_lora_rank: int = 8
+    qwen_persona_mlx_lora_scale: float = 20.0
+    qwen_persona_mlx_lora_dropout: float = 0.0
+    qwen_persona_mlx_lora_learning_rate: float = 2e-5
+    qwen_persona_mlx_lora_batch_size: int = 1
+    qwen_persona_mlx_lora_grad_accum_steps: int = 4
+    qwen_persona_mlx_lora_epochs: int = 1
+    qwen_persona_mlx_lora_iters: int = 0
+    qwen_persona_mlx_lora_max_seq_length: int = 2048
+    qwen_persona_mlx_lora_grad_checkpoint: bool = True
+    qwen_persona_mlx_lora_mask_prompt: bool = True
+    qwen_persona_mlx_lora_save_every: int = 100
+    qwen_persona_mlx_lora_steps_per_report: int = 10
     qwen_persona_lora_helper_api_url: str = ""
     qwen_persona_lora_helper_api_key: str = ""
     qwen_persona_lora_helper_model: str = "gpt-5.5-medium"
@@ -207,21 +155,22 @@ class QwenPersonaConfig(BaseModel):
         "但不会泄露隐私、不会复述本地插件命令、不会假装拥有管理员权限。"
     )
 
-    class Config:
-        extra = "ignore"
+    model_config = ConfigDict(extra="ignore")
 
 
-def effective_api_base(config: QwenPersonaConfig) -> str:
-    if config.qwen_persona_runtime in {"llama_cpp", "external_llama"}:
-        host = config.qwen_persona_llama_host.strip() or "127.0.0.1"
-        return f"http://{host}:{int(config.qwen_persona_llama_port)}/v1"
-    return config.qwen_persona_api_base.rstrip("/") or "http://127.0.0.1:8000/v1"
+def effective_mlx_model(config: QwenPersonaConfig) -> str:
+    return (
+        config.qwen_persona_mlx_model.strip()
+        or "mlx-community/Qwen3.5-9B-MLX-4bit"
+    )
 
 
 def effective_chat_model(config: QwenPersonaConfig) -> str:
-    if config.qwen_persona_runtime in {"llama_cpp", "external_llama"}:
-        return config.qwen_persona_llama_model.strip() or config.qwen_persona_model
-    return config.qwen_persona_model.strip() or config.qwen_persona_llama_model
+    return effective_mlx_model(config)
+
+
+def effective_api_base(_config: QwenPersonaConfig) -> str:
+    return "embedded://mlx-vlm"
 
 
 def normalize_matcher_priorities(config: QwenPersonaConfig) -> list[str]:
@@ -231,6 +180,15 @@ def normalize_matcher_priorities(config: QwenPersonaConfig) -> list[str]:
         return []
     config.qwen_persona_learning_priority = reply_priority - 1
     return ["qwen_persona_learning_priority"]
+
+
+def normalized_lora_modules(config: QwenPersonaConfig) -> list[str]:
+    modules: list[str] = []
+    for item in config.qwen_persona_mlx_lora_train_modules:
+        value = str(item or "").strip()
+        if value in MLX_LORA_MODULES and value not in modules:
+            modules.append(value)
+    return modules or ["language"]
 
 
 def _dump_config(config: Any) -> dict[str, Any]:

@@ -20,6 +20,8 @@ from .sticker import (
     sticker_to_record,
 )
 
+MEDIA_ASSET_SOURCES = {"sticker", "admin_approved", "explicit_command"}
+
 
 class PersonaStore:
     def __init__(self, data_dir: Path) -> None:
@@ -129,6 +131,21 @@ class PersonaStore:
                 """
             )
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS media_assets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source TEXT NOT NULL,
+                    source_key TEXT NOT NULL,
+                    uri TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    UNIQUE(source, source_key)
+                )
+                """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_samples_group_time "
                 "ON chat_samples(group_id, created_at)"
             )
@@ -143,6 +160,10 @@ class PersonaStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_external_corpus_source_time "
                 "ON external_corpus_samples(source, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_media_assets_source_time "
+                "ON media_assets(source, created_at)"
             )
 
     async def cleanup_empty_chat_artifacts(self) -> dict[str, int]:
@@ -416,6 +437,109 @@ class PersonaStore:
                         now,
                     ),
                 )
+                uri = str(sticker.get("uri") or "").strip()
+                summary = str(sticker.get("summary") or "").strip()
+                if uri and summary:
+                    self._record_media_asset_conn(
+                        conn,
+                        source="sticker",
+                        source_key=str(sticker["key"]),
+                        uri=uri,
+                        prompt="请用一句中文描述这个群聊表情的含义。",
+                        answer=summary,
+                        metadata={
+                            "group_id": group_id,
+                            "user_id": user_id,
+                            "sticker_type": sticker.get("type"),
+                        },
+                        created_at=now,
+                    )
+
+    async def record_media_asset(
+        self,
+        *,
+        source: str,
+        source_key: str,
+        uri: str,
+        prompt: str,
+        answer: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, int]:
+        return await asyncio.to_thread(
+            self._record_media_asset_sync,
+            source=source,
+            source_key=source_key,
+            uri=uri,
+            prompt=prompt,
+            answer=answer,
+            metadata=metadata or {},
+        )
+
+    def _record_media_asset_sync(
+        self,
+        *,
+        source: str,
+        source_key: str,
+        uri: str,
+        prompt: str,
+        answer: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, int]:
+        self._init_sync()
+        source = str(source or "").strip()
+        source_key = str(source_key or "").strip()
+        uri = str(uri or "").strip()
+        prompt = normalize_text(prompt)
+        answer = normalize_text(answer)
+        if source not in MEDIA_ASSET_SOURCES or not source_key or not uri or not answer:
+            return {"inserted": 0, "duplicates": 0, "skipped": 1}
+        with self._connection() as conn:
+            cursor = self._record_media_asset_conn(
+                conn,
+                source=source,
+                source_key=source_key,
+                uri=uri,
+                prompt=prompt or "请用一句中文描述这张图。",
+                answer=answer,
+                metadata=metadata or {},
+                created_at=time.time(),
+            )
+        inserted = int(cursor.rowcount or 0)
+        return {
+            "inserted": inserted,
+            "duplicates": 0 if inserted else 1,
+            "skipped": 0,
+        }
+
+    def _record_media_asset_conn(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        source: str,
+        source_key: str,
+        uri: str,
+        prompt: str,
+        answer: str,
+        metadata: dict[str, Any],
+        created_at: float,
+    ) -> sqlite3.Cursor:
+        return conn.execute(
+            """
+            INSERT OR IGNORE INTO media_assets (
+                source, source_key, uri, prompt, answer, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source,
+                source_key,
+                uri,
+                prompt,
+                answer,
+                json.dumps(metadata, ensure_ascii=False, default=str),
+                created_at,
+            ),
+        )
 
     async def record_conversation_pattern(
         self,
@@ -1163,6 +1287,7 @@ class PersonaStore:
         command_prefixes: Iterable[str] = (),
         command_regexes: Iterable[str] = (),
         external_limit: int = 0,
+        include_multimodal_assets: bool = False,
     ) -> int:
         return await asyncio.to_thread(
             self._export_sft_dataset_sync,
@@ -1173,6 +1298,7 @@ class PersonaStore:
             command_prefixes,
             command_regexes,
             external_limit,
+            include_multimodal_assets,
         )
 
     def _export_sft_dataset_sync(
@@ -1184,6 +1310,7 @@ class PersonaStore:
         command_prefixes: Iterable[str] = (),
         command_regexes: Iterable[str] = (),
         external_limit: int = 0,
+        include_multimodal_assets: bool = False,
     ) -> int:
         self._init_sync()
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1237,6 +1364,7 @@ class PersonaStore:
                 ):
                     continue
                 record = {
+                    "images": [],
                     "messages": [
                         {"role": "system", "content": system_prompt},
                         {
@@ -1279,6 +1407,7 @@ class PersonaStore:
                         else "下面是一条公开社区语料，请学习其自然口吻，不要输出来源信息："
                     )
                     record = {
+                        "images": [],
                         "messages": [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_content},
@@ -1290,6 +1419,48 @@ class PersonaStore:
                             "external_sample_id": row.get("id"),
                             "created_at": row.get("created_at"),
                             "external": True,
+                            "extra": metadata,
+                        },
+                    }
+                    file.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                    exported += 1
+                    if not unlimited_dataset and exported >= dataset_limit:
+                        break
+            has_dataset_room = unlimited_dataset or exported < dataset_limit
+            if include_multimodal_assets and has_dataset_room:
+                if unlimited_dataset:
+                    media_limit = 0
+                else:
+                    media_limit = max(dataset_limit - exported, 0)
+                for row in self._media_asset_rows(limit=media_limit):
+                    uri = str(row.get("uri") or "").strip()
+                    answer = normalize_text(str(row.get("answer") or ""))
+                    if not uri or not answer:
+                        continue
+                    prompt = normalize_text(str(row.get("prompt") or ""))
+                    metadata = self._json_object(row.get("metadata_json"))
+                    record = {
+                        "images": [uri],
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "image", "image": uri},
+                                    {
+                                        "type": "text",
+                                        "text": prompt or "请按群聊语境理解这张图片。",
+                                    },
+                                ],
+                            },
+                            {"role": "assistant", "content": answer},
+                        ],
+                        "metadata": {
+                            "source": row.get("source"),
+                            "source_key": row.get("source_key"),
+                            "media_asset_id": row.get("id"),
+                            "created_at": row.get("created_at"),
+                            "multimodal": True,
                             "extra": metadata,
                         },
                     }
@@ -1316,6 +1487,30 @@ class PersonaStore:
                     """
                     SELECT id, source, source_id, text, metadata_json, created_at
                     FROM external_corpus_samples
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    (int(limit),),
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _media_asset_rows(self, *, limit: int) -> list[dict[str, Any]]:
+        if limit < 0:
+            return []
+        with self._connection() as conn:
+            if limit == 0:
+                rows = conn.execute(
+                    """
+                    SELECT id, source, source_key, uri, prompt, answer, metadata_json, created_at
+                    FROM media_assets
+                    ORDER BY created_at DESC
+                    """
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT id, source, source_key, uri, prompt, answer, metadata_json, created_at
+                    FROM media_assets
                     ORDER BY created_at DESC
                     LIMIT ?
                     """,
@@ -1447,6 +1642,9 @@ class PersonaStore:
             external_corpus_samples = int(
                 conn.execute("SELECT COUNT(*) FROM external_corpus_samples").fetchone()[0]
             )
+            media_assets = int(
+                conn.execute("SELECT COUNT(*) FROM media_assets").fetchone()[0]
+            )
             training_runs = int(conn.execute("SELECT COUNT(*) FROM training_runs").fetchone()[0])
             groups = int(
                 conn.execute(
@@ -1565,6 +1763,7 @@ class PersonaStore:
                 "pending_training_samples": pending_samples,
                 "stickers": stickers,
                 "external_corpus_samples": external_corpus_samples,
+                "media_assets": media_assets,
                 "training_runs": training_runs,
                 "groups": groups,
                 "users": users,

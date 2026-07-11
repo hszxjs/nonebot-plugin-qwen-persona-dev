@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
-from .config import LLAMA_MODEL_PRESETS
+from .config import MLX_MODEL_PRESETS, normalized_lora_modules
 from .runtime_config import config_to_dict
 
 SECRET_MARKERS = ("api_key", "token", "secret", "password")
@@ -39,28 +39,20 @@ VENDOR_ASSETS = {
     ),
 }
 CONFIG_LABELS = {
-    "qwen_persona_runtime": "模型运行方式",
-    "qwen_persona_api_base": "模型接口地址",
-    "qwen_persona_api_key": "模型接口密钥",
-    "qwen_persona_model": "外部 API 模型名称",
+    "qwen_persona_mlx_model": "MLX-VLM 模型",
+    "qwen_persona_mlx_adapter_path": "LoRA Adapter 路径",
+    "qwen_persona_mlx_auto_load": "启动时预加载模型",
+    "qwen_persona_mlx_trust_remote_code": "允许远程模型代码",
+    "qwen_persona_model_dir": "本地模型目录",
     "qwen_persona_request_timeout": "模型请求超时",
     "qwen_persona_temperature": "回复随机度",
     "qwen_persona_top_p": "Top P 采样",
     "qwen_persona_max_tokens": "最大回复长度",
-    "qwen_persona_llama_server_path": "llama.cpp 程序路径",
-    "qwen_persona_llama_auto_install": "自动安装 llama.cpp",
-    "qwen_persona_llama_model": "llama.cpp 模型",
-    "qwen_persona_llama_model_file": "本地 GGUF 文件",
-    "qwen_persona_llama_host": "llama.cpp 监听地址",
-    "qwen_persona_llama_port": "llama.cpp 监听端口",
-    "qwen_persona_llama_ctx_size": "上下文窗口",
-    "qwen_persona_llama_extra_args": "llama.cpp 额外参数",
     "qwen_persona_admin_enabled": "启用后台网页",
     "qwen_persona_admin_host": "后台监听地址",
     "qwen_persona_admin_port": "后台监听端口",
     "qwen_persona_admin_token": "后台访问令牌",
     "qwen_persona_admin_config_file": "后台配置覆盖文件",
-    "qwen_persona_model_dir": "本地模型目录",
     "qwen_persona_data_dir": "插件数据目录",
     "qwen_persona_enabled_groups": "启用群列表",
     "qwen_persona_enable_learning": "启用群聊学习",
@@ -91,18 +83,11 @@ CONFIG_LABELS = {
     "qwen_persona_sticker_repo_url": "表情包仓库地址",
     "qwen_persona_enable_sending_stickers": "允许发送表情",
     "qwen_persona_max_reply_stickers": "单次最多表情",
-    "qwen_persona_vision_enabled": "启用视觉理解",
-    "qwen_persona_vision_auto_start": "自动启动视觉服务",
-    "qwen_persona_vision_python": "视觉服务 Python",
-    "qwen_persona_vision_host": "视觉服务监听地址",
-    "qwen_persona_vision_port": "视觉服务监听端口",
-    "qwen_persona_vision_model": "视觉理解模型",
-    "qwen_persona_vision_timeout": "视觉请求超时",
-    "qwen_persona_vision_image_fallback_text": "图片降级文本",
-    "qwen_persona_vision_sticker_fallback_text": "表情降级文本",
+    "qwen_persona_media_image_fallback_text": "图片降级文本",
+    "qwen_persona_media_sticker_fallback_text": "表情降级文本",
     "qwen_persona_enable_training": "启用定时训练",
     "qwen_persona_train_times": "训练时间点",
-    "qwen_persona_lora_train_command": "本地 LoRA 训练命令",
+    "qwen_persona_lora_train_command": "自定义 LoRA 训练命令",
     "qwen_persona_after_train_command": "训练后命令",
     "qwen_persona_train_cwd": "训练工作目录",
     "qwen_persona_train_timeout_seconds": "训练超时时间",
@@ -111,10 +96,21 @@ CONFIG_LABELS = {
     "qwen_persona_external_corpus_enabled": "合并外部语料",
     "qwen_persona_external_corpus_limit": "外部语料上限",
     "qwen_persona_min_train_samples": "最少训练样本",
-    "qwen_persona_lora_api_url": "LoRA 训练接口地址",
-    "qwen_persona_lora_api_key": "LoRA 训练接口密钥",
-    "qwen_persona_lora_api_timeout": "LoRA 训练接口超时",
-    "qwen_persona_lora_api_extra_body": "LoRA 训练接口附加参数",
+    "qwen_persona_multimodal_training_enabled": "启用多模态训练资产",
+    "qwen_persona_mlx_lora_train_modules": "MLX LoRA 训练模块",
+    "qwen_persona_mlx_lora_rank": "LoRA Rank",
+    "qwen_persona_mlx_lora_scale": "LoRA Alpha",
+    "qwen_persona_mlx_lora_dropout": "LoRA Dropout",
+    "qwen_persona_mlx_lora_learning_rate": "LoRA 学习率",
+    "qwen_persona_mlx_lora_batch_size": "LoRA Batch Size",
+    "qwen_persona_mlx_lora_grad_accum_steps": "梯度累积步数",
+    "qwen_persona_mlx_lora_epochs": "训练 Epochs",
+    "qwen_persona_mlx_lora_iters": "训练步数",
+    "qwen_persona_mlx_lora_max_seq_length": "最大序列长度",
+    "qwen_persona_mlx_lora_grad_checkpoint": "梯度检查点",
+    "qwen_persona_mlx_lora_mask_prompt": "仅训练回复部分",
+    "qwen_persona_mlx_lora_save_every": "保存间隔",
+    "qwen_persona_mlx_lora_steps_per_report": "日志间隔",
     "qwen_persona_lora_helper_api_url": "GPT 辅助学习接口地址",
     "qwen_persona_lora_helper_api_key": "GPT 辅助学习接口密钥",
     "qwen_persona_lora_helper_model": "GPT 辅助学习模型",
@@ -130,30 +126,22 @@ CONFIG_LABELS = {
 }
 
 CONFIG_DESCRIPTIONS = {
-    "qwen_persona_runtime": "llama_cpp 由插件安装/启动/控制；external_llama 连接你自己后台运行的 llama.cpp；external_api 调用任意外部 OpenAI-compatible 接口。",
-    "qwen_persona_api_base": "仅 external_api 模式使用。llama_cpp 模式会根据监听地址和端口自动生成接口地址。",
-    "qwen_persona_llama_server_path": "可填写 llama-server 或 llama 可执行文件路径；留空时会搜索插件 bin 目录和 PATH。",
-    "qwen_persona_llama_auto_install": "找不到 llama.cpp 时，按当前平台下载官方 release 预编译包到数据目录。",
-    "qwen_persona_llama_model": "可选择预设，也可输入任意 Hugging Face 模型 ID、repo:quant，或 GGUF 文件名。",
-    "qwen_persona_llama_model_file": "可填绝对路径，或相对模型目录的 GGUF 文件名；填写后优先使用本地文件。",
-    "qwen_persona_llama_extra_args": "JSON 数组或字符串，透传给 llama.cpp，例如 [\"--n-gpu-layers\", \"99\"]。",
+    "qwen_persona_mlx_model": "通过 mlx-vlm 在进程内加载的 VL 模型，默认 Qwen3.5 9B 4bit。",
+    "qwen_persona_mlx_adapter_path": "可填写最近一次 MLX LoRA 输出的 adapters.safetensors 或 adapter 目录。",
+    "qwen_persona_mlx_lora_train_modules": "默认仅 language。projection 会提示风险；vision_tower 会额外解冻视觉栈，16GB 机器默认不建议开启。",
     "qwen_persona_auto_read_picmenu_config": "开启后自动扫描 picmenu 配置项，识别需要过滤学习的本地命令。",
     "qwen_persona_picmenu_config_keys": "包含这些名称的 NoneBot 配置字段会被当作 picmenu 配置扫描。",
     "qwen_persona_picmenu_command_keys": "picmenu 配置中这些键名下的值会被识别为命令、别名或触发词。",
     "qwen_persona_lora_helper_api_url": "OpenAI-compatible chat/completions 地址，用于调用 GPT-5.5 Medium 辅助清洗 LoRA 数据。",
     "qwen_persona_lora_helper_api_key": "发送给辅助学习接口的 Bearer Token。",
     "qwen_persona_lora_helper_model": "默认 gpt-5.5-medium，可按你的服务实际模型名修改。",
-    "qwen_persona_lora_api_url": "最终 LoRA 训练任务接口；辅助清洗后的数据集会作为 dataset 字段传入。",
     "qwen_persona_context_scope": "group 只取当前群，global 取全部群，mixed 保留当前群并混入其他群样本。",
     "qwen_persona_external_corpus_enabled": "开启后训练导出会把 external_corpus_samples 表中的外部公开语料合并进数据集。",
     "qwen_persona_external_corpus_limit": "每次训练最多合并多少条外部语料，0 表示不限制；不会影响群聊自学习样本保存。",
+    "qwen_persona_multimodal_training_enabled": "开启后仅把白名单 media_assets 中的表情或管理员确认图片加入 images 训练列；普通图片不会自动进入训练资产。",
     "qwen_persona_blacklist_words": "包含这些词的消息不会学习，回复中命中的行也会被丢弃。",
     "qwen_persona_blacklist_regexes": "用于过滤学习和回复的正则表达式。",
     "qwen_persona_sticker_repo_dir": "学习到的图片表情会保存到 media/，并写入 manifest.jsonl。",
-    "qwen_persona_vision_enabled": "开启后图片和表情会先被视觉服务理解成文本，再进入训练样本；不会把 url、file_id 或 base64 写进训练文本。",
-    "qwen_persona_vision_auto_start": "开启后插件启动时会自管一个本地视觉服务；依赖缺失时服务仍会安全降级为占位描述。",
-    "qwen_persona_vision_python": "留空使用当前 Python；如需独立虚拟环境，可填该环境的 python 可执行文件。",
-    "qwen_persona_vision_model": "内置服务默认使用 BLIP 等 image-to-text 模型生成描述；显式配置 CLIP 模型时才使用零样本分类。",
     "qwen_persona_follow_reply_probability": "群聊普通消息不 @ 机器人时，也会按此概率触发跟风回复。",
     "qwen_persona_learning_priority": "学习 matcher 的优先级。默认靠后，让其他插件命令先匹配并阻断，避免命令进入学习数据。",
     "qwen_persona_enable_repeat": "检测到群友连续发送相同文本或表情时，bot 会按概率参与复读。",
@@ -162,16 +150,10 @@ CONFIG_DESCRIPTIONS = {
 
 
 RESTART_HINTS = {
-    "qwen_persona_runtime",
-    "qwen_persona_llama_server_path",
-    "qwen_persona_llama_auto_install",
-    "qwen_persona_llama_model",
-    "qwen_persona_llama_model_file",
-    "qwen_persona_llama_host",
-    "qwen_persona_llama_port",
-    "qwen_persona_llama_ctx_size",
-    "qwen_persona_llama_extra_args",
-    "qwen_persona_api_key",
+    "qwen_persona_mlx_model",
+    "qwen_persona_mlx_adapter_path",
+    "qwen_persona_mlx_auto_load",
+    "qwen_persona_mlx_trust_remote_code",
     "qwen_persona_model_dir",
     "qwen_persona_admin_enabled",
     "qwen_persona_admin_host",
@@ -413,7 +395,37 @@ function renderField(field) {
   const type = fieldType(field);
   const value = values[field.name];
 
-  if (field.widget === "combo" && !field.allowCustom) {
+  if (field.widget === "chips") {
+    const hidden = document.createElement("input");
+    hidden.type = "hidden";
+    hidden.dataset.name = field.name;
+    const selected = new Set(Array.isArray(value) ? value.map(String) : []);
+    const chips = document.createElement("div");
+    chips.className = "segmented";
+    const sync = () => {
+      hidden.value = JSON.stringify(Array.from(selected));
+      chips.querySelectorAll("button[data-chip-value]").forEach(button => {
+        button.classList.toggle("active", selected.has(button.dataset.chipValue));
+      });
+    };
+    for (const option of field.options || []) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.chipValue = option.value;
+      button.textContent = option.label || option.value;
+      button.title = option.description || "";
+      button.addEventListener("click", () => {
+        if (selected.has(option.value)) selected.delete(option.value);
+        else selected.add(option.value);
+        if (!selected.size) selected.add("language");
+        sync();
+      });
+      chips.appendChild(button);
+    }
+    sync();
+    editor.appendChild(chips);
+    editor.appendChild(hidden);
+  } else if (field.widget === "combo" && !field.allowCustom) {
     const select = document.createElement("select");
     select.dataset.name = field.name;
     for (const option of field.options || []) {
@@ -1128,7 +1140,7 @@ label.field-label { font-weight: 700; overflow-wrap: anywhere; }
       <div>
         <p class="page-kicker">Dashboard</p>
         <h2 id="dashboard-title" class="page-title">运行概览</h2>
-        <p class="page-copy">人格学习、模型推理和本地 llama.cpp 服务的关键状态。</p>
+        <p class="page-copy">人格学习、MLX-VLM 推理和本地 LoRA 训练的关键状态。</p>
       </div>
       <div class="hero-actions">
         <button id="training-run" class="primary" type="button">立即训练</button>
@@ -1149,10 +1161,10 @@ label.field-label { font-weight: 700; overflow-wrap: anywhere; }
         </div>
         <div class="panel">
           <div class="panel-head">
-            <h2>llama.cpp 状态</h2>
+            <h2>MLX-VLM 状态</h2>
           </div>
           <div class="panel-body">
-            <div id="llama-status" class="status-spine">
+            <div id="mlx-status" class="status-spine">
               <div class="state-line">
                 <span class="state-dot" aria-hidden="true"></span>
                 <div>
@@ -1161,49 +1173,24 @@ label.field-label { font-weight: 700; overflow-wrap: anywhere; }
                 </div>
               </div>
             </div>
-            <dl id="llama-facts" class="fact-grid"></dl>
+            <dl id="mlx-facts" class="fact-grid"></dl>
             <div class="model-switch">
-              <label for="llama-model-input">目标模型
-                <input id="llama-model-input" type="text" list="llama-model-presets" autocomplete="off">
+              <label for="mlx-model-input">目标模型
+                <input id="mlx-model-input" type="text" list="mlx-model-presets" autocomplete="off">
               </label>
-              <datalist id="llama-model-presets"></datalist>
-              <label for="llama-model-file-input">本地 GGUF 文件
-                <input id="llama-model-file-input" type="text" autocomplete="off" placeholder="留空时使用 Hugging Face 模型">
+              <datalist id="mlx-model-presets"></datalist>
+              <label for="mlx-adapter-input">LoRA Adapter
+                <input id="mlx-adapter-input" type="text" autocomplete="off" placeholder="可在设置中保存 adapter 路径">
               </label>
               <div class="control-row model-actions">
-                <button id="llama-reload" class="warning" type="button">重载模型</button>
-                <button id="llama-switch" class="primary" type="button">切换模型</button>
+                <button id="mlx-reload" class="warning" type="button">重载</button>
               </div>
             </div>
             <div class="control-row">
-              <button id="llama-start" class="primary" type="button">启动/检查</button>
-              <button id="llama-stop" class="danger" type="button">停止</button>
-              <button id="llama-restart" class="warning" type="button">重启</button>
+              <button id="mlx-load" class="primary" type="button">加载/检查</button>
+              <button id="mlx-unload" class="danger" type="button">卸载</button>
             </div>
             <div id="dashboard-status" class="notice" role="status"></div>
-          </div>
-        </div>
-        <div class="panel">
-          <div class="panel-head">
-            <h2>视觉理解服务</h2>
-          </div>
-          <div class="panel-body">
-            <div id="vision-status" class="status-spine">
-              <div class="state-line">
-                <span class="state-dot" aria-hidden="true"></span>
-                <div>
-                  <div class="state-name">读取中</div>
-                  <div class="state-detail">等待状态接口返回</div>
-                </div>
-              </div>
-            </div>
-            <dl id="vision-facts" class="fact-grid"></dl>
-            <div class="control-row">
-              <button id="vision-start" class="primary" type="button">启动/检查</button>
-              <button id="vision-stop" class="danger" type="button">停止</button>
-              <button id="vision-restart" class="warning" type="button">重启</button>
-            </div>
-            <div id="vision-notice" class="notice" role="status"></div>
           </div>
         </div>
       </div>
@@ -1221,23 +1208,13 @@ label.field-label { font-weight: 700; overflow-wrap: anywhere; }
         </div>
         <div class="panel">
           <div class="panel-head">
-            <h2>llama.cpp 日志</h2>
+            <h2>MLX-VLM 日志</h2>
             <div class="log-tools">
               <button id="logs-pause" type="button">暂停刷新</button>
               <button id="logs-copy" type="button">复制日志</button>
             </div>
           </div>
-          <div id="llama-logs" class="terminal" aria-live="polite"></div>
-        </div>
-        <div class="panel">
-          <div class="panel-head">
-            <h2>视觉服务日志</h2>
-            <div class="log-tools">
-              <button id="vision-logs-pause" type="button">暂停刷新</button>
-              <button id="vision-logs-copy" type="button">复制日志</button>
-            </div>
-          </div>
-          <div id="vision-logs" class="terminal compact" aria-live="polite"></div>
+          <div id="mlx-logs" class="terminal" aria-live="polite"></div>
         </div>
       </div>
     </div>
@@ -1259,35 +1236,21 @@ label.field-label { font-weight: 700; overflow-wrap: anywhere; }
 const page = location.pathname === "/settings" ? "settings" : (location.pathname === "/stickers" ? "stickers" : "dashboard");
 document.body.dataset.page = page;
 
-const categoryOrder = ["后台网页", "模型调用", "模型部署", "视觉理解", "学习与回复", "表情包", "LoRA 训练", "黑名单", "其他"];
+const categoryOrder = ["后台网页", "模型调用", "模型部署", "学习与回复", "表情包", "LoRA 训练", "黑名单", "其他"];
 const stateLabels = {
-  external_api_ready: "外部接口可用",
-  external_api_unchecked: "外部接口未确认",
-  external_llama_ready: "外部 llama 可用",
-  external_llama_unavailable: "外部 llama 不可用",
-  server_running: "运行中",
-  server_starting: "启动中",
-  server_present: "已有兼容服务",
-  server_orphaned: "遗留自管进程",
-  server_orphaned_unhealthy: "遗留进程异常",
-  port_in_use: "端口被占用",
-  server_exited: "进程已退出",
-  server_stopped: "已停止",
-  vision_disabled: "视觉理解关闭",
-  vision_running: "视觉服务运行中",
-  vision_starting: "视觉服务启动中",
-  vision_present: "已有视觉服务",
-  vision_exited: "视觉服务已退出",
-  vision_stopped: "视觉服务已停止",
+  loaded: "已加载",
+  loading: "加载中",
+  not_loaded: "未加载",
+  missing_dependency: "缺少 mlx-vlm",
+  failed: "加载失败",
+  mlx_runtime_unavailable: "运行时不可用",
 };
 let fields = [];
 let values = {};
 let logsPaused = false;
-let visionLogsPaused = false;
 let modelFieldsDirty = false;
 let dashboardStats = null;
-let llamaStatus = null;
-let visionStatus = null;
+let mlxStatus = null;
 let chartMode = "learning";
 let stickerState = {
   items: [],
@@ -1323,8 +1286,8 @@ async function fetchJson(path, options = {}) {
 }
 
 function stateKind(state) {
-  if (["server_running", "server_present", "external_api_ready", "external_llama_ready", "vision_running", "vision_present"].includes(state)) return "ok";
-  if (["server_starting", "external_api_unchecked", "external_llama_unavailable", "port_in_use", "server_orphaned", "server_orphaned_unhealthy", "vision_starting", "vision_stopped", "vision_disabled"].includes(state)) return "warn";
+  if (["loaded"].includes(state)) return "ok";
+  if (["loading", "not_loaded", "missing_dependency"].includes(state)) return "warn";
   return "error";
 }
 
@@ -1397,7 +1360,7 @@ function renderTrainingControl() {
   if (!trainingTargetConfigured()) {
     for (const item of buttons) {
       item.disabled = true;
-      item.title = "先在设置里填写 LoRA 训练接口地址或本地 LoRA 训练命令";
+      item.title = "MLX-VLM LoRA 训练目标不可用";
     }
     if (button) button.textContent = "配置训练目标";
     if (externalButton) externalButton.textContent = "配置训练目标";
@@ -1440,12 +1403,11 @@ function renderMetricTiles() {
   const training = dashboardStats && dashboardStats.training ? dashboardStats.training : {};
   const trainingConfig = dashboardStats && dashboardStats.training_config ? dashboardStats.training_config : {};
   const lastTps = inference.last_tps;
-  const statusLabel = llamaStatus ? (stateLabels[llamaStatus.state] || llamaStatus.state || "-") : "读取中";
-  const visionLabel = visionStatus ? (stateLabels[visionStatus.state] || visionStatus.state || "-") : "读取中";
+  const statusLabel = mlxStatus ? (stateLabels[mlxStatus.state] || mlxStatus.state || "-") : "读取中";
   const lastRun = training.last_run;
   const lastSampleAt = totals.last_sample_at ? formatTimestamp(totals.last_sample_at) : "暂无样本";
   const pendingNote = !trainingTargetConfigured()
-    ? `未配置 LoRA 训练目标；这些样本尚未被真正训练`
+    ? `MLX-VLM LoRA 训练目标不可用；这些样本尚未被真正训练`
     : training.last_success
       ? `上次成功训练后新增；最低 ${formatNumber(trainingConfig.min_train_samples)} 条`
       : `尚无成功训练，显示全部可训练样本；最低 ${formatNumber(trainingConfig.min_train_samples)} 条`;
@@ -1478,17 +1440,12 @@ function renderMetricTiles() {
     {
       label: "训练记录",
       value: formatNumber(totals.training_runs),
-      note: lastRun ? `${lastRun.status} · ${formatTimestamp(lastRun.finished_at || lastRun.started_at)}` : (trainingConfig.target_configured ? "暂无训练记录" : "未配置 LoRA 训练目标"),
+      note: lastRun ? `${lastRun.status} · ${formatTimestamp(lastRun.finished_at || lastRun.started_at)}` : (trainingConfig.target_configured ? "暂无训练记录" : "MLX-VLM LoRA 训练目标不可用"),
     },
     {
-      label: "llama 状态",
+      label: "MLX 状态",
       value: statusLabel,
-      note: llamaStatus ? `${llamaStatus.runtime || "-"} · ${llamaStatus.pid ? `PID ${llamaStatus.pid}` : "无 PID"}` : "等待状态接口",
-    },
-    {
-      label: "视觉服务",
-      value: visionLabel,
-      note: visionStatus ? `${visionStatus.model || "-"} · ${visionStatus.pid ? `PID ${visionStatus.pid}` : "无 PID"}` : "等待状态接口",
+      note: mlxStatus ? `${mlxStatus.model || "-"} · ${mlxStatus.adapter_path || "无 adapter"}` : "等待状态接口",
     },
   ];
   if (lastTps && lastTps.tps) {
@@ -1601,27 +1558,24 @@ function renderFacts(payload) {
   const facts = [
     ["运行方式", payload.runtime],
     ["健康检查", payload.healthy ? "healthy" : "not healthy"],
-    ["API", payload.api_base],
-    ["监听", `${payload.host}:${payload.port}`],
-    ["PID", payload.pid ?? "-"],
-    ["运行时长", formatDuration(payload.uptime_seconds)],
-    ["模型", payload.model || "-"],
-    ["模型文件", payload.model_file || "-"],
-    ["程序", payload.executable || "-"],
-    ["上次结果", payload.last_result ? payload.last_result.status : "-"],
+    ["目标模型", payload.model || "-"],
+    ["已加载模型", payload.loaded_model || "-"],
+    ["Adapter", payload.adapter_path || "-"],
+    ["已加载 Adapter", payload.loaded_adapter_path || "-"],
+    ["上次错误", payload.last_error || "-"],
   ];
-  document.getElementById("llama-facts").innerHTML = facts.map(([key, value]) =>
+  document.getElementById("mlx-facts").innerHTML = facts.map(([key, value]) =>
     `<div class="fact"><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd></div>`
   ).join("");
 }
 
 function renderStatus(payload) {
-  llamaStatus = payload;
+  mlxStatus = payload;
   const state = payload.state || "unknown";
-  const root = document.getElementById("llama-status");
+  const root = document.getElementById("mlx-status");
   root.className = `status-spine ${stateKind(state)}`;
   const label = stateLabels[state] || state;
-  const detail = payload.control && payload.control.reason ? payload.control.reason : payload.command || "状态已更新";
+  const detail = payload.control && payload.control.reason ? payload.control.reason : (payload.last_error || payload.model || "状态已更新");
   root.innerHTML = `
     <div class="state-line">
       <span class="state-dot" aria-hidden="true"></span>
@@ -1632,60 +1586,20 @@ function renderStatus(payload) {
     </div>`;
   renderFacts(payload);
   renderModelControls(payload);
-  setControl("llama-start", Boolean(payload.control && payload.control.can_start), payload.control && payload.control.reason);
-  setControl("llama-stop", Boolean(payload.control && payload.control.can_stop), payload.control && payload.control.reason);
-  setControl("llama-restart", Boolean(payload.control && payload.control.can_restart), payload.control && payload.control.reason);
-  setControl("llama-reload", Boolean(payload.control && payload.control.can_reload), payload.control && payload.control.reason);
-  setControl("llama-switch", Boolean(payload.control && payload.control.can_switch), payload.control && payload.control.reason);
-  renderMetricTiles();
-}
-
-function renderVisionFacts(payload) {
-  const facts = [
-    ["健康检查", payload.healthy ? "healthy" : "not healthy"],
-    ["端点", payload.endpoint || "-"],
-    ["PID", payload.pid ?? "-"],
-    ["运行时长", formatDuration(payload.uptime_seconds)],
-    ["模型", payload.model || "-"],
-    ["启动者", payload.started_by_plugin ? "plugin" : "external"],
-    ["上次结果", payload.last_result ? payload.last_result.status : "-"],
-    ["命令", payload.command || "-"],
-  ];
-  document.getElementById("vision-facts").innerHTML = facts.map(([key, value]) =>
-    `<div class="fact"><dt>${escapeHtml(key)}</dt><dd>${escapeHtml(String(value))}</dd></div>`
-  ).join("");
-}
-
-function renderVisionStatus(payload) {
-  visionStatus = payload;
-  const state = payload.state || "unknown";
-  const root = document.getElementById("vision-status");
-  root.className = `status-spine ${stateKind(state)}`;
-  const label = stateLabels[state] || state;
-  const detail = payload.control && payload.control.reason ? payload.control.reason : payload.command || payload.endpoint || "状态已更新";
-  root.innerHTML = `
-    <div class="state-line">
-      <span class="state-dot" aria-hidden="true"></span>
-      <div>
-        <div class="state-name">${escapeHtml(label)}</div>
-        <div class="state-detail">${escapeHtml(detail)}</div>
-      </div>
-    </div>`;
-  renderVisionFacts(payload);
-  setControl("vision-start", Boolean(payload.control && payload.control.can_start), payload.control && payload.control.reason);
-  setControl("vision-stop", Boolean(payload.control && payload.control.can_stop), payload.control && payload.control.reason);
-  setControl("vision-restart", Boolean(payload.control && payload.control.can_restart), payload.control && payload.control.reason);
+  setControl("mlx-load", Boolean(payload.control && payload.control.can_load), payload.control && payload.control.reason);
+  setControl("mlx-unload", Boolean(payload.control && payload.control.can_unload), payload.control && payload.control.reason);
+  setControl("mlx-reload", Boolean(payload.control && payload.control.can_reload), payload.control && payload.control.reason);
   renderMetricTiles();
 }
 
 function renderModelControls(payload) {
-  const modelInput = document.getElementById("llama-model-input");
-  const fileInput = document.getElementById("llama-model-file-input");
+  const modelInput = document.getElementById("mlx-model-input");
+  const adapterInput = document.getElementById("mlx-adapter-input");
   if (!modelFieldsDirty) {
     modelInput.value = payload.model || "";
-    fileInput.value = payload.model_file || "";
+    adapterInput.value = payload.adapter_path || "";
   }
-  const list = document.getElementById("llama-model-presets");
+  const list = document.getElementById("mlx-model-presets");
   list.innerHTML = "";
   for (const option of payload.model_presets || []) {
     const node = document.createElement("option");
@@ -1701,9 +1615,9 @@ function setControl(id, enabled, reason) {
   node.title = enabled ? "" : (reason || "当前状态不可用");
 }
 
-async function loadLlamaStatus() {
+async function loadMlxStatus() {
   try {
-    const payload = await fetchJson("/api/llama/status");
+    const payload = await fetchJson("/api/mlx/status");
     renderStatus(payload);
     setNotice("dashboard-status", "状态已刷新", "ok");
   } catch (error) {
@@ -1711,10 +1625,10 @@ async function loadLlamaStatus() {
   }
 }
 
-async function loadLlamaLogs() {
+async function loadMlxLogs() {
   if (logsPaused) return;
   try {
-    const payload = await fetchJson("/api/llama/logs?tail=300");
+    const payload = await fetchJson("/api/mlx/logs?tail=300");
     renderLogs(payload.logs || []);
   } catch (error) {
     renderLogs([{ time: "", stream: "error", message: String(error) }]);
@@ -1722,7 +1636,7 @@ async function loadLlamaLogs() {
 }
 
 function renderLogs(logs) {
-  renderLogPanel("llama-logs", logs);
+  renderLogPanel("mlx-logs", logs);
 }
 
 function renderLogPanel(id, logs) {
@@ -1746,63 +1660,23 @@ function logText(id) {
   return Array.from(root.querySelectorAll(".log-line")).map(node => node.textContent.trim()).join("\n");
 }
 
-async function loadVisionStatus() {
-  try {
-    const payload = await fetchJson("/api/vision/status");
-    renderVisionStatus(payload);
-    setNotice("vision-notice", "状态已刷新", "ok");
-  } catch (error) {
-    setNotice("vision-notice", String(error), "error");
-  }
-}
-
-async function loadVisionLogs() {
-  if (visionLogsPaused) return;
-  try {
-    const payload = await fetchJson("/api/vision/logs?tail=200");
-    renderLogPanel("vision-logs", payload.logs || []);
-  } catch (error) {
-    renderLogPanel("vision-logs", [{ time: "", stream: "error", message: String(error) }]);
-  }
-}
-
-async function controlLlama(action, body = null) {
-  const labels = { stop: "停止", restart: "重启", reload: "重载模型", switch: "切换模型" };
-  if (action !== "start" && !confirm(`确认${labels[action] || action} llama.cpp 服务？`)) return;
+async function controlMlx(action) {
+  const labels = { unload: "卸载", reload: "重载" };
+  if (action !== "load" && !confirm(`确认${labels[action] || action} MLX-VLM 模型？`)) return;
   try {
     setNotice("dashboard-status", "操作已提交...");
-    const options = { method: "POST" };
-    if (body) {
-      options.headers = { "Content-Type": "application/json" };
-      options.body = JSON.stringify(body);
-    }
-    const payload = await fetchJson(`/api/llama/${action}`, options);
+    const payload = await fetchJson(`/api/mlx/${action}`, { method: "POST" });
     setNotice("dashboard-status", `操作结果：${payload.status}`, "ok");
-    if (action === "switch") modelFieldsDirty = false;
-    await loadLlamaStatus();
-    await loadLlamaLogs();
+    await loadMlxStatus();
+    await loadMlxLogs();
   } catch (error) {
     setNotice("dashboard-status", String(error), "error");
   }
 }
 
-async function controlVision(action) {
-  const labels = { stop: "停止", restart: "重启" };
-  if (action !== "start" && !confirm(`确认${labels[action] || action}视觉理解服务？`)) return;
-  try {
-    setNotice("vision-notice", "操作已提交...");
-    const payload = await fetchJson(`/api/vision/${action}`, { method: "POST" });
-    setNotice("vision-notice", `操作结果：${payload.status}`, "ok");
-    await loadVisionStatus();
-    await loadVisionLogs();
-  } catch (error) {
-    setNotice("vision-notice", String(error), "error");
-  }
-}
-
 async function triggerTraining(options = {}) {
   if (!trainingTargetConfigured()) {
-    setNotice("dashboard-status", "未配置 LoRA 训练目标：请先在设置中填写训练接口地址或本地训练命令", "error");
+    setNotice("dashboard-status", "MLX-VLM LoRA 训练目标不可用", "error");
     renderTrainingControl();
     return;
   }
@@ -1827,16 +1701,6 @@ async function triggerTraining(options = {}) {
     setNotice("dashboard-status", String(error), "error");
     renderTrainingControl();
   }
-}
-
-function switchModel() {
-  const model = document.getElementById("llama-model-input").value.trim();
-  const modelFile = document.getElementById("llama-model-file-input").value.trim();
-  if (!model && !modelFile) {
-    setNotice("dashboard-status", "请输入模型 ID 或本地 GGUF 文件", "error");
-    return;
-  }
-  controlLlama("switch", { model, model_file: modelFile });
 }
 
 async function loadStickers(resetOffset = false) {
@@ -2510,8 +2374,7 @@ function renderSettings() {
 }
 
 function currentRuntime() {
-  const input = document.querySelector('[data-name="qwen_persona_runtime"]');
-  return input ? input.value : (values.qwen_persona_runtime || "llama_cpp");
+  return "mlx_vlm";
 }
 
 function fieldVisible(field, runtime) {
@@ -2551,12 +2414,6 @@ function renderField(field) {
       node.textContent = option.label || option.value;
       node.selected = option.value === value;
       select.appendChild(node);
-    }
-    if (field.name === "qwen_persona_runtime") {
-      select.addEventListener("change", () => {
-        values[field.name] = select.value;
-        renderSettings();
-      });
     }
     editor.appendChild(select);
   } else if (field.widget === "combo") {
@@ -2689,43 +2546,27 @@ document.getElementById("refresh").addEventListener("click", () => {
   }
   else {
     loadDashboardStats();
-    loadLlamaStatus();
-    loadLlamaLogs();
-    loadVisionStatus();
-    loadVisionLogs();
+    loadMlxStatus();
+    loadMlxLogs();
   }
 });
 document.getElementById("save").addEventListener("click", saveConfig);
 document.getElementById("search").addEventListener("input", renderSettings);
 document.getElementById("training-run").addEventListener("click", triggerTraining);
 document.getElementById("training-run-external").addEventListener("click", () => triggerTraining({ fullExternalCorpus: true }));
-document.getElementById("llama-start").addEventListener("click", () => controlLlama("start"));
-document.getElementById("llama-stop").addEventListener("click", () => controlLlama("stop"));
-document.getElementById("llama-restart").addEventListener("click", () => controlLlama("restart"));
-document.getElementById("llama-reload").addEventListener("click", () => controlLlama("reload"));
-document.getElementById("llama-switch").addEventListener("click", switchModel);
-document.getElementById("llama-model-input").addEventListener("input", () => { modelFieldsDirty = true; });
-document.getElementById("llama-model-file-input").addEventListener("input", () => { modelFieldsDirty = true; });
-document.getElementById("vision-start").addEventListener("click", () => controlVision("start"));
-document.getElementById("vision-stop").addEventListener("click", () => controlVision("stop"));
-document.getElementById("vision-restart").addEventListener("click", () => controlVision("restart"));
+document.getElementById("mlx-load").addEventListener("click", () => controlMlx("load"));
+document.getElementById("mlx-unload").addEventListener("click", () => controlMlx("unload"));
+document.getElementById("mlx-reload").addEventListener("click", () => controlMlx("reload"));
+document.getElementById("mlx-model-input").addEventListener("input", () => { modelFieldsDirty = true; });
+document.getElementById("mlx-adapter-input").addEventListener("input", () => { modelFieldsDirty = true; });
 document.getElementById("logs-pause").addEventListener("click", () => {
   logsPaused = !logsPaused;
   document.getElementById("logs-pause").textContent = logsPaused ? "继续刷新" : "暂停刷新";
 });
 document.getElementById("logs-copy").addEventListener("click", async () => {
-  const text = logText("llama-logs");
+  const text = logText("mlx-logs");
   if (navigator.clipboard) await navigator.clipboard.writeText(text);
   setNotice("dashboard-status", "日志已复制", "ok");
-});
-document.getElementById("vision-logs-pause").addEventListener("click", () => {
-  visionLogsPaused = !visionLogsPaused;
-  document.getElementById("vision-logs-pause").textContent = visionLogsPaused ? "继续刷新" : "暂停刷新";
-});
-document.getElementById("vision-logs-copy").addEventListener("click", async () => {
-  const text = logText("vision-logs");
-  if (navigator.clipboard) await navigator.clipboard.writeText(text);
-  setNotice("vision-notice", "日志已复制", "ok");
 });
 bindEvent("sticker-search", "input", () => {
   clearTimeout(stickerSearchTimer);
@@ -2776,14 +2617,10 @@ if (page === "settings") {
   if (!mountStickerGalleryApp() && document.getElementById("sticker-grid")) loadStickers(true);
 } else {
   loadDashboardStats();
-  loadLlamaStatus();
-  loadLlamaLogs();
-  loadVisionStatus();
-  loadVisionLogs();
-  setInterval(loadLlamaStatus, 4000);
-  setInterval(loadLlamaLogs, 2500);
-  setInterval(loadVisionStatus, 5000);
-  setInterval(loadVisionLogs, 3000);
+  loadMlxStatus();
+  loadMlxLogs();
+  setInterval(loadMlxStatus, 4000);
+  setInterval(loadMlxLogs, 2500);
   setInterval(loadDashboardStats, 12000);
 }
 </script>
@@ -2803,8 +2640,7 @@ class AdminWebServer:
         config: Any,
         save_callback: Callable[[dict[str, Any]], dict[str, Any]],
         logger: Any,
-        model_manager: Any | None = None,
-        vision_manager: Any | None = None,
+        mlx_runtime: Any | None = None,
         store: Any | None = None,
         qwen_client: Any | None = None,
         trainer: Any | None = None,
@@ -2813,8 +2649,7 @@ class AdminWebServer:
         self.config = config
         self.save_callback = save_callback
         self.logger = logger
-        self.model_manager = model_manager
-        self.vision_manager = vision_manager
+        self.mlx_runtime = mlx_runtime
         self.store = store
         self.qwen_client = qwen_client
         self.trainer = trainer
@@ -2833,11 +2668,8 @@ class AdminWebServer:
     def set_event_loop(self, event_loop: asyncio.AbstractEventLoop) -> None:
         self.event_loop = event_loop
 
-    def set_model_manager(self, model_manager: Any) -> None:
-        self.model_manager = model_manager
-
-    def set_vision_manager(self, vision_manager: Any) -> None:
-        self.vision_manager = vision_manager
+    def set_mlx_runtime(self, mlx_runtime: Any) -> None:
+        self.mlx_runtime = mlx_runtime
 
     def set_store(self, store: Any) -> None:
         self.store = store
@@ -2903,13 +2735,13 @@ class AdminWebServer:
                 return
             self._send_json(handler, self._config_payload())
             return
-        if path == "/api/llama/status":
+        if path == "/api/mlx/status":
             if not self._authorized(handler):
                 self._send_json(handler, {"error": "unauthorized"}, status=401)
                 return
-            self._send_json(handler, self._llama_status_payload())
+            self._send_json(handler, self._mlx_status_payload())
             return
-        if path == "/api/llama/logs":
+        if path == "/api/mlx/logs":
             if not self._authorized(handler):
                 self._send_json(handler, {"error": "unauthorized"}, status=401)
                 return
@@ -2917,23 +2749,7 @@ class AdminWebServer:
                 tail = int(parse_qs(parsed.query).get("tail", ["200"])[0] or "200")
             except ValueError:
                 tail = 200
-            self._send_json(handler, self._llama_logs_payload(tail=tail))
-            return
-        if path == "/api/vision/status":
-            if not self._authorized(handler):
-                self._send_json(handler, {"error": "unauthorized"}, status=401)
-                return
-            self._send_json(handler, self._vision_status_payload())
-            return
-        if path == "/api/vision/logs":
-            if not self._authorized(handler):
-                self._send_json(handler, {"error": "unauthorized"}, status=401)
-                return
-            try:
-                tail = int(parse_qs(parsed.query).get("tail", ["200"])[0] or "200")
-            except ValueError:
-                tail = 200
-            self._send_json(handler, self._vision_logs_payload(tail=tail))
+            self._send_json(handler, self._mlx_logs_payload(tail=tail))
             return
         if path == "/api/dashboard/stats":
             if not self._authorized(handler):
@@ -2951,11 +2767,8 @@ class AdminWebServer:
 
     def _handle_post(self, handler: BaseHTTPRequestHandler) -> None:
         path = urlparse(handler.path).path
-        if path.startswith("/api/llama/"):
-            self._handle_llama_post(handler, path)
-            return
-        if path.startswith("/api/vision/"):
-            self._handle_vision_post(handler, path)
+        if path.startswith("/api/mlx/"):
+            self._handle_mlx_post(handler, path)
             return
         if path == "/api/training/run":
             self._handle_training_post(handler)
@@ -3018,36 +2831,19 @@ class AdminWebServer:
         except Exception as exc:
             self._send_json(handler, {"error": str(exc)}, status=400)
 
-    def _handle_llama_post(self, handler: BaseHTTPRequestHandler, path: str) -> None:
+    def _handle_mlx_post(self, handler: BaseHTTPRequestHandler, path: str) -> None:
         if not self._authorized(handler):
             self._send_json(handler, {"error": "unauthorized"}, status=401)
             return
-        action = path.removeprefix("/api/llama/")
-        if action not in {"start", "stop", "restart", "reload", "switch"}:
+        action = path.removeprefix("/api/mlx/")
+        if action not in {"load", "unload", "reload"}:
             self._send_text(handler, "not found", status=404)
             return
-        if not self.model_manager:
-            self._send_json(handler, {"error": "model manager unavailable"}, status=503)
+        if not self.mlx_runtime:
+            self._send_json(handler, {"error": "mlx runtime unavailable"}, status=503)
             return
         try:
-            payload = self._read_json_body(handler) if action == "switch" else {}
-            self._send_json(handler, self._submit_model_action(action, payload))
-        except Exception as exc:
-            self._send_json(handler, {"error": str(exc)}, status=400)
-
-    def _handle_vision_post(self, handler: BaseHTTPRequestHandler, path: str) -> None:
-        if not self._authorized(handler):
-            self._send_json(handler, {"error": "unauthorized"}, status=401)
-            return
-        action = path.removeprefix("/api/vision/")
-        if action not in {"start", "stop", "restart"}:
-            self._send_text(handler, "not found", status=404)
-            return
-        if not self.vision_manager:
-            self._send_json(handler, {"error": "vision manager unavailable"}, status=503)
-            return
-        try:
-            self._send_json(handler, self._submit_vision_action(action))
+            self._send_json(handler, self._submit_mlx_action(action))
         except Exception as exc:
             self._send_json(handler, {"error": str(exc)}, status=400)
 
@@ -3068,7 +2864,7 @@ class AdminWebServer:
             try:
                 return asyncio.run_coroutine_threadsafe(coro, self.event_loop).result(timeout=240)
             except FutureTimeoutError as exc:
-                raise TimeoutError("llama operation timed out") from exc
+                raise TimeoutError("mlx operation timed out") from exc
         return asyncio.run(coro)
 
     def _read_json_body(self, handler: BaseHTTPRequestHandler) -> dict[str, Any]:
@@ -3082,51 +2878,43 @@ class AdminWebServer:
             raise ValueError("request body must be an object")
         return data
 
-    def _submit_model_action(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        if not self.model_manager:
-            return {"status": "model_manager_unavailable", "action": action}
-        payload = payload or {}
+    def _submit_mlx_action(self, action: str) -> dict[str, Any]:
+        if not self.mlx_runtime:
+            return {"status": "mlx_runtime_unavailable", "action": action}
         with self._pending_action_lock:
             if self._pending_action_future and not self._pending_action_future.done():
                 return {"status": "action_in_progress", "action": self._pending_action}
             self._pending_action = ""
             self._pending_action_future = None
 
-            coro = self._model_action_coro(action, payload)
+            coro = self._mlx_action_coro(action)
             if self.event_loop and self.event_loop.is_running():
                 future = asyncio.run_coroutine_threadsafe(coro, self.event_loop)
                 self._pending_action = action
                 self._pending_action_future = future
-                future.add_done_callback(lambda done: self._finish_model_action(action, done))
+                future.add_done_callback(lambda done: self._finish_mlx_action(action, done))
                 return {"status": "action_scheduled", "action": action}
 
         result = asyncio.run(coro)
-        payload = self._model_result_payload(result)
+        payload = self._runtime_result_payload(result)
         payload["action"] = action
         return payload
 
-    def _model_action_coro(self, action: str, payload: dict[str, Any]) -> Any:
-        if action == "switch":
-            model = str(payload.get("model", "") or "").strip()
-            model_file = str(payload.get("model_file", "") or "").strip()
-            if not model and not model_file:
-                raise ValueError("model or model_file is required")
-            values: dict[str, Any] = {"qwen_persona_llama_model_file": model_file}
-            if model:
-                values["qwen_persona_llama_model"] = model
-            self.save_callback(values)
-            return self.model_manager.switch_model(
-                model or str(getattr(self.config, "qwen_persona_llama_model", "")),
-                model_file,
-            )
-        return getattr(self.model_manager, action)()
+    def _mlx_action_coro(self, action: str) -> Any:
+        if action == "load":
+            return self.mlx_runtime.load()
+        if action == "reload":
+            return self.mlx_runtime.reload()
+        if action == "unload":
+            return self.mlx_runtime.unload()
+        raise ValueError(f"unsupported mlx action: {action}")
 
-    def _finish_model_action(self, action: str, future: Any) -> None:
+    def _finish_mlx_action(self, action: str, future: Any) -> None:
         try:
             future.result()
         except Exception as exc:
-            if self.model_manager and hasattr(self.model_manager, "_append_log"):
-                self.model_manager._append_log(
+            if self.mlx_runtime and hasattr(self.mlx_runtime, "_append_log"):
+                self.mlx_runtime._append_log(
                     "system",
                     f"admin action {action} failed: {type(exc).__name__}: {exc}",
                 )
@@ -3194,87 +2982,41 @@ class AdminWebServer:
                     self._pending_training_reason = ""
                     self._pending_training_future = None
 
-    def _llama_status_payload(self) -> dict[str, Any]:
-        if not self.model_manager:
+    def _mlx_status_payload(self) -> dict[str, Any]:
+        if not self.mlx_runtime:
             return {
-                "runtime": "unavailable",
-                "state": "model_manager_unavailable",
+                "runtime": "mlx_vlm",
+                "state": "mlx_runtime_unavailable",
                 "healthy": False,
                 "control": {
-                    "can_start": False,
-                    "can_stop": False,
-                    "can_restart": False,
-                    "reason": "model manager unavailable",
+                    "can_load": False,
+                    "can_unload": False,
+                    "can_reload": False,
+                    "reason": "mlx runtime unavailable",
                 },
             }
-        payload = self._run_model_coro_sync(self.model_manager.status_snapshot())
+        snapshot = self.mlx_runtime.status_snapshot()
+        if asyncio.iscoroutine(snapshot):
+            payload = self._run_model_coro_sync(snapshot)
+        else:
+            payload = dict(snapshot)
         with self._pending_action_lock:
             pending = self._pending_action if self._pending_action_future and not self._pending_action_future.done() else ""
         if pending:
             payload["operation"] = pending
             control = payload.setdefault("control", {})
-            control["can_start"] = False
-            control["can_stop"] = False
-            control["can_restart"] = False
+            control["can_load"] = False
+            control["can_unload"] = False
             control["can_reload"] = False
-            control["can_switch"] = False
             control["reason"] = f"{pending} is running"
-        payload["model_presets"] = LLAMA_MODEL_PRESETS
+        payload["model_presets"] = MLX_MODEL_PRESETS
         return payload
 
-    def _llama_logs_payload(self, *, tail: int = 200) -> dict[str, Any]:
-        if not self.model_manager:
+    def _mlx_logs_payload(self, *, tail: int = 200) -> dict[str, Any]:
+        if not self.mlx_runtime:
             return {"logs": []}
         tail = max(0, min(int(tail), 1000))
-        return {"logs": self.model_manager.logs(tail=tail)}
-
-    def _vision_status_payload(self) -> dict[str, Any]:
-        if not self.vision_manager:
-            return {
-                "state": "vision_manager_unavailable",
-                "healthy": False,
-                "control": {
-                    "can_start": False,
-                    "can_stop": False,
-                    "can_restart": False,
-                    "reason": "vision manager unavailable",
-                },
-            }
-        return self._run_model_coro_sync(self.vision_manager.status_snapshot())
-
-    def _vision_logs_payload(self, *, tail: int = 200) -> dict[str, Any]:
-        if not self.vision_manager:
-            return {"logs": []}
-        tail = max(0, min(int(tail), 1000))
-        return {"logs": self.vision_manager.logs(tail=tail)}
-
-    def _submit_vision_action(self, action: str) -> dict[str, Any]:
-        if not self.vision_manager:
-            return {"status": "vision_manager_unavailable", "action": action}
-        if action == "restart" and not hasattr(self.vision_manager, "restart"):
-            async def restart_fallback() -> Any:
-                await self.vision_manager.stop()
-                return await self.vision_manager.start()
-
-            coro = restart_fallback()
-        else:
-            coro = getattr(self.vision_manager, action)()
-        result = self._run_model_coro_sync(coro)
-        payload = self._vision_result_payload(result)
-        payload["action"] = action
-        return payload
-
-    @staticmethod
-    def _vision_result_payload(result: Any) -> dict[str, Any]:
-        if isinstance(result, dict):
-            return dict(result)
-        if is_dataclass(result):
-            return asdict(result)
-        return {
-            "status": getattr(result, "status", "unknown"),
-            "endpoint": getattr(result, "endpoint", ""),
-            "log": getattr(result, "log", ""),
-        }
+        return {"logs": self.mlx_runtime.logs(tail=tail)}
 
     def _sticker_gallery_payload(self, query: dict[str, list[str]] | None = None) -> dict[str, Any]:
         query = query or {}
@@ -3355,30 +3097,26 @@ class AdminWebServer:
             if self.qwen_client and hasattr(self.qwen_client, "metrics_snapshot")
             else {"last": None, "history": []}
         )
-        llama_metrics = (
-            self.model_manager.performance_snapshot()
-            if self.model_manager and hasattr(self.model_manager, "performance_snapshot")
+        runtime_metrics = (
+            self.mlx_runtime.metrics_snapshot()
+            if self.mlx_runtime and hasattr(self.mlx_runtime, "metrics_snapshot")
             else {"last": None, "history": []}
         )
-        last_tps = client_metrics.get("last") or llama_metrics.get("last")
-        performance_history = [
-            *list(client_metrics.get("history") or []),
-            *list(llama_metrics.get("history") or []),
-        ]
+        last_tps = client_metrics.get("last") or runtime_metrics.get("last")
+        performance_history = list(client_metrics.get("history") or [])
+        for item in runtime_metrics.get("history") or []:
+            if item not in performance_history:
+                performance_history.append(item)
         performance_history.sort(key=lambda item: str(item.get("time", "")))
         payload.setdefault("charts", {})["performance_trend"] = performance_history[-40:]
         payload["inference"] = {
             "last_tps": last_tps,
             "client": client_metrics,
-            "llama_log": llama_metrics,
+            "mlx_runtime": runtime_metrics,
         }
         payload["training_operation"] = self._training_operation_payload()
-        train_target = bool(
-            str(getattr(self.config, "qwen_persona_lora_api_url", "") or "").strip()
-            or str(getattr(self.config, "qwen_persona_lora_train_command", "") or "").strip()
-        )
         payload["training_config"] = {
-            "target_configured": train_target,
+            "target_configured": True,
             "helper_configured": bool(
                 str(getattr(self.config, "qwen_persona_lora_helper_api_url", "") or "").strip()
             ),
@@ -3390,6 +3128,10 @@ class AdminWebServer:
             "external_corpus_limit": int(
                 getattr(self.config, "qwen_persona_external_corpus_limit", 0) or 0
             ),
+            "multimodal_training_enabled": bool(
+                getattr(self.config, "qwen_persona_multimodal_training_enabled", False)
+            ),
+            "mlx_lora_modules": normalized_lora_modules(self.config),
         }
         return payload
 
@@ -3405,7 +3147,7 @@ class AdminWebServer:
         except ValueError:
             return default
 
-    def _model_result_payload(self, result: Any) -> dict[str, Any]:
+    def _runtime_result_payload(self, result: Any) -> dict[str, Any]:
         if isinstance(result, dict):
             payload = dict(result)
         elif is_dataclass(result):
@@ -3417,8 +3159,8 @@ class AdminWebServer:
                 "repo_id": getattr(result, "repo_id", ""),
                 "log": getattr(result, "log", ""),
             }
-        if self.model_manager and hasattr(self.model_manager, "_redact_text"):
-            payload["log"] = self.model_manager._redact_text(payload.get("log", ""))
+        if self.mlx_runtime and hasattr(self.mlx_runtime, "_redact_text"):
+            payload["log"] = self.mlx_runtime._redact_text(payload.get("log", ""))
         return payload
 
     def _training_operation_payload(self) -> dict[str, Any]:
@@ -3451,8 +3193,8 @@ class AdminWebServer:
                 "output_dir": getattr(result, "output_dir", ""),
                 "log": getattr(result, "log", ""),
             }
-        if self.model_manager and hasattr(self.model_manager, "_redact_text"):
-            payload["log"] = self.model_manager._redact_text(payload.get("log", ""))
+        if self.mlx_runtime and hasattr(self.mlx_runtime, "_redact_text"):
+            payload["log"] = self.mlx_runtime._redact_text(payload.get("log", ""))
         if isinstance(payload.get("log"), str):
             payload["log"] = payload["log"][-4000:]
         return payload
@@ -3520,25 +3262,39 @@ class AdminWebServer:
 
     @staticmethod
     def _widget(name: str) -> str:
-        if name in {"qwen_persona_runtime", "qwen_persona_llama_model"}:
+        if name == "qwen_persona_mlx_model":
             return "combo"
+        if name == "qwen_persona_mlx_lora_train_modules":
+            return "chips"
         return ""
 
     @staticmethod
     def _options(name: str) -> list[dict[str, str]]:
-        if name == "qwen_persona_runtime":
+        if name == "qwen_persona_mlx_model":
+            return MLX_MODEL_PRESETS
+        if name == "qwen_persona_mlx_lora_train_modules":
             return [
-                {"value": "llama_cpp", "label": "自管 llama.cpp"},
-                {"value": "external_llama", "label": "外部 llama.cpp 服务"},
-                {"value": "external_api", "label": "外部 OpenAI-compatible API"},
+                {
+                    "value": "language",
+                    "label": "Language",
+                    "description": "默认训练语言层 LoRA。",
+                },
+                {
+                    "value": "projection",
+                    "label": "Projection",
+                    "description": "记录选择并显示风险；mlx-vlm CLI 不单独暴露投影层 LoRA。",
+                },
+                {
+                    "value": "vision_tower",
+                    "label": "Vision Tower",
+                    "description": "会解冻视觉栈，16GB 统一内存机器默认不建议开启。",
+                },
             ]
-        if name == "qwen_persona_llama_model":
-            return LLAMA_MODEL_PRESETS
         return []
 
     @staticmethod
     def _allow_custom(name: str) -> bool:
-        return name == "qwen_persona_llama_model"
+        return name == "qwen_persona_mlx_model"
 
     @staticmethod
     def _category(name: str) -> str:
@@ -3546,13 +3302,11 @@ class AdminWebServer:
             return "后台网页"
         if "lora" in name or "train" in name:
             return "LoRA 训练"
-        if "vision" in name:
-            return "视觉理解"
         if "sticker" in name:
             return "表情包"
         if "blacklist" in name:
             return "黑名单"
-        if "llama" in name or name == "qwen_persona_runtime" or name == "qwen_persona_model_dir":
+        if "mlx" in name or name == "qwen_persona_model_dir":
             return "模型部署"
         if "api" in name or name.endswith("model") or "temperature" in name or "top_p" in name or "max_tokens" in name:
             return "模型调用"
@@ -3563,51 +3317,31 @@ class AdminWebServer:
     @staticmethod
     def _category_rank(category: str) -> int:
         try:
-            return ["后台网页", "模型部署", "模型调用", "视觉理解", "学习与回复", "表情包", "LoRA 训练", "黑名单", "其他"].index(category)
+            return ["后台网页", "模型部署", "模型调用", "学习与回复", "表情包", "LoRA 训练", "黑名单", "其他"].index(category)
         except ValueError:
             return 99
 
     @staticmethod
     def _field_order(name: str) -> int:
         order = {
-            "qwen_persona_runtime": 0,
-            "qwen_persona_llama_host": 10,
-            "qwen_persona_llama_port": 11,
-            "qwen_persona_llama_model": 12,
-            "qwen_persona_llama_model_file": 13,
-            "qwen_persona_llama_server_path": 20,
-            "qwen_persona_llama_auto_install": 21,
-            "qwen_persona_llama_ctx_size": 22,
-            "qwen_persona_llama_extra_args": 23,
-            "qwen_persona_vision_enabled": 0,
-            "qwen_persona_vision_auto_start": 1,
-            "qwen_persona_vision_host": 2,
-            "qwen_persona_vision_port": 3,
-            "qwen_persona_vision_model": 4,
-            "qwen_persona_vision_python": 5,
+            "qwen_persona_mlx_model": 0,
+            "qwen_persona_mlx_adapter_path": 1,
+            "qwen_persona_mlx_auto_load": 2,
+            "qwen_persona_mlx_trust_remote_code": 3,
+            "qwen_persona_model_dir": 4,
+            "qwen_persona_mlx_lora_train_modules": 10,
+            "qwen_persona_mlx_lora_rank": 11,
+            "qwen_persona_mlx_lora_scale": 12,
+            "qwen_persona_mlx_lora_learning_rate": 13,
+            "qwen_persona_mlx_lora_batch_size": 14,
+            "qwen_persona_mlx_lora_grad_accum_steps": 15,
+            "qwen_persona_mlx_lora_epochs": 16,
         }
         return order.get(name, 100)
 
     @staticmethod
     def _visible_when(name: str) -> dict[str, list[str]]:
-        self_managed = ["llama_cpp"]
-        llama_modes = ["llama_cpp", "external_llama"]
-        external_api = ["external_api"]
-        visibility = {
-            "qwen_persona_api_base": external_api,
-            "qwen_persona_model": external_api,
-            "qwen_persona_llama_server_path": self_managed,
-            "qwen_persona_llama_auto_install": self_managed,
-            "qwen_persona_llama_model_file": self_managed,
-            "qwen_persona_llama_ctx_size": self_managed,
-            "qwen_persona_llama_extra_args": self_managed,
-            "qwen_persona_model_dir": self_managed,
-            "qwen_persona_llama_host": llama_modes,
-            "qwen_persona_llama_port": llama_modes,
-            "qwen_persona_llama_model": llama_modes,
-        }
-        runtimes = visibility.get(name)
-        return {"runtime": runtimes} if runtimes else {}
+        return {}
 
     @staticmethod
     def _vendor_asset_payload(path: str) -> dict[str, Any]:

@@ -35,7 +35,7 @@ from .media import (
     reply_context_text_from_learning,
     sanitize_model_reply_media_text,
 )
-from .model_manager import ModelManager
+from .mlx_runtime import MlxVLMRuntime
 from .poke import is_poke_at_self, send_counter_poke
 from .prompt_budget import effective_context_message_limit, trim_history_lines_for_context
 from .qwen_client import QwenClient
@@ -58,13 +58,12 @@ from .sticker import (
 from .sticker_repo import cleanup_sticker_repo_manifest, record_sticker_repo_manifest
 from .storage import PersonaStore
 from .trainer import PersonaTrainer, parse_time_slot
-from .vision_manager import VisionManager
 
 __plugin_meta__ = PluginMetadata(
     name="Qwen Persona",
-    description="调用本地千问模型聊天，学习群友语气和表情包，并定时导出 LoRA 数据。",
+    description="通过内嵌 MLX-VLM 千问模型聊天，学习群友语气和表情包，并定时训练 LoRA。",
     usage=(
-        "配置本地 OpenAI-compatible API 后，@机器人即可聊天。\n"
+        "配置 MLX-VLM 模型后，@机器人即可聊天。\n"
         "命令：人格状态、人格训练（SUPERUSER）。"
     ),
     type="application",
@@ -87,18 +86,16 @@ if priority_changes:
         f"reply={plugin_config.qwen_persona_reply_priority}"
     )
 store = PersonaStore(Path(plugin_config.qwen_persona_data_dir))
-client = QwenClient(plugin_config)
+mlx_runtime = MlxVLMRuntime(plugin_config)
+client = QwenClient(plugin_config, runtime=mlx_runtime)
 trainer = PersonaTrainer(plugin_config, store)
-model_manager = ModelManager(plugin_config)
-vision_manager = VisionManager(plugin_config)
 repeat_tracker = RepeatTracker()
 conversation_pattern_tracker = ConversationPatternTracker()
 admin_web = AdminWebServer(
     config=plugin_config,
     save_callback=lambda values: _save_admin_config(values),
     logger=logger,
-    model_manager=model_manager,
-    vision_manager=vision_manager,
+    mlx_runtime=mlx_runtime,
     store=store,
     qwen_client=client,
     trainer=trainer,
@@ -107,16 +104,10 @@ _schedule_installed = False
 
 
 _CONFIG_RESTART_REQUIRED = {
-    "qwen_persona_runtime",
-    "qwen_persona_llama_server_path",
-    "qwen_persona_llama_auto_install",
-    "qwen_persona_llama_model",
-    "qwen_persona_llama_model_file",
-    "qwen_persona_llama_host",
-    "qwen_persona_llama_port",
-    "qwen_persona_llama_ctx_size",
-    "qwen_persona_llama_extra_args",
-    "qwen_persona_api_key",
+    "qwen_persona_mlx_model",
+    "qwen_persona_mlx_adapter_path",
+    "qwen_persona_mlx_auto_load",
+    "qwen_persona_mlx_trust_remote_code",
     "qwen_persona_model_dir",
     "qwen_persona_admin_enabled",
     "qwen_persona_admin_host",
@@ -126,12 +117,6 @@ _CONFIG_RESTART_REQUIRED = {
     "qwen_persona_enable_training",
     "qwen_persona_learning_priority",
     "qwen_persona_reply_priority",
-    "qwen_persona_vision_enabled",
-    "qwen_persona_vision_auto_start",
-    "qwen_persona_vision_python",
-    "qwen_persona_vision_host",
-    "qwen_persona_vision_port",
-    "qwen_persona_vision_model",
 }
 
 
@@ -140,8 +125,8 @@ def _save_admin_config(values: dict[str, Any]) -> dict[str, Any]:
     changed.extend(normalize_matcher_priorities(plugin_config))
     changed = list(dict.fromkeys(changed))
     save_config_overrides(plugin_config, config_to_dict(plugin_config))
-    model_manager.reconfigure(plugin_config)
-    vision_manager.reconfigure(plugin_config)
+    mlx_runtime.reconfigure(plugin_config)
+    client.reconfigure(plugin_config)
     restart_required = [name for name in changed if name in _CONFIG_RESTART_REQUIRED]
     return {"changed": changed, "restart_required": restart_required}
 
@@ -445,18 +430,21 @@ async def _build_model_messages(
     ]
 
 
-async def _build_reply_input_text(message: Any, plain_text: str) -> tuple[str, list[str]]:
+async def _build_reply_input_text(
+    message: Any,
+    plain_text: str,
+) -> tuple[str, list[str], list[dict[str, Any]]]:
     try:
         learning = await prepare_message_learning(
             message,
             sticker_segment_types=plugin_config.qwen_persona_sticker_segment_types,
-            captioner=vision_manager if plugin_config.qwen_persona_vision_enabled else None,
-            image_fallback_text=plugin_config.qwen_persona_vision_image_fallback_text,
-            sticker_fallback_text=plugin_config.qwen_persona_vision_sticker_fallback_text,
+            captioner=mlx_runtime,
+            image_fallback_text=plugin_config.qwen_persona_media_image_fallback_text,
+            sticker_fallback_text=plugin_config.qwen_persona_media_sticker_fallback_text,
         )
     except Exception as exc:
         logger.debug(f"qwen persona reply media context skipped: {exc!r}")
-        return plain_text, []
+        return plain_text, [], []
 
     reply_context = reply_context_text_from_learning(learning)
     sticker_keys = [
@@ -464,7 +452,7 @@ async def _build_reply_input_text(message: Any, plain_text: str) -> tuple[str, l
         for item in learning.get("stickers") or []
         if str(item.get("key") or "").strip()
     ]
-    return reply_context or plain_text, sticker_keys
+    return reply_context or plain_text, sticker_keys, list(learning.get("media_parts") or [])
 
 
 async def _send_repeat_if_needed(event: Event, ids: dict[str, str | None], message: Any) -> bool:
@@ -698,32 +686,21 @@ async def _startup() -> None:
         admin_web.start()
     except Exception as exc:
         logger.exception(f"qwen persona admin web failed to start: {exc!r}")
-    try:
-        deploy_result = await model_manager.ensure_ready()
-        if deploy_result.status not in {"disabled", "present"}:
+    if plugin_config.qwen_persona_mlx_auto_load:
+        try:
+            load_result = await mlx_runtime.load()
             logger.info(
-                "qwen persona model deploy result: "
-                f"{deploy_result.status}, repo={deploy_result.repo_id or '-'}, "
-                f"dir={deploy_result.model_dir}"
+                "qwen persona mlx runtime load result: "
+                f"{load_result.get('status')}, model={load_result.get('model')}"
             )
-    except Exception as exc:
-        logger.exception(f"qwen persona model auto deploy failed: {exc!r}")
-    try:
-        vision_result = await vision_manager.ensure_ready()
-        if vision_result.status not in {"vision_disabled", "vision_present"}:
-            logger.info(
-                "qwen persona vision deploy result: "
-                f"{vision_result.status}, endpoint={vision_result.endpoint}"
-            )
-    except Exception as exc:
-        logger.exception(f"qwen persona vision auto deploy failed: {exc!r}")
+        except Exception as exc:
+            logger.exception(f"qwen persona mlx runtime auto load failed: {exc!r}")
     _install_schedule()
 
 
 @driver.on_shutdown
 async def _shutdown() -> None:
-    await vision_manager.close()
-    await model_manager.close()
+    await mlx_runtime.close()
     admin_web.stop()
 
 
@@ -746,9 +723,9 @@ async def _learn_from_event(bot: Bot, event: Event) -> None:
     learning = await prepare_message_learning(
         message,
         sticker_segment_types=plugin_config.qwen_persona_sticker_segment_types,
-        captioner=vision_manager if plugin_config.qwen_persona_vision_enabled else None,
-        image_fallback_text=plugin_config.qwen_persona_vision_image_fallback_text,
-        sticker_fallback_text=plugin_config.qwen_persona_vision_sticker_fallback_text,
+        captioner=mlx_runtime,
+        image_fallback_text=plugin_config.qwen_persona_media_image_fallback_text,
+        sticker_fallback_text=plugin_config.qwen_persona_media_sticker_fallback_text,
     )
     plain_text = str(learning["plain_text"])
     raw_message_text = str(message)
@@ -871,7 +848,7 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     if not _should_reply(bot, event, plain_text, ids):
         return
 
-    reply_input_text, incoming_sticker_keys = await _build_reply_input_text(message, plain_text)
+    reply_input_text, incoming_sticker_keys, media_parts = await _build_reply_input_text(message, plain_text)
     sticker_reply_allowed = should_use_sticker_reply(
         incoming_has_sticker=bool(incoming_sticker_keys),
         text_sticker_probability=plugin_config.qwen_persona_text_sticker_reply_probability,
@@ -882,7 +859,7 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         incoming_has_sticker=bool(incoming_sticker_keys),
     )
     try:
-        raw_reply = await client.chat(model_messages)
+        raw_reply = await client.chat(model_messages, media_parts=media_parts)
     except Exception as exc:
         logger.warning(f"qwen persona chat failed: {exc!r}")
         return
@@ -973,13 +950,14 @@ persona_model_status = on_command(
 
 @persona_model_status.handle()
 async def _model_status() -> None:
-    last = model_manager.last_result
+    snapshot = mlx_runtime.status_snapshot()
     await persona_model_status.finish(
         "人格模型："
-        f"\n目录 {model_manager.model_dir}"
-        f"\n已存在 {'是' if model_manager.model_present() else '否'}"
-        f"\n上次部署 {last.status if last else '-'}"
-        f"\n仓库 {last.repo_id if last and last.repo_id else '-'}"
+        f"\n运行时 MLX-VLM"
+        f"\n状态 {snapshot.get('state')}"
+        f"\n模型 {snapshot.get('model') or '-'}"
+        f"\nAdapter {snapshot.get('adapter_path') or '-'}"
+        f"\n错误 {snapshot.get('last_error') or '-'}"
     )
 
 
@@ -994,11 +972,12 @@ persona_model_deploy = on_command(
 
 @persona_model_deploy.handle()
 async def _manual_model_deploy() -> None:
-    result = await model_manager.ensure_ready(force=True)
+    result = await mlx_runtime.load(force=True)
     await persona_model_deploy.finish(
-        f"模型部署 {result.status}"
-        f"\n目录 {result.model_dir}"
-        f"\n仓库 {result.repo_id or '-'}"
+        f"模型加载 {result.get('status')}"
+        f"\n运行时 MLX-VLM"
+        f"\n模型 {result.get('model') or '-'}"
+        f"\nAdapter {result.get('adapter_path') or '-'}"
     )
 
 
