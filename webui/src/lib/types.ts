@@ -3,6 +3,23 @@ export type MetricSnapshot = {
   history: Record<string, unknown>[]
 }
 
+export type RuntimeOperation = {
+  id: string
+  type: string
+  state: string
+  phase: string
+  message: string
+  percent: number | null
+  downloaded_bytes: number | null
+  total_bytes: number | null
+  started_at: string
+  finished_at: string | null
+  error: string
+  target_model?: string
+  local_path?: string
+  previous_model?: string
+}
+
 export type RuntimeSummary = {
   runtime: string
   state: string
@@ -13,6 +30,7 @@ export type RuntimeSummary = {
   adapter_path: string
   loaded_adapter_path: string
   last_error: string
+  operation: RuntimeOperation | null
   control: {
     can_load?: boolean
     can_unload?: boolean
@@ -170,5 +188,12 @@ export type RuntimeActionResult = {
   message: string
   runtime: RuntimeSummary
   confirmation_required?: boolean
+  error?: string
+}
+
+export type TrainingActionResult = {
+  action: "run" | "run_full_external"
+  message: string
+  training: TrainingSummary["operation"]
   error?: string
 }

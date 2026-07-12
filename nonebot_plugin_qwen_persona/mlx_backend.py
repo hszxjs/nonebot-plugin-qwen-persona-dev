@@ -34,7 +34,7 @@ class MlxBackend(Protocol):
         self,
         processor: Any,
         config: Any,
-        prompt: str,
+        messages: list[dict[str, Any]],
         *,
         num_images: int,
     ) -> str:
@@ -50,6 +50,8 @@ class MlxBackend(Protocol):
         max_tokens: int,
         temperature: float,
         top_p: float,
+        repetition_penalty: float,
+        repetition_context_size: int,
     ) -> Any:
         ...
 
@@ -96,7 +98,7 @@ class DefaultMlxBackend:
         self,
         processor: Any,
         config: Any,
-        prompt: str,
+        messages: list[dict[str, Any]],
         *,
         num_images: int,
     ) -> str:
@@ -106,7 +108,7 @@ class DefaultMlxBackend:
             apply_chat_template(
                 processor,
                 config,
-                prompt,
+                messages,
                 num_images=num_images,
             )
         )
@@ -121,6 +123,8 @@ class DefaultMlxBackend:
         max_tokens: int,
         temperature: float,
         top_p: float,
+        repetition_penalty: float,
+        repetition_context_size: int,
     ) -> Any:
         from mlx_vlm import generate
 
@@ -128,6 +132,8 @@ class DefaultMlxBackend:
             "max_tokens": max_tokens,
             "temperature": temperature,
             "top_p": top_p,
+            "repetition_penalty": repetition_penalty,
+            "repetition_context_size": repetition_context_size,
             "skip_special_tokens": True,
             "verbose": False,
         }
@@ -137,11 +143,12 @@ class DefaultMlxBackend:
             return generate(model, processor, prompt, **kwargs)
         except TypeError:
             self._warn(
-                "mlx_generate_top_p_unsupported",
-                "mlx-vlm generate does not accept top_p; retrying without it",
+                "mlx_generate_sampling_kwargs_unsupported",
+                "mlx-vlm generate rejected optional sampling kwargs; retrying without them",
                 {"model": getattr(getattr(model, "config", None), "model_type", "")},
             )
-            kwargs.pop("top_p", None)
+            for key in ("top_p", "repetition_penalty", "repetition_context_size"):
+                kwargs.pop(key, None)
             return generate(model, processor, prompt, **kwargs)
 
     def _warn(self, event: str, message: str, context: dict[str, Any]) -> None:

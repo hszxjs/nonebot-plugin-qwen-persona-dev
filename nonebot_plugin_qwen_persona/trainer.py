@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import logging
 import os
 import sys
 import time
@@ -14,6 +15,8 @@ import httpx
 
 from .config import QwenPersonaConfig, effective_chat_model, normalized_lora_modules
 from .storage import PersonaStore
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -90,7 +93,7 @@ class PersonaTrainer:
             "sample_count": 0,
             "dataset_path": "",
             "output_dir": "",
-            "log_tail": "",
+            "log_tail": f"training started: reason={reason}",
             "started_at": now,
             "finished_at": None,
         }
@@ -113,6 +116,9 @@ class PersonaTrainer:
             self._progress["dataset_path"] = dataset_path
         if output_dir is not None:
             self._progress["output_dir"] = output_dir
+        self._append_progress_log(
+            self._progress_stage_log(stage=stage, status=status)
+        )
         if log:
             self._append_progress_log(log)
 
@@ -139,6 +145,20 @@ class PersonaTrainer:
         current = str(self._progress.get("log_tail") or "")
         joined = (current + "\n" + log).strip() if current else log.strip()
         self._progress["log_tail"] = joined[-4000:]
+
+    def _progress_stage_log(self, *, stage: str, status: str) -> str:
+        parts = [f"stage={stage}"]
+        sample_count = self._progress.get("sample_count")
+        if sample_count:
+            parts.append(f"sample_count={sample_count}")
+        parts.append(f"status={status}")
+        dataset_path = str(self._progress.get("dataset_path") or "")
+        if dataset_path:
+            parts.append(f"dataset={dataset_path}")
+        output_dir = str(self._progress.get("output_dir") or "")
+        if output_dir:
+            parts.append(f"output={output_dir}")
+        return " ".join(parts)
 
     async def _run_training_locked(
         self,
@@ -289,9 +309,11 @@ class PersonaTrainer:
 
         assisted_path = raw_dataset_path.with_name(f"qwen_persona_{run_id}.assisted.jsonl")
         limit = self.config.qwen_persona_lora_helper_sample_limit
+        attempted = 0
         processed = 0
         fallback = 0
         total = 0
+        last_logged_attempt = 0
         assisted_path.parent.mkdir(parents=True, exist_ok=True)
 
         with raw_dataset_path.open("r", encoding="utf-8") as source, assisted_path.open(
@@ -302,9 +324,19 @@ class PersonaTrainer:
                     continue
                 total += 1
                 record = json.loads(line)
-                if limit > 0 and processed >= limit:
+                if limit > 0 and attempted >= limit:
                     target.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+                    if total % 10000 == 0:
+                        self._append_progress_log(
+                            self._lora_helper_progress_log(
+                                total=total,
+                                attempted=attempted,
+                                processed=processed,
+                                fallback=fallback,
+                            )
+                        )
                     continue
+                attempted += 1
                 try:
                     assisted = await self._assist_lora_record(api_url=api_url, record=record)
                     target.write(json.dumps(assisted, ensure_ascii=False, default=str) + "\n")
@@ -313,17 +345,41 @@ class PersonaTrainer:
                     fallback += 1
                     target.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
                     if fallback <= 3:
-                        # Keep a few examples in the run log without flooding it.
-                        print(f"qwen persona lora helper fallback: {exc!r}")
+                        message = f"qwen persona lora helper fallback: {exc!r}"
+                        logger.warning(message)
+                        self._append_progress_log(message)
+                if attempted - last_logged_attempt >= 10:
+                    last_logged_attempt = attempted
+                    self._append_progress_log(
+                        self._lora_helper_progress_log(
+                            total=total,
+                            attempted=attempted,
+                            processed=processed,
+                            fallback=fallback,
+                        )
+                    )
 
         log = (
             "[lora_helper]\n"
             f"model={self.config.qwen_persona_lora_helper_model}\n"
             f"raw_dataset={raw_dataset_path}\n"
             f"assisted_dataset={assisted_path}\n"
-            f"total={total} processed={processed} fallback={fallback}"
+            f"total={total} attempted={attempted} processed={processed} fallback={fallback}"
         )
         return assisted_path, log
+
+    @staticmethod
+    def _lora_helper_progress_log(
+        *,
+        total: int,
+        attempted: int,
+        processed: int,
+        fallback: int,
+    ) -> str:
+        return (
+            "[lora_helper_progress] "
+            f"read={total} attempted={attempted} processed={processed} fallback={fallback}"
+        )
 
     async def _assist_lora_record(self, *, api_url: str, record: dict[str, Any]) -> dict[str, Any]:
         headers = {"Content-Type": "application/json"}

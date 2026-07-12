@@ -15,6 +15,19 @@ const overview: OperationsOverview = {
     adapter_path: "adapter",
     loaded_adapter_path: "adapter",
     last_error: "",
+    operation: {
+      id: "op-1",
+      type: "load",
+      state: "running",
+      phase: "downloading",
+      message: "downloading model",
+      percent: 42,
+      downloaded_bytes: 42,
+      total_bytes: 100,
+      started_at: "2026-07-12T00:00:00Z",
+      finished_at: null,
+      error: "",
+    },
     control: { can_load: true, can_unload: true, can_reload: true },
     metrics: { last: { tps: 30, latency_seconds: 1.2 }, history: [] },
     model_presets: [],
@@ -96,6 +109,8 @@ describe("OperationsDashboard", () => {
 
     expect(screen.getByRole("heading", { name: "运维控制台" })).toBeInTheDocument()
     expect(within(runtime).getAllByText("target-model")).toHaveLength(2)
+    expect(within(runtime).getByText("downloading model")).toBeInTheDocument()
+    expect(within(runtime).getByText("42%")).toBeInTheDocument()
     expect(screen.getByText("推理事件")).toBeInTheDocument()
     expect(screen.getByText("mention")).toBeInTheDocument()
     expect(screen.getByText(/你好 \/ 你好呀/)).toBeInTheDocument()
@@ -111,5 +126,31 @@ describe("OperationsDashboard", () => {
 
     expect(within(runtime).getByText("MLX Runtime Log")).toBeInTheDocument()
     expect(within(training).getByText("Training Log")).toBeInTheDocument()
+  })
+
+  it("renders completed runtime operations as complete instead of indeterminate", () => {
+    render(
+      <OperationsDashboard
+        overview={{
+          ...overview,
+          runtime: {
+            ...overview.runtime,
+            operation: {
+              ...overview.runtime.operation!,
+              state: "succeeded",
+              phase: "loaded",
+              message: "loaded in 1.20s",
+              percent: null,
+            },
+          },
+        }}
+      />
+    )
+
+    const runtime = screen.getByTestId("runtime-card")
+
+    expect(within(runtime).getByText("loaded in 1.20s")).toBeInTheDocument()
+    expect(within(runtime).getByText("完成")).toBeInTheDocument()
+    expect(within(runtime).queryByText("进行中")).not.toBeInTheDocument()
   })
 })

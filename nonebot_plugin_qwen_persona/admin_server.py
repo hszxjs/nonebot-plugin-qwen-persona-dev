@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 from pathlib import Path
 from typing import Any, Callable
@@ -17,6 +18,8 @@ from .runtime_config import (
     config_to_dict,
     config_to_python_dict,
 )
+
+logger = logging.getLogger(__name__)
 
 RELOAD_SENSITIVE_FIELDS = {
     "qwen_persona_mlx_model",
@@ -89,6 +92,7 @@ def _runtime_summary(status: dict[str, Any]) -> dict[str, Any]:
         "adapter_path": status.get("adapter_path", ""),
         "loaded_adapter_path": status.get("loaded_adapter_path", ""),
         "last_error": status.get("last_error", ""),
+        "operation": status.get("operation"),
         "control": status.get("control", {}),
         "metrics": status.get("metrics", {"last": None, "history": []}),
         "model_presets": MLX_MODEL_PRESETS,
@@ -106,6 +110,13 @@ def _training_operation(trainer: Any | None) -> dict[str, Any]:
         "available": trainer is not None,
         "progress": progress,
     }
+
+
+def _training_running(trainer: Any | None) -> bool:
+    if trainer is None or not hasattr(trainer, "progress_snapshot"):
+        return False
+    progress = trainer.progress_snapshot()
+    return bool(progress and progress.get("status") == "running")
 
 
 def _training_config(config: Any) -> dict[str, Any]:
@@ -331,6 +342,54 @@ def create_admin_app(
         limit = max(0, min(int(tail), 1000))
         return {"logs": logs[-limit:]}
 
+    @app.post("/api/training/run")
+    async def training_run(
+        request: Request,
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        authorize(token, x_admin_token)
+        if trainer is None or not hasattr(trainer, "run_training"):
+            raise HTTPException(status_code=503, detail="trainer unavailable")
+        if _training_running(trainer):
+            raise HTTPException(status_code=409, detail="training already running")
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            logger.warning("qwen persona admin training request body ignored: %r", exc)
+            payload = {}
+        if not isinstance(payload, dict):
+            logger.warning("qwen persona admin training request body ignored: expected object")
+            payload = {}
+        include_external_corpus = payload.get("include_external_corpus")
+        if include_external_corpus is not None:
+            include_external_corpus = bool(include_external_corpus)
+        full_external_corpus = bool(payload.get("full_external_corpus"))
+        reason = "admin_full_external" if full_external_corpus else "admin"
+
+        async def run_background() -> None:
+            try:
+                await trainer.run_training(
+                    reason=reason,
+                    include_external_corpus=include_external_corpus,
+                    full_external_corpus=full_external_corpus,
+                )
+            except Exception:
+                logger.exception("qwen persona admin training failed")
+
+        asyncio.create_task(run_background())
+        await asyncio.sleep(0)
+        action = "run_full_external" if full_external_corpus else "run"
+        return {
+            "action": action,
+            "message": (
+                "start full external corpus training"
+                if full_external_corpus
+                else "start training"
+            ),
+            "training": _training_operation(trainer),
+        }
+
     @app.get("/api/inference-events")
     async def inference_events(
         limit: int = Query(default=300),
@@ -485,7 +544,7 @@ def create_admin_app(
     return app
 
 
-class AdminWebServer:
+class AdminServer:
     def __init__(
         self,
         *,
@@ -529,7 +588,7 @@ class AdminWebServer:
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
-        self.logger.info(f"qwen persona admin web listening on http://{host}:{port}")
+        self.logger.info(f"qwen persona admin server listening on http://{host}:{port}")
 
     def stop(self) -> None:
         if self._server:

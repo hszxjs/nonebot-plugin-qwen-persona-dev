@@ -162,6 +162,7 @@ describe("admin workspaces", () => {
         adapter_path: "",
         loaded_adapter_path: "",
         last_error: "",
+        operation: null,
         control: { can_load: true, can_unload: false, can_reload: true },
         metrics: { last: null, history: [] },
         model_presets: [],

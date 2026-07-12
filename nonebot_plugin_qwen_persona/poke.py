@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _str_id(value: Any) -> str:
@@ -45,10 +48,14 @@ async def send_counter_poke(bot: Any, event: Any) -> bool:
             ("send_poke", {"user_id": user_id}),
         )
 
+    failures: list[str] = []
     for api_name, params in api_candidates:
         try:
             await bot.call_api(api_name, **params)
             return True
-        except Exception:
+        except Exception as exc:
+            failures.append(f"{api_name}: {type(exc).__name__}: {exc}")
             continue
+    if failures:
+        logger.warning("qwen persona counter poke failed: %s", "; ".join(failures))
     return False

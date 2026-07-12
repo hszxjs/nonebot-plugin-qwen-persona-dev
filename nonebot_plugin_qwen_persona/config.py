@@ -30,6 +30,8 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_request_timeout: float = 120.0
     qwen_persona_temperature: float = 0.85
     qwen_persona_top_p: float = 0.9
+    qwen_persona_repetition_penalty: float = 1.08
+    qwen_persona_repetition_context_size: int = 64
     qwen_persona_max_tokens: int = 256
 
     qwen_persona_admin_enabled: bool = True

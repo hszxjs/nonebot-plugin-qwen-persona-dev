@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Iterable
+
+logger = logging.getLogger(__name__)
 
 PICMENU_NAME_HINTS = ("picmenu", "pic_menu", "pic-menu", "nonebot_plugin_picmenu")
 TOKEN_SPLIT_RE = re.compile(r"[\s,，;；|、]+")
@@ -69,7 +72,8 @@ def iter_config_items(config: Any) -> list[tuple[str, Any]]:
             continue
         try:
             value = getattr(config, name)
-        except Exception:
+        except Exception as exc:
+            logger.warning("qwen persona command discovery skipped config field %s: %r", name, exc)
             continue
         if callable(value):
             continue

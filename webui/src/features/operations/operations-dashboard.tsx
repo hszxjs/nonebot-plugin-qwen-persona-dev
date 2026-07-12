@@ -44,10 +44,11 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item"
+import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import { runRuntimeAction, usePluginLogs, useRuntimeLogs, useTrainingLogs } from "@/lib/api"
-import type { InferenceEvent, LogEntry, OperationsOverview, RuntimeAction } from "@/lib/types"
+import { runRuntimeAction, runTrainingAction, usePluginLogs, useRuntimeLogs, useTrainingLogs } from "@/lib/api"
+import type { InferenceEvent, LogEntry, OperationsOverview, RuntimeAction, RuntimeOperation } from "@/lib/types"
 
 function numberText(value: number | undefined) {
   return new Intl.NumberFormat("zh-CN").format(value || 0)
@@ -61,6 +62,33 @@ function secondsText(value: number | null) {
 function tpsText(value: number | null) {
   if (value === null || value === undefined) return "-"
   return `${value.toFixed(2)} tok/s`
+}
+
+function percentText(value: number | null | undefined) {
+  if (value === null || value === undefined) return "进行中"
+  return `${Math.round(value)}%`
+}
+
+function operationStatusText(operation: RuntimeOperation) {
+  if (operation.state === "succeeded") return "完成"
+  if (operation.state === "failed") return "失败"
+  if (operation.state === "cancelled") return "已取消"
+  return percentText(operation.percent)
+}
+
+function operationProgressValue(operation: RuntimeOperation) {
+  if (typeof operation.percent === "number") return operation.percent
+  if (operation.state === "succeeded") return 100
+  if (operation.state === "running") return 35
+  return 0
+}
+
+function bytesText(value: number | null | undefined) {
+  if (value === null || value === undefined) return "-"
+  if (value < 1024) return `${value} B`
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MiB`
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GiB`
 }
 
 export function RuntimeLogPanelView({
@@ -122,6 +150,34 @@ function RuntimeLogPanel() {
       logs={data?.logs || []}
       onTogglePaused={() => setPaused((value) => !value)}
     />
+  )
+}
+
+function RuntimeOperationProgress({ operation }: { operation: RuntimeOperation | null }) {
+  if (!operation) return null
+  const value = operationProgressValue(operation)
+  return (
+    <Alert>
+      <IconActivity />
+      <AlertTitle>运行任务 · {operation.phase || operation.type}</AlertTitle>
+      <AlertDescription>
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{operation.message || operation.phase || operation.type}</span>
+            <Badge variant={operation.state === "failed" ? "destructive" : "secondary"}>
+              {operationStatusText(operation)}
+            </Badge>
+          </div>
+          <Progress value={value} />
+          {operation.downloaded_bytes !== null || operation.total_bytes !== null ? (
+            <span className="text-muted-foreground">
+              {bytesText(operation.downloaded_bytes)} / {bytesText(operation.total_bytes)}
+            </span>
+          ) : null}
+          {operation.error ? <span>{operation.error}</span> : null}
+        </div>
+      </AlertDescription>
+    </Alert>
   )
 }
 
@@ -221,6 +277,7 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
             <AlertDescription>{actionMessage}</AlertDescription>
           </Alert>
         ) : null}
+        <RuntimeOperationProgress operation={runtime.operation} />
         <ItemGroup data-size="sm">
           <Item>
             <ItemMedia variant="icon">
@@ -363,6 +420,31 @@ function InferenceEventsCard({ overview }: { overview: OperationsOverview }) {
 function TrainingCard({ overview }: { overview: OperationsOverview }) {
   const operation = overview.training.operation
   const progress = operation.progress
+  const [pendingTraining, setPendingTraining] = useState<"run" | "full" | null>(null)
+  const [confirmFullTraining, setConfirmFullTraining] = useState(false)
+  const [trainingMessage, setTrainingMessage] = useState("")
+
+  async function executeTraining(fullExternalCorpus = false) {
+    const action = fullExternalCorpus ? "full" : "run"
+    setPendingTraining(action)
+    const message = fullExternalCorpus
+      ? "start full external corpus training"
+      : "start training"
+    setTrainingMessage(message)
+    try {
+      const result = await runTrainingAction(fullExternalCorpus)
+      setTrainingMessage(result.message || message)
+      toast.success(result.message || message)
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error)
+      setTrainingMessage(text)
+      toast.error(text)
+    } finally {
+      setPendingTraining(null)
+      setConfirmFullTraining(false)
+    }
+  }
+
   return (
     <Card data-testid="training-card">
       <CardHeader>
@@ -375,6 +457,13 @@ function TrainingCard({ overview }: { overview: OperationsOverview }) {
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        {trainingMessage ? (
+          <Alert>
+            <IconActivity />
+            <AlertTitle>训练操作</AlertTitle>
+            <AlertDescription>{trainingMessage}</AlertDescription>
+          </Alert>
+        ) : null}
         <ItemGroup data-size="sm">
           <Item>
             <ItemMedia variant="icon">
@@ -396,8 +485,19 @@ function TrainingCard({ overview }: { overview: OperationsOverview }) {
           </Item>
         </ItemGroup>
         <div className="flex flex-wrap gap-2">
-          <Button>立即训练</Button>
-          <Button variant="outline">全量外部语料训练</Button>
+          <Button
+            disabled={!operation.available || operation.running || Boolean(pendingTraining)}
+            onClick={() => executeTraining(false)}
+          >
+            {pendingTraining === "run" ? "启动中" : "立即训练"}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={!operation.available || operation.running || Boolean(pendingTraining)}
+            onClick={() => setConfirmFullTraining(true)}
+          >
+            {pendingTraining === "full" ? "启动中" : "全量外部语料训练"}
+          </Button>
         </div>
         <Collapsible defaultOpen>
           <CollapsibleTrigger asChild>
@@ -408,6 +508,22 @@ function TrainingCard({ overview }: { overview: OperationsOverview }) {
           </CollapsibleContent>
         </Collapsible>
       </CardContent>
+      <AlertDialog open={confirmFullTraining} onOpenChange={setConfirmFullTraining}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认启动全量外部语料训练？</AlertDialogTitle>
+            <AlertDialogDescription>
+              该操作会忽略外部语料上限，把完整外部语料与本地样本一起导出并启动训练。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => executeTraining(true)}>
+              确认执行
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }

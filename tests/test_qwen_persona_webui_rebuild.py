@@ -26,6 +26,19 @@ class DummyRuntime:
             "adapter_path": "adapter",
             "loaded_adapter_path": "adapter",
             "last_error": "",
+            "operation": {
+                "id": "op-1",
+                "type": "load",
+                "state": "running",
+                "phase": "downloading",
+                "message": "downloading model",
+                "percent": 42.0,
+                "downloaded_bytes": 42,
+                "total_bytes": 100,
+                "started_at": "2026-07-12T00:00:00Z",
+                "finished_at": None,
+                "error": "",
+            },
             "control": {"can_load": True, "can_unload": True, "can_reload": True},
             "metrics": {"last": None, "history": []},
         }
@@ -70,8 +83,9 @@ class DummyStore:
 
 
 class DummyTrainer:
-    def progress_snapshot(self) -> dict[str, object]:
-        return {
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._progress: dict[str, object] = {
             "stage": "idle",
             "status": "",
             "reason": "",
@@ -83,6 +97,33 @@ class DummyTrainer:
             "finished_at": None,
         }
 
+    def progress_snapshot(self) -> dict[str, object]:
+        return dict(self._progress)
+
+    async def run_training(
+        self,
+        *,
+        reason: str,
+        include_external_corpus: bool | None = None,
+        full_external_corpus: bool = False,
+    ) -> object:
+        self.calls.append(
+            {
+                "reason": reason,
+                "include_external_corpus": include_external_corpus,
+                "full_external_corpus": full_external_corpus,
+            }
+        )
+        self._progress = {
+            **self._progress,
+            "stage": "finished",
+            "status": "success",
+            "reason": reason,
+            "sample_count": 12,
+            "log_tail": "started\nfinished",
+        }
+        return SimpleNamespace(status="success", sample_count=12)
+
 
 class WebuiRebuildApiTests(unittest.TestCase):
     def make_client(
@@ -90,6 +131,7 @@ class WebuiRebuildApiTests(unittest.TestCase):
         *,
         static_dir: Path | None = None,
         saved: list[dict[str, object]] | None = None,
+        trainer: DummyTrainer | None = None,
         **config_overrides: object,
     ) -> TestClient:
         from nonebot_plugin_qwen_persona.admin_server import create_admin_app
@@ -110,7 +152,7 @@ class WebuiRebuildApiTests(unittest.TestCase):
             save_callback=save_callback,
             mlx_runtime=DummyRuntime(),
             store=DummyStore(),
-            trainer=DummyTrainer(),
+            trainer=trainer or DummyTrainer(),
             qwen_client=SimpleNamespace(metrics_snapshot=lambda: {"last": None, "history": []}),
             static_dir=static_dir,
         )
@@ -122,6 +164,8 @@ class WebuiRebuildApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["runtime"]["state"], "loaded")
+        self.assertEqual(payload["runtime"]["operation"]["phase"], "downloading")
+        self.assertEqual(payload["runtime"]["operation"]["percent"], 42.0)
         self.assertEqual(payload["inference_events"]["limit"], 300)
         self.assertEqual(payload["inference_events"]["items"][0]["event_id"], "evt-1")
 
@@ -229,6 +273,30 @@ class WebuiRebuildApiTests(unittest.TestCase):
             "load model 'mlx-community/Qwen3.5-9B-MLX-4bit'",
         )
         self.assertEqual(payload["runtime"]["status"], "loaded")
+
+    def test_training_action_starts_background_run(self) -> None:
+        trainer = DummyTrainer()
+        client = self.make_client(trainer=trainer)
+
+        response = client.post(
+            "/api/training/run?token=secret",
+            json={"include_external_corpus": True, "full_external_corpus": True},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["action"], "run_full_external")
+        self.assertEqual(payload["message"], "start full external corpus training")
+        self.assertEqual(
+            trainer.calls,
+            [
+                {
+                    "reason": "admin_full_external",
+                    "include_external_corpus": True,
+                    "full_external_corpus": True,
+                }
+            ],
+        )
 
 
 if __name__ == "__main__":

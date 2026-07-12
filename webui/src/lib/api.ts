@@ -10,6 +10,7 @@ import type {
   RuntimeActionResult,
   SettingsPayload,
   StickerGalleryPayload,
+  TrainingActionResult,
 } from "@/lib/types"
 
 const tokenStorageKey = "qwen-persona-admin-token"
@@ -107,4 +108,14 @@ export function runRuntimeAction(action: RuntimeAction, confirmed = false) {
   return api
     .post(`runtime/${action}`, { json: { confirmed } })
     .json<RuntimeActionResult>()
+}
+
+export function runTrainingAction(fullExternalCorpus = false) {
+  return api
+    .post("training/run", {
+      json: fullExternalCorpus
+        ? { include_external_corpus: true, full_external_corpus: true }
+        : {},
+    })
+    .json<TrainingActionResult>()
 }

@@ -12,6 +12,7 @@ dependencies = [
     "nonebot2[fastapi,httpx]>=2.5.0",
     "pydantic>=2.0",
     "httpx>=0.24",
+    "huggingface-hub>=0.24",
     "mlx-vlm>=0.6.4",
 ]
 

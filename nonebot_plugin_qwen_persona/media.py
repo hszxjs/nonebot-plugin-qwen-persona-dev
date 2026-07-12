@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any, Iterable, Mapping, Protocol
 
@@ -26,6 +27,7 @@ REPLY_MEDIA_ARTIFACT_RE = re.compile(
 )
 GENERIC_MEDIA_PLACEHOLDER_TEXT_RE = re.compile(r"\[(?:动画消息|动画表情|表情消息)\]")
 MEDIA_SEGMENT_TYPES = {"image", "face", "mface", "emoji", "sticker"}
+logger = logging.getLogger(__name__)
 
 
 class MediaCaptioner(Protocol):
@@ -193,8 +195,8 @@ async def _caption_or_fallback(
             caption = _safe_caption(caption)
             if caption:
                 return caption
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("qwen persona media caption fallback: %r", exc)
     return _safe_caption(fallback)
 
 

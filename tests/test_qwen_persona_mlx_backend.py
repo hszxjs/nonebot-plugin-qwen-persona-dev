@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 import types
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_qwen_persona"
@@ -29,6 +31,37 @@ def identity_sanitize_key(key: str) -> str:
 
 
 class MlxBackendHotfixTests(unittest.TestCase):
+    def test_default_backend_forwards_repetition_controls_to_mlx_generate(self) -> None:
+        from nonebot_plugin_qwen_persona.mlx_backend import DefaultMlxBackend
+
+        calls: list[dict[str, object]] = []
+
+        def fake_generate(
+            _model: object,
+            _processor: object,
+            _prompt: str,
+            **kwargs: object,
+        ) -> object:
+            calls.append(kwargs)
+            return SimpleNamespace(text="ok")
+
+        with patch("mlx_vlm.generate", fake_generate):
+            result = DefaultMlxBackend().generate(
+                SimpleNamespace(config=SimpleNamespace(model_type="qwen2_vl")),
+                object(),
+                "prompt",
+                [],
+                max_tokens=32,
+                temperature=0.8,
+                top_p=0.9,
+                repetition_penalty=1.08,
+                repetition_context_size=64,
+            )
+
+        self.assertEqual(result.text, "ok")
+        self.assertEqual(calls[0]["repetition_penalty"], 1.08)
+        self.assertEqual(calls[0]["repetition_context_size"], 64)
+
     def test_qwen35_hotfix_preserves_converted_mlx_norm_weights(self) -> None:
         from nonebot_plugin_qwen_persona.mlx_backend import _patch_qwen35_norm_sanitize_module
 

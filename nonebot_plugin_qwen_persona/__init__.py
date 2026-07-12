@@ -14,7 +14,7 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
-from .admin_server import AdminWebServer
+from .admin_server import AdminServer
 from .command_discovery import discover_picmenu_command_regexes
 from .config import QwenPersonaConfig, load_plugin_config, normalize_matcher_priorities
 from .filters import (
@@ -41,6 +41,7 @@ from .mlx_runtime import MlxVLMRuntime
 from .poke import is_poke_at_self, send_counter_poke
 from .prompt_budget import effective_context_message_limit, trim_history_lines_for_context
 from .qwen_client import QwenClient
+from .reply_planner import ReplyIntent, ReplyPlan, build_reply_plan
 from .repeat import (
     ConversationPatternTracker,
     RepeatTracker,
@@ -58,6 +59,7 @@ from .sticker import (
     parse_sticker_tokens,
 )
 from .sticker_repo import cleanup_sticker_repo_manifest, record_sticker_repo_manifest
+from .sticker_selector import select_reply_sticker
 from .storage import PersonaStore
 from .trainer import PersonaTrainer, parse_time_slot
 
@@ -93,7 +95,7 @@ client = QwenClient(plugin_config, runtime=mlx_runtime)
 trainer = PersonaTrainer(plugin_config, store)
 repeat_tracker = RepeatTracker()
 conversation_pattern_tracker = ConversationPatternTracker()
-admin_web = AdminWebServer(
+admin_server = AdminServer(
     config=plugin_config,
     save_callback=lambda values: _save_admin_config(values),
     logger=logger,
@@ -269,12 +271,7 @@ def _should_reply(bot: Bot, event: Event, plain_text: str, ids: dict[str, str | 
     return should_random_reply(plain_text, probability=probability, random_value=random.random())
 
 
-def _build_system_prompt(
-    sticker_lines: list[str],
-    *,
-    sticker_reply_allowed: bool,
-    incoming_has_sticker: bool,
-) -> str:
+def _build_system_prompt() -> str:
     command_prefixes = " ".join(sorted(set(_command_start_values())))
     lines = [
         plugin_config.qwen_persona_system_prompt,
@@ -282,20 +279,10 @@ def _build_system_prompt(
         f"如果回复开头像这些命令前缀会被丢弃：{command_prefixes or '(none)'}。",
         "你在群聊中应当自然、短句、像真人接话，不要解释自己是模型。",
         "不要复述当前用户消息；如果不知道怎么答，也要换一种自然接话方式。",
+        "本轮主回复必须只输出文字，禁止输出任何 [[sticker:...]] 标记。",
     ]
     if plugin_config.qwen_persona_sticker_repo_url:
         lines.append(f"表情包仓库：{plugin_config.qwen_persona_sticker_repo_url}")
-    if sticker_reply_allowed and sticker_lines:
-        if incoming_has_sticker:
-            lines.append("当前用户发来的是表情。本轮只输出一个可用表情 token，不要附加文字。")
-        else:
-            lines.append("本轮已按概率选择表情回复。只输出一个可用表情 token，不要附加文字。")
-        lines.append(
-            "可用表情格式：[[sticker:<key>]]。只能使用下面列出的 key。"
-        )
-        lines.append("\n".join(sticker_lines))
-    else:
-        lines.append("本轮必须只回复文字，禁止输出任何 [[sticker:...]] 标记。")
     return "\n".join(line for line in lines if line)
 
 
@@ -375,61 +362,36 @@ def _is_context_noise(text: str) -> bool:
     )
 
 
-async def _build_model_messages(
-    event: Event,
+async def _build_model_reply_plan(
     plain_text: str,
     group_id: str | None,
     *,
     sticker_reply_allowed: bool,
     incoming_has_sticker: bool,
-) -> list[dict[str, str]]:
+    media_parts: list[dict[str, Any]],
+) -> ReplyPlan:
     history = await _recent_context_samples(
         group_id,
         effective_context_message_limit(plugin_config),
     )
-    stickers = (
-        await store.top_stickers(
-            group_id=group_id,
-            limit=plugin_config.qwen_persona_sticker_prompt_limit,
-        )
-        if sticker_reply_allowed
-        else []
-    )
-    sticker_lines = [
-        f"- key={item['key']} summary={item.get('summary') or item['type']} count={item['count']}"
-        for item in stickers
-    ]
     history_lines: list[str] = []
     for item in reversed(history):
         context_text = context_text_from_sample(item)
-        if not sticker_reply_allowed:
-            context_text, _sticker_keys = parse_sticker_tokens(context_text)
+        context_text, _sticker_keys = parse_sticker_tokens(context_text)
         if _is_context_noise(context_text):
             continue
         if context_text:
             history_lines.append(f"{item.get('user_id') or 'someone'}: {context_text}")
     history_lines = trim_history_lines_for_context(history_lines, plugin_config)
 
-    user_parts = []
-    if history_lines:
-        user_parts.append("最近群聊样本：\n" + "\n".join(history_lines))
-    user_parts.append(f"当前消息：{plain_text.strip() or '[有人在叫你]'}")
-    if sticker_reply_allowed and sticker_lines:
-        user_parts.append("只选择并输出一个最贴合当前消息的可用表情 token，不要输出文字。")
-    else:
-        user_parts.append("请自然接一句，只输出文字，不要输出命令或表情 token。")
-    user_parts.append("/no_think\n只输出最终要发到群里的内容，不要写思考过程。")
-    return [
-        {
-            "role": "system",
-            "content": _build_system_prompt(
-                sticker_lines,
-                sticker_reply_allowed=sticker_reply_allowed,
-                incoming_has_sticker=incoming_has_sticker,
-            ),
-        },
-        {"role": "user", "content": "\n\n".join(user_parts)},
-    ]
+    return build_reply_plan(
+        system_prompt=_build_system_prompt(),
+        history_lines=history_lines,
+        current_text=plain_text,
+        media_parts=media_parts,
+        sticker_reply_allowed=sticker_reply_allowed,
+        incoming_has_sticker=incoming_has_sticker,
+    )
 
 
 async def _build_reply_input_text(
@@ -557,10 +519,43 @@ async def _build_adapter_reply(event: Event, text: str, sticker_keys: list[str])
     for key in sticker_keys[: plugin_config.qwen_persona_max_reply_stickers]:
         record = await store.get_sticker(key)
         if not record:
+            logger.warning(f"qwen persona sticker key missing: {key}")
             continue
         records.append(record)
 
     return build_onebot_v11_sticker_message(Message, MessageSegment, text, records)
+
+
+async def _select_reply_sticker_key(
+    *,
+    group_id: str | None,
+    trigger_text: str,
+    reply_text: str,
+    intent: ReplyIntent,
+    incoming_sticker_keys: list[str],
+) -> str | None:
+    candidates = await store.top_stickers(
+        group_id=group_id,
+        limit=plugin_config.qwen_persona_sticker_prompt_limit,
+    )
+    seen = {str(item.get("key") or "").strip() for item in candidates}
+    for key in incoming_sticker_keys:
+        if key in seen:
+            continue
+        record = await store.get_sticker(key)
+        if record:
+            candidates.insert(0, record)
+            seen.add(key)
+        else:
+            logger.warning(f"qwen persona incoming sticker key missing: {key}")
+    selection = await select_reply_sticker(
+        mlx_runtime,
+        candidates=candidates,
+        trigger_text=trigger_text,
+        reply_text=reply_text,
+        intent=intent,
+    )
+    return selection.key
 
 
 def _install_schedule() -> None:
@@ -684,9 +679,9 @@ async def _startup() -> None:
     except Exception as exc:
         logger.warning(f"qwen persona sticker dedupe skipped: {exc!r}")
     try:
-        admin_web.start()
+        admin_server.start()
     except Exception as exc:
-        logger.exception(f"qwen persona admin web failed to start: {exc!r}")
+        logger.exception(f"qwen persona admin server failed to start: {exc!r}")
     if plugin_config.qwen_persona_mlx_auto_load:
         try:
             load_result = await mlx_runtime.load()
@@ -702,7 +697,7 @@ async def _startup() -> None:
 @driver.on_shutdown
 async def _shutdown() -> None:
     await mlx_runtime.close()
-    admin_web.stop()
+    admin_server.stop()
 
 
 async def _learn_from_event(bot: Bot, event: Event) -> None:
@@ -855,13 +850,16 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         text_sticker_probability=plugin_config.qwen_persona_text_sticker_reply_probability,
         random_value=random.random(),
     )
-    model_messages = await _build_model_messages(event, reply_input_text, ids["group_id"],
+    reply_plan = await _build_model_reply_plan(
+        reply_input_text,
+        ids["group_id"],
         sticker_reply_allowed=sticker_reply_allowed,
         incoming_has_sticker=bool(incoming_sticker_keys),
+        media_parts=media_parts,
     )
     inference_started = time.perf_counter()
     try:
-        raw_reply = await client.chat(model_messages, media_parts=media_parts)
+        raw_reply = await client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
     except Exception as exc:
         await record_inference_event(
             store=store,
@@ -901,7 +899,12 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     )
 
     raw_reply = sanitize_model_reply_media_text(raw_reply)
-    reply_text, sticker_keys = parse_sticker_tokens(raw_reply)
+    reply_text, generated_sticker_keys = parse_sticker_tokens(raw_reply)
+    if generated_sticker_keys:
+        logger.warning(
+            "qwen persona generated sticker tokens ignored: "
+            + ",".join(generated_sticker_keys[: plugin_config.qwen_persona_max_reply_stickers])
+        )
     clean_text = sanitize_reply(
         reply_text,
         prefixes=_command_start_values(),
@@ -910,11 +913,17 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     clean_text = _remove_blacklisted_reply_lines(clean_text)
     if is_echo_reply(clean_text, reply_input_text) or is_question_deflection_reply(clean_text, reply_input_text):
         clean_text = ""
-        sticker_keys = []
-    if not sticker_reply_allowed:
-        sticker_keys = []
-    elif incoming_sticker_keys and not sticker_keys:
-        sticker_keys = incoming_sticker_keys[:1]
+    sticker_keys: list[str] = []
+    if reply_plan.allow_sticker and (clean_text or incoming_sticker_keys):
+        sticker_key = await _select_reply_sticker_key(
+            group_id=ids["group_id"],
+            trigger_text=reply_input_text,
+            reply_text=clean_text,
+            intent=reply_plan.intent,
+            incoming_sticker_keys=incoming_sticker_keys,
+        )
+        if sticker_key:
+            sticker_keys = [sticker_key]
     if not clean_text and not sticker_keys:
         return
 

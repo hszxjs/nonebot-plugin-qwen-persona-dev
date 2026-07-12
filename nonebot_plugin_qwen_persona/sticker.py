@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -34,6 +35,7 @@ IMAGE_STICKER_HINT_FIELDS = {
 }
 QQ_PRIVATE_STICKER_DOWNLOAD_HOST = "multimedia.nt.qq.com.cn"
 QQ_FILE_DIGEST_RE = re.compile(r"^[A-Fa-f0-9]{32}$")
+logger = logging.getLogger(__name__)
 
 
 def extract_plain_text(message: Any) -> str:
@@ -243,11 +245,18 @@ def build_onebot_v11_sticker_message(
     records: Iterable[dict[str, Any]],
 ) -> Any:
     result = message()
+    clean_text = str(text or "").strip()
+    if clean_text:
+        try:
+            result += message_segment.text(clean_text)
+        except Exception as exc:
+            logger.warning("qwen persona sticker text segment build failed: %r", exc)
     has_sticker = False
     for record in records:
         try:
             segment = build_onebot_v11_sticker_segment(message_segment, record)
-        except Exception:
+        except Exception as exc:
+            logger.warning("qwen persona sticker segment build failed: %r", exc)
             continue
         if segment is None:
             continue
