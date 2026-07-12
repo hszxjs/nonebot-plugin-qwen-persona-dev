@@ -11,6 +11,7 @@ from .sticker import (
     is_generic_media_placeholder,
     sticker_to_record,
 )
+from .sticker_classifier import StickerClassification, classify_sticker_segment
 
 
 CQ_CODE_RE = re.compile(r"\[CQ:(?P<type>[A-Za-z0-9_]+)(?P<params>(?:,[^\]]*)?)\]")
@@ -71,6 +72,8 @@ async def prepare_message_learning(
     media_context_chunks: list[str] = []
     sticker_keys: list[str] = []
     stickers: list[dict[str, Any]] = []
+    sticker_events: list[dict[str, Any]] = []
+    enabled_sticker_types = {str(item) for item in sticker_segment_types}
 
     for part in parts:
         part_type = str(part.get("type") or "")
@@ -82,9 +85,19 @@ async def prepare_message_learning(
             continue
 
         if part_type == "image":
-            record = sticker_to_record(part, sticker_segment_types)
+            caption = ""
+            classification = classify_sticker_segment(part)
+            if not classification.sendable:
+                caption = await _caption_or_fallback(captioner, part, "")
+                if caption:
+                    classification = classify_sticker_segment(part, caption=caption)
+            record = (
+                sticker_to_record(part, enabled_sticker_types, classification=classification)
+                if classification.sendable
+                else None
+            )
             if record is not None:
-                caption = _record_prompt_summary(record)
+                caption = _record_prompt_summary(record) or caption
                 if not caption:
                     caption = await _caption_or_fallback(captioner, part, "")
                 if not caption:
@@ -94,14 +107,34 @@ async def prepare_message_learning(
                     record["summary"] = caption
                 stickers.append(record)
                 sticker_keys.append(record["key"])
+                sticker_events.append(
+                    _classifier_event(
+                        part=part,
+                        classification=classification,
+                        status="accepted",
+                        key=str(record.get("key") or ""),
+                        message=f"accepted image sticker: {caption or classification.reason}",
+                    )
+                )
             else:
-                caption = await _caption_or_fallback(captioner, part, image_fallback_text)
+                if not caption:
+                    caption = await _caption_or_fallback(captioner, part, image_fallback_text)
                 if caption:
                     media_context_chunks.append(f"图片：{caption}")
+                sticker_events.append(
+                    _classifier_event(
+                        part=part,
+                        classification=classification,
+                        status="rejected",
+                        key="",
+                        message=f"rejected image: {caption or classification.reason}",
+                    )
+                )
             continue
 
         if part_type in MEDIA_SEGMENT_TYPES:
-            record = sticker_to_record(part, sticker_segment_types)
+            classification = classify_sticker_segment(part)
+            record = sticker_to_record(part, enabled_sticker_types, classification=classification)
             caption = _record_prompt_summary(record) if record is not None else ""
             if not caption:
                 caption = await _caption_or_fallback(captioner, part, sticker_fallback_text)
@@ -123,6 +156,7 @@ async def prepare_message_learning(
         "media_context_text": _clean_text(" ".join(media_context_chunks)),
         "raw_segments": parts,
         "stickers": stickers,
+        "sticker_events": sticker_events,
         "media_parts": [part for part in parts if part.get("type") != "text"],
     }
 
@@ -209,6 +243,29 @@ def _record_prompt_summary(record: dict[str, Any]) -> str:
         if caption:
             return caption
     return ""
+
+
+def _classifier_event(
+    *,
+    part: Mapping[str, Any],
+    classification: StickerClassification,
+    status: str,
+    key: str,
+    message: str,
+) -> dict[str, Any]:
+    data = part.get("data") if isinstance(part.get("data"), Mapping) else {}
+    return {
+        "event_type": "classifier",
+        "status": status,
+        "key": key,
+        "message": _clean_text(message)[:240],
+        "details": {
+            **classification.to_dict(),
+            "segment_type": str(part.get("type") or ""),
+            "summary": str((data or {}).get("summary") or "")[:120],
+            "uri": str((data or {}).get("url") or (data or {}).get("file") or "")[:240],
+        },
+    }
 
 
 def _cq_text_to_parts(text: str) -> list[dict[str, Any]]:

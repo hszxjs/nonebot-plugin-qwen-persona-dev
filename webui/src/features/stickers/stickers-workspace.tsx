@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { IconEdit, IconPhoto, IconTrash } from "@tabler/icons-react"
+import { IconEdit, IconHistory, IconPhoto, IconTrash } from "@tabler/icons-react"
 import { toast } from "sonner"
 
 import {
@@ -25,6 +25,14 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { InputGroup, InputGroupInput } from "@/components/ui/input-group"
@@ -37,6 +45,7 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Sheet,
   SheetContent,
@@ -51,12 +60,94 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import {
   deleteStickers,
   updateStickerSummary,
+  useStickerEvents,
   useStickers,
 } from "@/lib/api"
-import type { StickerGalleryPayload, StickerItem } from "@/lib/types"
+import type { StickerEvent, StickerGalleryPayload, StickerItem } from "@/lib/types"
 
 function imageUrl(item: StickerItem) {
-  return String(item.data.url || item.data.preview || item.data.thumb || "")
+  return String(item.preview_url || item.data.url || item.data.preview || item.data.thumb || "")
+}
+
+function StickerHistoryItem({ event }: { event: StickerEvent }) {
+  return (
+    <Item>
+      <ItemMedia variant="icon">
+        <IconHistory />
+      </ItemMedia>
+      <ItemContent>
+        <ItemTitle>
+          <span>{event.event_type}</span>
+          <Badge variant="secondary">{event.status}</Badge>
+        </ItemTitle>
+        <ItemDescription>
+          {event.message || event.key || event.time}
+        </ItemDescription>
+        <ItemDescription>
+          {event.key || "-"} / {event.group_id || "-"} / {event.user_id || "-"}
+        </ItemDescription>
+      </ItemContent>
+    </Item>
+  )
+}
+
+function StickerHistoryDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const { data, error, isLoading } = useStickerEvents(open)
+  const items = data?.items ?? []
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogTrigger asChild>
+        <Button variant="outline">
+          <IconHistory data-icon="inline-start" />
+          历史
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>表情事件历史</DialogTitle>
+          <DialogDescription>classifier 和 selector 的最近观测事件。</DialogDescription>
+        </DialogHeader>
+        {isLoading ? (
+          <div className="flex flex-col gap-3">
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+          </div>
+        ) : error ? (
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>无法读取历史</EmptyTitle>
+              <EmptyDescription>{String(error)}</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent />
+          </Empty>
+        ) : items.length ? (
+          <ScrollArea className="h-[min(60vh,32rem)]">
+            <ItemGroup>
+              {items.map((event) => (
+                <StickerHistoryItem key={event.event_id} event={event} />
+              ))}
+            </ItemGroup>
+          </ScrollArea>
+        ) : (
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>暂无历史</EmptyTitle>
+              <EmptyDescription>还没有 classifier 或 selector 事件。</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent />
+          </Empty>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 function StickerEntry({
@@ -166,6 +257,7 @@ export function StickersWorkspaceView({
   onDeleteSelected: () => void
 }) {
   const typeEntries = Object.entries(payload.type_counts)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   return (
     <div className="flex flex-col gap-4">
@@ -187,6 +279,7 @@ export function StickersWorkspaceView({
           ))}
         </ToggleGroup>
         <Badge variant="outline">总计 {payload.total}</Badge>
+        <StickerHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} />
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button variant="destructive" disabled={!selectedKeys.length}>

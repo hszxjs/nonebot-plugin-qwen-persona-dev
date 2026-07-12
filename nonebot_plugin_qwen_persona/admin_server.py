@@ -416,6 +416,33 @@ def create_admin_app(
             return {"items": [], "total": 0, "limit": limit, "offset": offset, "query": q, "type": type, "type_counts": {}}
         return await _maybe_await(store.list_stickers(limit=limit, offset=offset, query=q, segment_type=type))
 
+    @app.get("/api/stickers/events")
+    async def sticker_events(
+        limit: int = Query(default=100),
+        offset: int = Query(default=0),
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        authorize(token, x_admin_token)
+        if not store or not hasattr(store, "list_sticker_events"):
+            return {"items": [], "total": 0, "limit": min(limit, 300), "offset": max(0, offset)}
+        return await _maybe_await(store.list_sticker_events(limit=limit, offset=offset))
+
+    @app.get("/api/stickers/{sticker_key:path}/preview")
+    async def sticker_preview(
+        sticker_key: str,
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> Response:
+        authorize(token, x_admin_token)
+        if not store or not hasattr(store, "get_sticker_preview_path"):
+            raise HTTPException(status_code=404, detail="sticker preview not found")
+        repo_dir = getattr(config, "qwen_persona_sticker_repo_dir", "data/qwen_persona/sticker_repo")
+        path = await _maybe_await(store.get_sticker_preview_path(sticker_key, repo_dir=repo_dir))
+        if path is None or not Path(path).is_file():
+            raise HTTPException(status_code=404, detail="sticker preview not found")
+        return FileResponse(Path(path))
+
     @app.patch("/api/stickers/{sticker_key:path}")
     async def update_sticker(
         sticker_key: str,

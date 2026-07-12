@@ -7,6 +7,13 @@ import re
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
+from .sticker_classifier import (
+    StickerClassification,
+    classify_image_sticker_data,
+    classify_sticker_segment,
+    is_sendable_sticker_record,
+)
+
 STICKER_KEY_FIELDS = (
     "file_unique",
     "file_id",
@@ -165,30 +172,24 @@ def _has_image_sticker_hint(data: dict[str, Any]) -> bool:
 
 
 def is_image_sticker_data(data: dict[str, Any]) -> bool:
-    if str(data.get("sub_type") or data.get("subType") or "").lower() in {
-        "sticker",
-        "emoji",
-        "mface",
-    }:
-        return True
-    if _has_animation_file_extension(data):
-        return True
-    if _has_image_sticker_hint(data):
-        return True
-    return is_transient_image_sticker_data(data)
+    return classify_image_sticker_data(data).sendable
 
 
 def sticker_to_record(
     segment: dict[str, Any],
     enabled_types: Iterable[str],
+    *,
+    classification: StickerClassification | None = None,
 ) -> dict[str, Any] | None:
     segment_type = str(segment.get("type") or "unknown")
     data = dict(segment.get("data") or {})
     if segment_type == "image":
         if "image" not in {str(item) for item in enabled_types}:
             return None
-        if not is_image_sticker_data(data):
+        classification = classification or classify_sticker_segment(segment)
+        if not classification.sendable:
             return None
+        data["_classification"] = classification.to_dict()
         key = _stable_sticker_key(segment_type, data)
         return {
             "key": key,
@@ -201,6 +202,8 @@ def sticker_to_record(
         return None
     if segment_type not in {str(item) for item in enabled_types}:
         return None
+    classification = classification or classify_sticker_segment(segment)
+    data["_classification"] = classification.to_dict()
     key = _stable_sticker_key(segment_type, data)
     return {
         "key": key,
@@ -215,7 +218,7 @@ def build_onebot_v11_sticker_segment(message_segment: Any, record: dict[str, Any
     segment_type = str(record.get("type") or "")
     data = dict(record.get("data") or {})
     if segment_type == "image":
-        if not is_image_sticker_data(data):
+        if not is_sendable_sticker_record(record):
             return None
         uri = record.get("uri") or data.get("url") or data.get("file") or data.get("file_id")
         return message_segment.image(uri) if uri else None

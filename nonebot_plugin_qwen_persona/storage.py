@@ -8,17 +8,18 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+from urllib.parse import quote, unquote, urlparse
 
 from .filters import is_command_like, is_training_noise, normalize_text
 from .media import context_text_from_sample
 from .sticker import (
     build_training_text,
-    is_image_sticker_data,
     is_transient_image_sticker_data,
     meaningful_protocol_summary,
     parse_sticker_tokens,
     sticker_to_record,
 )
+from .sticker_classifier import classify_sticker_record, is_sendable_sticker_record
 
 MEDIA_ASSET_SOURCES = {"sticker", "admin_approved", "explicit_command"}
 
@@ -167,6 +168,21 @@ class PersonaStore:
                 """
             )
             conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sticker_events (
+                    event_id TEXT PRIMARY KEY,
+                    created_at REAL NOT NULL,
+                    event_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    key TEXT,
+                    group_id TEXT,
+                    user_id TEXT,
+                    message TEXT NOT NULL,
+                    details_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chat_samples_group_time "
                 "ON chat_samples(group_id, created_at)"
             )
@@ -189,6 +205,10 @@ class PersonaStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_inference_events_time "
                 "ON inference_events(created_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sticker_events_time "
+                "ON sticker_events(created_at DESC)"
             )
 
     async def record_inference_event(
@@ -375,6 +395,158 @@ class PersonaStore:
             "output_preview": row["output_preview"],
             "group_id": row["group_id"],
             "user_id": row["user_id"],
+        }
+
+    async def record_sticker_event(
+        self,
+        *,
+        event_type: str,
+        status: str,
+        key: str | None = None,
+        group_id: str | None = None,
+        user_id: str | None = None,
+        message: str = "",
+        details: dict[str, Any] | None = None,
+        created_at: float | None = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._record_sticker_event_sync,
+            event_type=event_type,
+            status=status,
+            key=key,
+            group_id=group_id,
+            user_id=user_id,
+            message=message,
+            details=details or {},
+            created_at=created_at,
+        )
+
+    def _record_sticker_event_sync(
+        self,
+        *,
+        event_type: str,
+        status: str,
+        key: str | None = None,
+        group_id: str | None = None,
+        user_id: str | None = None,
+        message: str = "",
+        details: dict[str, Any] | None = None,
+        created_at: float | None = None,
+    ) -> dict[str, Any]:
+        self._init_sync()
+        timestamp = float(created_at if created_at is not None else time.time())
+        details_payload = details if isinstance(details, dict) else {}
+        basis = json.dumps(
+            {
+                "created_at": timestamp,
+                "event_type": event_type,
+                "status": status,
+                "key": key,
+                "message": message,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        event_id = "sticker-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:20]
+        item = {
+            "event_id": event_id,
+            "created_at": timestamp,
+            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(timestamp)),
+            "event_type": str(event_type or "unknown"),
+            "status": str(status or "unknown"),
+            "key": None if key is None else str(key),
+            "group_id": None if group_id is None else str(group_id),
+            "user_id": None if user_id is None else str(user_id),
+            "message": self._preview_text(message, limit=240),
+            "details": details_payload,
+        }
+        with self._connection() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO sticker_events (
+                    event_id, created_at, event_type, status, key, group_id,
+                    user_id, message, details_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item["event_id"],
+                    item["created_at"],
+                    item["event_type"],
+                    item["status"],
+                    item["key"],
+                    item["group_id"],
+                    item["user_id"],
+                    item["message"],
+                    json.dumps(item["details"], ensure_ascii=False, default=str),
+                ),
+            )
+            conn.execute(
+                """
+                DELETE FROM sticker_events
+                WHERE event_id NOT IN (
+                    SELECT event_id
+                    FROM sticker_events
+                    ORDER BY created_at DESC
+                    LIMIT 1000
+                )
+                """
+            )
+        return item
+
+    async def list_sticker_events(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self._list_sticker_events_sync,
+            limit=limit,
+            offset=offset,
+        )
+
+    def _list_sticker_events_sync(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        self._init_sync()
+        limit = max(1, min(int(limit or 100), 300))
+        offset = max(0, int(offset or 0))
+        with self._connection() as conn:
+            total = int(conn.execute("SELECT COUNT(*) FROM sticker_events").fetchone()[0])
+            rows = conn.execute(
+                """
+                SELECT event_id, created_at, event_type, status, key, group_id,
+                       user_id, message, details_json
+                FROM sticker_events
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (limit, offset),
+            ).fetchall()
+        return {
+            "items": [self._sticker_event_row_payload(row) for row in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    def _sticker_event_row_payload(self, row: sqlite3.Row) -> dict[str, Any]:
+        created_at = float(row["created_at"])
+        return {
+            "event_id": row["event_id"],
+            "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(created_at)),
+            "created_at": created_at,
+            "event_type": row["event_type"],
+            "status": row["status"],
+            "key": row["key"],
+            "group_id": row["group_id"],
+            "user_id": row["user_id"],
+            "message": row["message"],
+            "details": self._json_object(row["details_json"]),
         }
 
     async def cleanup_empty_chat_artifacts(self) -> dict[str, int]:
@@ -895,12 +1067,7 @@ class PersonaStore:
                 """,
                 params,
             ).fetchall()
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            item = dict(row)
-            item["data"] = json.loads(item.pop("data_json") or "{}")
-            result.append(item)
-        return result
+        return [self._sticker_row_payload(row) for row in rows]
 
     async def get_sticker(self, key: str) -> dict[str, Any] | None:
         return await asyncio.to_thread(self._get_sticker_sync, key)
@@ -918,9 +1085,7 @@ class PersonaStore:
             ).fetchone()
         if not row:
             return None
-        item = dict(row)
-        item["data"] = json.loads(item.pop("data_json") or "{}")
-        return item
+        return self._sticker_row_payload(row)
 
     async def list_stickers(
         self,
@@ -1000,14 +1165,7 @@ class PersonaStore:
 
         items: list[dict[str, Any]] = []
         for row in rows:
-            item = dict(row)
-            item["data"] = self._json_object(item.pop("data_json"))
-            item["count"] = int(item.get("count") or 0)
-            if item.get("first_seen") is not None:
-                item["first_seen"] = float(item["first_seen"])
-            if item.get("last_seen") is not None:
-                item["last_seen"] = float(item["last_seen"])
-            items.append(item)
+            items.append(self._sticker_row_payload(row))
 
         return {
             "items": items,
@@ -1018,6 +1176,87 @@ class PersonaStore:
             "type": segment_type,
             "type_counts": {str(row["type"]): int(row["count"] or 0) for row in type_rows},
         }
+
+    def _sticker_row_payload(self, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        item["data"] = self._json_object(item.pop("data_json", "{}"))
+        item["count"] = int(item.get("count") or 0)
+        if item.get("first_seen") is not None:
+            item["first_seen"] = float(item["first_seen"])
+        if item.get("last_seen") is not None:
+            item["last_seen"] = float(item["last_seen"])
+        classification = classify_sticker_record(item)
+        item["classification"] = classification.to_dict()
+        item["sendable"] = bool(classification.sendable)
+        item["preview_url"] = self._sticker_preview_url(item)
+        return item
+
+    def _sticker_preview_url(self, item: dict[str, Any]) -> str | None:
+        key = str(item.get("key") or "").strip()
+        if not key:
+            return None
+        if self._local_sticker_media_path(item, require_exists=True) is None:
+            return None
+        return f"/api/stickers/{quote(key, safe='')}/preview"
+
+    def _local_sticker_media_path(
+        self,
+        item: dict[str, Any],
+        *,
+        require_exists: bool,
+    ) -> Path | None:
+        data = dict(item.get("data") or {})
+        for value in (
+            item.get("uri"),
+            data.get("url"),
+            data.get("file"),
+            data.get("file_id"),
+            data.get("uri"),
+        ):
+            path = self._path_from_file_uri(value)
+            if path is None:
+                continue
+            if require_exists and not path.is_file():
+                continue
+            return path
+        return None
+
+    @staticmethod
+    def _path_from_file_uri(value: Any) -> Path | None:
+        parsed = urlparse(str(value or ""))
+        if parsed.scheme != "file":
+            return None
+        path = Path(unquote(parsed.path)).expanduser()
+        try:
+            return path.resolve()
+        except OSError:
+            return None
+
+    async def get_sticker_preview_path(
+        self,
+        key: str,
+        *,
+        repo_dir: str | Path,
+    ) -> Path | None:
+        return await asyncio.to_thread(self._get_sticker_preview_path_sync, key, repo_dir)
+
+    def _get_sticker_preview_path_sync(
+        self,
+        key: str,
+        repo_dir: str | Path,
+    ) -> Path | None:
+        item = self._get_sticker_sync(key)
+        if not item:
+            return None
+        path = self._local_sticker_media_path(item, require_exists=True)
+        if path is None:
+            return None
+        media_dir = (Path(repo_dir) / "media").resolve()
+        try:
+            path.relative_to(media_dir)
+        except ValueError:
+            return None
+        return path
 
     async def delete_stickers(self, keys: list[str]) -> dict[str, int]:
         return await asyncio.to_thread(self._delete_stickers_sync, keys)
@@ -1276,9 +1515,21 @@ class PersonaStore:
             invalid_image_keys = {
                 str(row["key"])
                 for row in conn.execute(
-                    "SELECT key, data_json FROM stickers WHERE type = 'image'"
+                    """
+                    SELECT key, type, summary, uri, data_json
+                    FROM stickers
+                    WHERE type = 'image'
+                    """
                 ).fetchall()
-                if not is_image_sticker_data(self._json_object(row["data_json"]))
+                if not is_sendable_sticker_record(
+                    {
+                        "key": row["key"],
+                        "type": row["type"],
+                        "summary": row["summary"],
+                        "uri": row["uri"],
+                        "data": self._json_object(row["data_json"]),
+                    }
+                )
             }
             if invalid_image_keys:
                 placeholders = ",".join("?" for _ in invalid_image_keys)

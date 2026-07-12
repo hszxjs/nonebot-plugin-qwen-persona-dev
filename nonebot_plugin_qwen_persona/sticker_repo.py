@@ -10,11 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .sticker import (
-    is_image_sticker_data,
-    is_transient_image_sticker_data,
-    meaningful_protocol_summary,
-)
+from .sticker import is_transient_image_sticker_data, meaningful_protocol_summary
+from .sticker_classifier import is_sendable_sticker_record
 
 
 MAX_STICKER_MEDIA_BYTES = 16 * 1024 * 1024
@@ -88,7 +85,7 @@ def _is_plain_image_manifest_record(record: Any) -> bool:
         return False
     if str(record.get("type") or "") != "image":
         return False
-    return not is_image_sticker_data(dict(record.get("data") or {}))
+    return not is_sendable_sticker_record(record)
 
 
 def _delete_local_manifest_media(repo_dir: Path, record: dict[str, Any]) -> int:

@@ -9,12 +9,18 @@ from typing import Any
 IMAGE_QUESTION_RE = re.compile(
     r"(这是什么|这是啥|什么图|看图|图里|图片|截图|表情|表情包|这个图|这图|啥意思)"
 )
+STICKER_REQUEST_RE = re.compile(
+    r"((发|来|给|整|丢|甩).{0,8}(表情包|表情|贴纸|贴图|sticker|meme)|"
+    r"(表情包|表情|贴纸|贴图|sticker|meme).{0,8}(看看|来一个|发一个|整一个|有吗))",
+    re.IGNORECASE,
+)
 
 
 class ReplyIntent(str, Enum):
     PERSONA_TEXT = "persona_text"
     IMAGE_EXPLAIN = "image_explain"
     STICKER_REACTION = "sticker_reaction"
+    STICKER_REQUEST = "sticker_request"
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,8 @@ def classify_reply_intent(
     has_media = bool(media_parts)
     if has_media and (not text or IMAGE_QUESTION_RE.search(text)):
         return ReplyIntent.IMAGE_EXPLAIN
+    if text and STICKER_REQUEST_RE.search(text):
+        return ReplyIntent.STICKER_REQUEST
     if incoming_has_sticker and not text:
         return ReplyIntent.STICKER_REACTION
     return ReplyIntent.PERSONA_TEXT
@@ -63,6 +71,8 @@ def build_reply_plan(
             "回答用户对图片或表情的疑问。可以解释可见内容并顺势接一句群聊口吻，"
             "不要复述内部图片 caption，不要输出“图片：”或“表情：”前缀。"
         )
+    elif intent == ReplyIntent.STICKER_REQUEST:
+        user_parts.append("用户明确想要表情回复。不要输出 emoji，不要描述表情内容；主文本可以为空。")
     elif intent == ReplyIntent.STICKER_REACTION:
         user_parts.append("对这个表情自然接一句短回复，只输出文字。")
     else:
@@ -82,5 +92,5 @@ def build_reply_plan(
             {"role": "user", "content": "\n\n".join(user_parts)},
         ],
         media_parts=list(media_parts),
-        allow_sticker=bool(sticker_reply_allowed),
+        allow_sticker=bool(sticker_reply_allowed) or intent == ReplyIntent.STICKER_REQUEST,
     )

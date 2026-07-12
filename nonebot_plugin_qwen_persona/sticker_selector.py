@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .reply_planner import ReplyIntent
+from .sticker_classifier import is_sendable_sticker_record
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,8 @@ class StickerSelection:
     key: str | None
     reason: str = ""
     raw_text: str = ""
+    candidate_count: int = 0
+    usable_count: int = 0
 
 
 async def select_reply_sticker(
@@ -41,9 +44,14 @@ async def select_reply_sticker(
     intent: ReplyIntent | str,
     max_candidate_images: int = 4,
 ) -> StickerSelection:
-    usable_candidates = [item for item in candidates if str(item.get("key") or "").strip()]
+    candidate_count = len(candidates)
+    usable_candidates = [
+        item
+        for item in candidates
+        if str(item.get("key") or "").strip() and is_sendable_sticker_record(item)
+    ]
     if not usable_candidates:
-        return StickerSelection(key=None)
+        return StickerSelection(key=None, candidate_count=candidate_count, usable_count=0)
 
     messages = _selector_messages(
         candidates=usable_candidates,
@@ -56,16 +64,31 @@ async def select_reply_sticker(
         raw_text = await runtime.chat(messages, media_parts=media_parts)
     except Exception as exc:
         logger.warning("sticker selection failed: %r", exc)
-        return StickerSelection(key=None)
+        return StickerSelection(
+            key=None,
+            candidate_count=candidate_count,
+            usable_count=len(usable_candidates),
+        )
 
     payload = _parse_json_object(raw_text)
     if payload is None:
         logger.warning("invalid sticker selection: non-json output=%r", raw_text)
-        return StickerSelection(key=None, raw_text=raw_text)
+        return StickerSelection(
+            key=None,
+            raw_text=raw_text,
+            candidate_count=candidate_count,
+            usable_count=len(usable_candidates),
+        )
 
     key = str(payload.get("key") or "").strip()
     if not key or key.upper() == "NONE":
-        return StickerSelection(key=None, reason=str(payload.get("reason") or ""), raw_text=raw_text)
+        return StickerSelection(
+            key=None,
+            reason=str(payload.get("reason") or ""),
+            raw_text=raw_text,
+            candidate_count=candidate_count,
+            usable_count=len(usable_candidates),
+        )
 
     allowed_keys = {str(item.get("key") or "").strip() for item in usable_candidates}
     if key not in allowed_keys:
@@ -73,9 +96,21 @@ async def select_reply_sticker(
             "invalid sticker selection: key=%r is not an exact candidate key",
             key,
         )
-        return StickerSelection(key=None, reason=str(payload.get("reason") or ""), raw_text=raw_text)
+        return StickerSelection(
+            key=None,
+            reason=str(payload.get("reason") or ""),
+            raw_text=raw_text,
+            candidate_count=candidate_count,
+            usable_count=len(usable_candidates),
+        )
 
-    return StickerSelection(key=key, reason=str(payload.get("reason") or ""), raw_text=raw_text)
+    return StickerSelection(
+        key=key,
+        reason=str(payload.get("reason") or ""),
+        raw_text=raw_text,
+        candidate_count=candidate_count,
+        usable_count=len(usable_candidates),
+    )
 
 
 def _selector_messages(
@@ -127,6 +162,8 @@ def _candidate_media_parts(
         if len(parts) >= limit:
             break
         segment_type = str(item.get("type") or "").strip()
+        if not is_sendable_sticker_record(item):
+            continue
         if segment_type not in IMAGE_CAPABLE_TYPES:
             continue
         data = dict(item.get("data") or {})

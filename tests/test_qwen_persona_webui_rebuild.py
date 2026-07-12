@@ -57,6 +57,9 @@ class DummyRuntime:
 
 
 class DummyStore:
+    def __init__(self, preview_path: Path | None = None) -> None:
+        self.preview_path = preview_path
+
     async def dashboard_stats(self) -> dict[str, object]:
         return {
             "totals": {"learned_messages": 10, "trainable_samples": 8},
@@ -73,7 +76,61 @@ class DummyStore:
         }
 
     async def list_stickers(self, **_kwargs: object) -> dict[str, object]:
-        return {"items": [], "total": 0, "limit": 80, "offset": 0, "query": "", "type": "", "type_counts": {}}
+        return {
+            "items": [
+                {
+                    "key": "sticker-1",
+                    "type": "image",
+                    "summary": "拍桌狂笑",
+                    "uri": "file:///tmp/sticker-1.webp",
+                    "data": {"url": "https://expired.example.test/sticker-1.webp"},
+                    "preview_url": "/api/stickers/sticker-1/preview",
+                    "sendable": True,
+                    "classification": {
+                        "label": "custom_sticker",
+                        "reason": "explicit custom metadata",
+                        "sendable": True,
+                    },
+                    "group_id": "10",
+                    "user_id": "20",
+                    "first_seen": 100.0,
+                    "last_seen": 200.0,
+                    "count": 3,
+                }
+            ],
+            "total": 1,
+            "limit": 80,
+            "offset": 0,
+            "query": "",
+            "type": "",
+            "type_counts": {"image": 1},
+        }
+
+    async def list_sticker_events(self, *, limit: int = 100, offset: int = 0) -> dict[str, object]:
+        return {
+            "items": [
+                {
+                    "event_id": "sticker-event-1",
+                    "time": "2026-07-12T00:00:00Z",
+                    "created_at": 1783795200.0,
+                    "event_type": "classifier",
+                    "status": "rejected",
+                    "key": "image:screenshot",
+                    "group_id": "10",
+                    "user_id": "20",
+                    "message": "rejected screenshot",
+                    "details": {"label": "screenshot"},
+                }
+            ],
+            "total": 1,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def get_sticker_preview_path(self, key: str, *, repo_dir: str | Path) -> Path | None:
+        if key != "sticker-1":
+            return None
+        return self.preview_path
 
     async def update_sticker_summary(self, key: str, summary: str) -> dict[str, object]:
         return {"updated": 1, "item": {"key": key, "summary": summary}}
@@ -132,6 +189,7 @@ class WebuiRebuildApiTests(unittest.TestCase):
         static_dir: Path | None = None,
         saved: list[dict[str, object]] | None = None,
         trainer: DummyTrainer | None = None,
+        store: DummyStore | None = None,
         **config_overrides: object,
     ) -> TestClient:
         from nonebot_plugin_qwen_persona.admin_server import create_admin_app
@@ -151,7 +209,7 @@ class WebuiRebuildApiTests(unittest.TestCase):
             config=config,
             save_callback=save_callback,
             mlx_runtime=DummyRuntime(),
-            store=DummyStore(),
+            store=store or DummyStore(),
             trainer=trainer or DummyTrainer(),
             qwen_client=SimpleNamespace(metrics_snapshot=lambda: {"last": None, "history": []}),
             static_dir=static_dir,
@@ -221,6 +279,37 @@ class WebuiRebuildApiTests(unittest.TestCase):
         self.assertEqual(updated.status_code, 200)
         self.assertEqual(deleted.json()["deleted"], 1)
         self.assertIn("static", diagnostics.json())
+
+    def test_sticker_gallery_exposes_preview_sendable_and_classification_contract(self) -> None:
+        response = self.make_client().get("/api/stickers?token=secret")
+
+        self.assertEqual(response.status_code, 200)
+        item = response.json()["items"][0]
+        self.assertEqual(item["preview_url"], "/api/stickers/sticker-1/preview")
+        self.assertTrue(item["sendable"])
+        self.assertEqual(item["classification"]["label"], "custom_sticker")
+
+    def test_sticker_preview_route_serves_local_media_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            media_path = Path(tmp) / "sticker.webp"
+            media_path.write_bytes(b"webp-bytes")
+            client = self.make_client(store=DummyStore(preview_path=media_path))
+
+            ok = client.get("/api/stickers/sticker-1/preview?token=secret")
+            missing = client.get("/api/stickers/missing/preview?token=secret")
+
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.content, b"webp-bytes")
+        self.assertEqual(missing.status_code, 404)
+
+    def test_sticker_events_are_available_for_warehouse_history(self) -> None:
+        response = self.make_client().get("/api/stickers/events?token=secret")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["total"], 1)
+        self.assertEqual(payload["items"][0]["event_type"], "classifier")
+        self.assertEqual(payload["items"][0]["status"], "rejected")
 
     def test_static_host_uses_browser_router_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

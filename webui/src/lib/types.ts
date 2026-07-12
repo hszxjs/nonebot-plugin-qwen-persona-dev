@@ -104,6 +104,13 @@ export type InferenceEventsPayload = {
   offset: number
 }
 
+export type StickerClassification = {
+  label: string
+  reason: string
+  sendable: boolean
+  confidence?: number
+}
+
 export type OperationsOverview = {
   runtime: RuntimeSummary
   learning: LearningSummary
@@ -120,6 +127,9 @@ export type StickerItem = {
   summary: string
   uri: string
   data: Record<string, unknown>
+  preview_url: string | null
+  sendable: boolean
+  classification: StickerClassification | null
   group_id: string | null
   user_id: string | null
   first_seen: number | null
@@ -135,6 +145,26 @@ export type StickerGalleryPayload = {
   query: string
   type: string
   type_counts: Record<string, number>
+}
+
+export type StickerEvent = {
+  event_id: string
+  time: string
+  created_at: number
+  event_type: string
+  status: string
+  key: string | null
+  group_id: string | null
+  user_id: string | null
+  message: string
+  details: Record<string, unknown>
+}
+
+export type StickerEventsPayload = {
+  items: StickerEvent[]
+  total: number
+  limit: number
+  offset: number
 }
 
 export type ConfigValue =

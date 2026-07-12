@@ -19,6 +19,7 @@ import type {
 
 const mocks = vi.hoisted(() => ({
   runRuntimeAction: vi.fn(),
+  useStickerEvents: vi.fn(),
 }))
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -28,6 +29,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     runRuntimeAction: mocks.runRuntimeAction,
     useRuntimeLogs: () => ({ data: { logs: [] } }),
     useTrainingLogs: () => ({ data: { logs: [] } }),
+    useStickerEvents: mocks.useStickerEvents,
   }
 })
 
@@ -38,7 +40,14 @@ const stickers: StickerGalleryPayload = {
       type: "mface",
       summary: "[肿么这样]",
       uri: "https://example.test/sticker.png",
-      data: { url: "https://example.test/sticker.png" },
+      data: { url: "https://expired.example.test/sticker.png" },
+      preview_url: "/api/stickers/sticker-1/preview",
+      sendable: true,
+      classification: {
+        label: "custom_sticker",
+        reason: "explicit custom metadata",
+        sendable: true,
+      },
       group_id: "10",
       user_id: "20",
       first_seen: 100,
@@ -72,9 +81,14 @@ const diagnostics: DiagnosticsPayload = {
 }
 
 describe("admin workspaces", () => {
-  afterEach(() => cleanup())
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
 
   it("renders stickers as card entries instead of a table", () => {
+    mocks.useStickerEvents.mockReturnValue({ data: { items: [], total: 0, limit: 100, offset: 0 } })
+
     render(
       <StickersWorkspaceView
         payload={stickers}
@@ -89,6 +103,65 @@ describe("admin workspaces", () => {
     expect(screen.getByText("[肿么这样]")).toBeInTheDocument()
     expect(screen.getAllByText("mface").length).toBeGreaterThan(0)
     expect(screen.queryByRole("table")).not.toBeInTheDocument()
+  })
+
+  it("uses backend sticker preview urls instead of expired protocol urls", () => {
+    mocks.useStickerEvents.mockReturnValue({ data: { items: [], total: 0, limit: 100, offset: 0 } })
+
+    render(
+      <StickersWorkspaceView
+        payload={stickers}
+        selectedKeys={[]}
+        onToggleSelected={vi.fn()}
+        onEditSummary={vi.fn()}
+        onDeleteSelected={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole("img", { name: "[肿么这样]" })).toHaveAttribute(
+      "src",
+      "/api/stickers/sticker-1/preview"
+    )
+  })
+
+  it("opens sticker warehouse history as a dedicated event modal", async () => {
+    mocks.useStickerEvents.mockReturnValue({
+      data: {
+        items: [
+          {
+            event_id: "sticker-event-1",
+            time: "2026-07-12T00:00:00Z",
+            created_at: 1783795200,
+            event_type: "classifier",
+            status: "rejected",
+            key: "image:screenshot",
+            group_id: "10",
+            user_id: "20",
+            message: "rejected screenshot",
+            details: { label: "screenshot" },
+          },
+        ],
+        total: 1,
+        limit: 100,
+        offset: 0,
+      },
+      isLoading: false,
+    })
+
+    render(
+      <StickersWorkspaceView
+        payload={stickers}
+        selectedKeys={[]}
+        onToggleSelected={vi.fn()}
+        onEditSummary={vi.fn()}
+        onDeleteSelected={vi.fn()}
+      />
+    )
+    fireEvent.click(screen.getByRole("button", { name: "历史" }))
+
+    expect(await screen.findByRole("dialog", { name: "表情事件历史" })).toBeInTheDocument()
+    expect(screen.getByText("classifier")).toBeInTheDocument()
+    expect(screen.getByText("rejected screenshot")).toBeInTheDocument()
   })
 
   it("renders settings by semantic section with reload confirmation cues", () => {

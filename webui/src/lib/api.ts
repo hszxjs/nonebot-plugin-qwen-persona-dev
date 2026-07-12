@@ -9,6 +9,7 @@ import type {
   RuntimeAction,
   RuntimeActionResult,
   SettingsPayload,
+  StickerEventsPayload,
   StickerGalleryPayload,
   TrainingActionResult,
 } from "@/lib/types"
@@ -50,6 +51,14 @@ export function useOperationsOverview() {
 
 export function useStickers() {
   return useSWR<StickerGalleryPayload>("stickers", fetchJson)
+}
+
+export function useStickerEvents(open: boolean) {
+  return useSWR<StickerEventsPayload>(
+    open ? "stickers/events?limit=100" : null,
+    fetchJson,
+    { refreshInterval: open ? 5_000 : 0 }
+  )
 }
 
 export function updateStickerSummary(key: string, summary: string) {

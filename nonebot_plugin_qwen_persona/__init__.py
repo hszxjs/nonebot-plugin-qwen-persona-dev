@@ -526,9 +526,52 @@ async def _build_adapter_reply(event: Event, text: str, sticker_keys: list[str])
     return build_onebot_v11_sticker_message(Message, MessageSegment, text, records)
 
 
+async def _record_sticker_event(
+    *,
+    event_type: str,
+    status: str,
+    key: str | None = None,
+    group_id: str | None = None,
+    user_id: str | None = None,
+    message: str = "",
+    details: dict[str, Any] | None = None,
+) -> None:
+    if not hasattr(store, "record_sticker_event"):
+        return
+    try:
+        await store.record_sticker_event(
+            event_type=event_type,
+            status=status,
+            key=key,
+            group_id=group_id,
+            user_id=user_id,
+            message=message,
+            details=details or {},
+        )
+    except Exception as exc:
+        logger.warning(f"qwen persona sticker event record failed: {exc!r}")
+
+
+async def _record_learning_sticker_events(
+    ids: dict[str, str | None],
+    events: list[dict[str, Any]],
+) -> None:
+    for event in events:
+        await _record_sticker_event(
+            event_type=str(event.get("event_type") or "classifier"),
+            status=str(event.get("status") or "unknown"),
+            key=str(event.get("key") or "") or None,
+            group_id=ids["group_id"],
+            user_id=ids["user_id"],
+            message=str(event.get("message") or ""),
+            details=dict(event.get("details") or {}),
+        )
+
+
 async def _select_reply_sticker_key(
     *,
     group_id: str | None,
+    user_id: str | None,
     trigger_text: str,
     reply_text: str,
     intent: ReplyIntent,
@@ -554,6 +597,22 @@ async def _select_reply_sticker_key(
         trigger_text=trigger_text,
         reply_text=reply_text,
         intent=intent,
+    )
+    await _record_sticker_event(
+        event_type="selector",
+        status="selected" if selection.key else "none",
+        key=selection.key,
+        group_id=group_id,
+        user_id=user_id,
+        message=selection.reason or ("selected sticker" if selection.key else "no sticker selected"),
+        details={
+            "intent": str(getattr(intent, "value", intent)),
+            "candidate_count": selection.candidate_count,
+            "usable_count": selection.usable_count,
+            "trigger_text": trigger_text[:240],
+            "reply_text": reply_text[:240],
+            "raw_text": selection.raw_text[:500],
+        },
     )
     return selection.key
 
@@ -742,6 +801,8 @@ async def _learn_from_event(bot: Bot, event: Event) -> None:
         conversation_pattern_tracker.reset(ids["group_id"])
         return
 
+    await _record_learning_sticker_events(ids, list(learning.get("sticker_events") or []))
+
     stickers = list(learning["stickers"])
     training_text = str(learning["training_text"])
     decision = should_learn_text(
@@ -858,9 +919,32 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         media_parts=media_parts,
     )
     inference_started = time.perf_counter()
-    try:
-        raw_reply = await client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
-    except Exception as exc:
+    raw_reply = ""
+    if reply_plan.intent != ReplyIntent.STICKER_REQUEST:
+        try:
+            raw_reply = await client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
+        except Exception as exc:
+            await record_inference_event(
+                store=store,
+                ids=ids,
+                trigger_reason="auto_reply",
+                model=plugin_config.qwen_persona_mlx_model,
+                adapter=plugin_config.qwen_persona_mlx_adapter_path,
+                started_at=inference_started,
+                finished_at=time.perf_counter(),
+                input_text=reply_input_text,
+                output_text="",
+                media_count=len(media_parts),
+                status="failed",
+                error_summary=f"{type(exc).__name__}: {exc}",
+                tps=None,
+            )
+            logger.warning(f"qwen persona chat failed: {exc!r}")
+            return
+
+        metrics = client.metrics_snapshot() if hasattr(client, "metrics_snapshot") else {"last": None}
+        last_metric = metrics.get("last") if isinstance(metrics, dict) else None
+        tps = last_metric.get("tps") if isinstance(last_metric, dict) else None
         await record_inference_event(
             store=store,
             ids=ids,
@@ -870,33 +954,12 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
             started_at=inference_started,
             finished_at=time.perf_counter(),
             input_text=reply_input_text,
-            output_text="",
+            output_text=raw_reply,
             media_count=len(media_parts),
-            status="failed",
-            error_summary=f"{type(exc).__name__}: {exc}",
-            tps=None,
+            status="success",
+            error_summary="",
+            tps=tps,
         )
-        logger.warning(f"qwen persona chat failed: {exc!r}")
-        return
-
-    metrics = client.metrics_snapshot() if hasattr(client, "metrics_snapshot") else {"last": None}
-    last_metric = metrics.get("last") if isinstance(metrics, dict) else None
-    tps = last_metric.get("tps") if isinstance(last_metric, dict) else None
-    await record_inference_event(
-        store=store,
-        ids=ids,
-        trigger_reason="auto_reply",
-        model=plugin_config.qwen_persona_mlx_model,
-        adapter=plugin_config.qwen_persona_mlx_adapter_path,
-        started_at=inference_started,
-        finished_at=time.perf_counter(),
-        input_text=reply_input_text,
-        output_text=raw_reply,
-        media_count=len(media_parts),
-        status="success",
-        error_summary="",
-        tps=tps,
-    )
 
     raw_reply = sanitize_model_reply_media_text(raw_reply)
     reply_text, generated_sticker_keys = parse_sticker_tokens(raw_reply)
@@ -914,9 +977,12 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     if is_echo_reply(clean_text, reply_input_text) or is_question_deflection_reply(clean_text, reply_input_text):
         clean_text = ""
     sticker_keys: list[str] = []
-    if reply_plan.allow_sticker and (clean_text or incoming_sticker_keys):
+    if reply_plan.allow_sticker and (
+        clean_text or incoming_sticker_keys or reply_plan.intent == ReplyIntent.STICKER_REQUEST
+    ):
         sticker_key = await _select_reply_sticker_key(
             group_id=ids["group_id"],
+            user_id=ids["user_id"],
             trigger_text=reply_input_text,
             reply_text=clean_text,
             intent=reply_plan.intent,
