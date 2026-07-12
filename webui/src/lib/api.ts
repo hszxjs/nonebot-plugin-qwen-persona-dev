@@ -4,8 +4,11 @@ import useSWR from "swr"
 import type {
   ConfigValue,
   DiagnosticsPayload,
+  LogsPayload,
   OperationsOverview,
-  SettingsSectionsPayload,
+  RuntimeAction,
+  RuntimeActionResult,
+  SettingsPayload,
   StickerGalleryPayload,
 } from "@/lib/types"
 
@@ -56,8 +59,8 @@ export function deleteStickers(keys: string[]) {
   return api.delete("stickers", { json: { keys } }).json()
 }
 
-export function useSettingsSections() {
-  return useSWR<SettingsSectionsPayload>("settings/sections", fetchJson)
+export function useSettings() {
+  return useSWR<SettingsPayload>("settings", fetchJson)
 }
 
 export function saveSettingField(
@@ -74,4 +77,34 @@ export function saveSettingField(
 
 export function useDiagnostics() {
   return useSWR<DiagnosticsPayload>("diagnostics", fetchJson)
+}
+
+export function useRuntimeLogs(paused: boolean) {
+  return useSWR<LogsPayload>(
+    "runtime/logs?tail=300",
+    fetchJson,
+    { refreshInterval: paused ? 0 : 3_000 }
+  )
+}
+
+export function usePluginLogs(paused: boolean) {
+  return useSWR<LogsPayload>(
+    "plugin/logs?tail=300",
+    fetchJson,
+    { refreshInterval: paused ? 0 : 3_000 }
+  )
+}
+
+export function useTrainingLogs(paused: boolean) {
+  return useSWR<LogsPayload>(
+    "training/logs?tail=300",
+    fetchJson,
+    { refreshInterval: paused ? 0 : 3_000 }
+  )
+}
+
+export function runRuntimeAction(action: RuntimeAction, confirmed = false) {
+  return api
+    .post(`runtime/${action}`, { json: { confirmed } })
+    .json<RuntimeActionResult>()
 }

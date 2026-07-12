@@ -1,15 +1,30 @@
+import { useState } from "react"
 import {
+  IconAlertTriangle,
   IconActivity,
   IconBrain,
   IconCpu,
   IconDatabase,
   IconMessageCircle,
+  IconPlayerPause,
   IconPlayerPlay,
 } from "@tabler/icons-react"
+import { toast } from "sonner"
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ButtonGroup } from "@/components/ui/button-group"
 import {
   Card,
   CardAction,
@@ -19,6 +34,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import {
   Item,
   ItemActions,
@@ -30,7 +46,8 @@ import {
 } from "@/components/ui/item"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import type { InferenceEvent, OperationsOverview } from "@/lib/types"
+import { runRuntimeAction, usePluginLogs, useRuntimeLogs, useTrainingLogs } from "@/lib/api"
+import type { InferenceEvent, LogEntry, OperationsOverview, RuntimeAction } from "@/lib/types"
 
 function numberText(value: number | undefined) {
   return new Intl.NumberFormat("zh-CN").format(value || 0)
@@ -46,8 +63,139 @@ function tpsText(value: number | null) {
   return `${value.toFixed(2)} tok/s`
 }
 
+export function RuntimeLogPanelView({
+  paused,
+  logs,
+  onTogglePaused,
+}: {
+  paused: boolean
+  logs: LogEntry[]
+  onTogglePaused: () => void
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="outline">历史日志</Badge>
+        <Badge variant={paused ? "secondary" : "default"}>
+          {paused ? "已暂停" : "自动刷新"}
+        </Badge>
+        <Button variant="outline" onClick={onTogglePaused}>
+          {paused ? <IconPlayerPlay data-icon="inline-start" /> : <IconPlayerPause data-icon="inline-start" />}
+          {paused ? "恢复" : "暂停"}
+        </Button>
+      </div>
+      <ScrollArea className="h-56">
+        {logs.length ? (
+          <ItemGroup data-size="xs">
+            {logs.map((entry, index) => (
+              <Item key={`${entry.time}-${entry.stream}-${index}`}>
+                <ItemContent>
+                  <ItemTitle>
+                    {entry.stream || "runtime"}
+                    {entry.time ? <Badge variant="outline">{entry.time}</Badge> : null}
+                  </ItemTitle>
+                  <ItemDescription>{entry.message}</ItemDescription>
+                </ItemContent>
+              </Item>
+            ))}
+          </ItemGroup>
+        ) : (
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>暂无日志</EmptyTitle>
+              <EmptyDescription>等待运行时输出或手动刷新。</EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent />
+          </Empty>
+        )}
+      </ScrollArea>
+    </div>
+  )
+}
+
+function RuntimeLogPanel() {
+  const [paused, setPaused] = useState(false)
+  const { data } = useRuntimeLogs(paused)
+  return (
+    <RuntimeLogPanelView
+      paused={paused}
+      logs={data?.logs || []}
+      onTogglePaused={() => setPaused((value) => !value)}
+    />
+  )
+}
+
+function PluginLogPanel() {
+  const [paused, setPaused] = useState(false)
+  const { data } = usePluginLogs(paused)
+  return (
+    <RuntimeLogPanelView
+      paused={paused}
+      logs={data?.logs || []}
+      onTogglePaused={() => setPaused((value) => !value)}
+    />
+  )
+}
+
+export function TrainingLogPanelView({
+  paused,
+  logs,
+  onTogglePaused,
+}: {
+  paused: boolean
+  logs: LogEntry[]
+  onTogglePaused: () => void
+}) {
+  return (
+    <RuntimeLogPanelView
+      paused={paused}
+      logs={logs}
+      onTogglePaused={onTogglePaused}
+    />
+  )
+}
+
+function TrainingLogPanel({ fallbackLog }: { fallbackLog: string }) {
+  const [paused, setPaused] = useState(false)
+  const { data } = useTrainingLogs(paused)
+  const fallbackLogs = fallbackLog
+    ? fallbackLog.split("\n").filter(Boolean).map((message) => ({ time: "", stream: "train", message }))
+    : []
+  return (
+    <TrainingLogPanelView
+      paused={paused}
+      logs={data?.logs?.length ? data.logs : fallbackLogs}
+      onTogglePaused={() => setPaused((value) => !value)}
+    />
+  )
+}
+
 function RuntimeCard({ overview }: { overview: OperationsOverview }) {
   const runtime = overview.runtime
+  const [pendingAction, setPendingAction] = useState<RuntimeAction | null>(null)
+  const [confirmAction, setConfirmAction] = useState<RuntimeAction | null>(null)
+  const [actionMessage, setActionMessage] = useState("")
+
+  async function executeAction(action: RuntimeAction, confirmed = false) {
+    setPendingAction(action)
+    const message = `${action} model '${runtime.model || "unknown"}'`
+    setActionMessage(message)
+    try {
+      const result = confirmed
+        ? await runRuntimeAction(action, true)
+        : await runRuntimeAction(action)
+      setActionMessage(result.message || message)
+      toast.success(result.message || message)
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error)
+      setActionMessage(text)
+      toast.error(text)
+    } finally {
+      setPendingAction(null)
+      setConfirmAction(null)
+    }
+  }
+
   return (
     <Card data-testid="runtime-card">
       <CardHeader>
@@ -64,6 +212,13 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
           <Alert variant="destructive">
             <AlertTitle>运行错误</AlertTitle>
             <AlertDescription>{runtime.last_error}</AlertDescription>
+          </Alert>
+        ) : null}
+        {actionMessage ? (
+          <Alert>
+            <IconAlertTriangle />
+            <AlertTitle>运行操作</AlertTitle>
+            <AlertDescription>{actionMessage}</AlertDescription>
           </Alert>
         ) : null}
         <ItemGroup data-size="sm">
@@ -86,36 +241,68 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
             </ItemContent>
           </Item>
         </ItemGroup>
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={!runtime.control.can_load}>
+        <ButtonGroup>
+          <Button
+            disabled={!runtime.control.can_load || Boolean(pendingAction)}
+            onClick={() => executeAction("load")}
+          >
             <IconPlayerPlay data-icon="inline-start" />
-            加载/检查
+            {pendingAction === "load" ? "加载中" : "加载/检查"}
           </Button>
-          <Button variant="outline" disabled={!runtime.control.can_reload}>
-            重载
+          <Button
+            variant="outline"
+            disabled={!runtime.control.can_reload || Boolean(pendingAction)}
+            onClick={() => setConfirmAction("reload")}
+          >
+            {pendingAction === "reload" ? "重载中" : "重载"}
           </Button>
-          <Button variant="destructive" disabled={!runtime.control.can_unload}>
-            卸载
+          <Button
+            variant="destructive"
+            disabled={!runtime.control.can_unload || Boolean(pendingAction)}
+            onClick={() => setConfirmAction("unload")}
+          >
+            {pendingAction === "unload" ? "卸载中" : "卸载"}
           </Button>
-        </div>
-        <Collapsible>
+        </ButtonGroup>
+        <Collapsible defaultOpen>
           <CollapsibleTrigger asChild>
             <Button variant="ghost">MLX Runtime Log</Button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <ScrollArea className="h-40">
-              <ItemGroup data-size="xs">
-                <Item>
-                  <ItemContent>
-                    <ItemTitle>折叠日志</ItemTitle>
-                    <ItemDescription>展开后按需刷新 runtime log。</ItemDescription>
-                  </ItemContent>
-                </Item>
-              </ItemGroup>
-            </ScrollArea>
+            <RuntimeLogPanel />
+          </CollapsibleContent>
+        </Collapsible>
+        <Collapsible>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost">Plugin Runtime Log</Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <PluginLogPanel />
           </CollapsibleContent>
         </Collapsible>
       </CardContent>
+      <AlertDialog open={Boolean(confirmAction)} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>确认{confirmAction === "unload" ? "卸载" : "重载"}模型？</AlertDialogTitle>
+            <AlertDialogDescription>
+              该操作会改变当前 MLX runtime 状态，可能中断正在进行的推理。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmAction) {
+                  executeAction(confirmAction, true)
+                }
+              }}
+            >
+              确认执行
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   )
 }
@@ -212,21 +399,12 @@ function TrainingCard({ overview }: { overview: OperationsOverview }) {
           <Button>立即训练</Button>
           <Button variant="outline">全量外部语料训练</Button>
         </div>
-        <Collapsible>
+        <Collapsible defaultOpen>
           <CollapsibleTrigger asChild>
             <Button variant="ghost">Training Log</Button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <ScrollArea className="h-40">
-              <ItemGroup data-size="xs">
-                <Item>
-                  <ItemContent>
-                    <ItemTitle>折叠日志</ItemTitle>
-                    <ItemDescription>{progress?.log_tail || "暂无训练日志"}</ItemDescription>
-                  </ItemContent>
-                </Item>
-              </ItemGroup>
-            </ScrollArea>
+            <TrainingLogPanel fallbackLog={progress?.log_tail || ""} />
           </CollapsibleContent>
         </Collapsible>
       </CardContent>

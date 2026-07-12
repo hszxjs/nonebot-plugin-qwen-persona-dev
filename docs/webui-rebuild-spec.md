@@ -150,9 +150,10 @@ Tailwind `className` 不得用于构建任何视觉组件，包括但不限于�
 - 学习与回复
 - 训练策略
 - 表情行为
-- 规则过滤
 - 系统后台
 - 高级/危险设置
+
+规则过滤是独立工作区，不进入配置页 tabs。
 
 配置页不应平铺后端字段。字段呈现必须按用户意图和操作风险组织。
 
@@ -545,7 +546,7 @@ Entry 呈现：
 - fallback texts：`InputGroup`
 - repo dir/url：advanced `InputGroup`
 
-### 规则过滤
+## 规则过滤页面
 
 - prefixes：token list
 - regexes：`Item` rule list + editor dialog

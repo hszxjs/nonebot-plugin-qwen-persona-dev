@@ -11,7 +11,12 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .config import MLX_MODEL_PRESETS, normalized_lora_modules
-from .runtime_config import admin_config_path, config_to_dict
+from .runtime_config import (
+    admin_config_path,
+    config_field_names,
+    config_to_dict,
+    config_to_python_dict,
+)
 
 RELOAD_SENSITIVE_FIELDS = {
     "qwen_persona_mlx_model",
@@ -116,97 +121,46 @@ def _training_config(config: Any) -> dict[str, Any]:
     }
 
 
-def _field_payload(name: str, value: Any) -> dict[str, Any]:
-    if isinstance(value, bool):
-        kind = "bool"
-    elif isinstance(value, int) and not isinstance(value, bool):
-        kind = "int"
-    elif isinstance(value, float):
-        kind = "float"
-    elif isinstance(value, (list, tuple, set, dict)):
-        kind = "json"
-    else:
-        kind = "str"
+def _log_tail_entries(log_tail: str, *, stream: str = "train") -> list[dict[str, str]]:
+    lines = [line.strip() for line in str(log_tail or "").splitlines() if line.strip()]
+    return [
+        {"time": "", "stream": stream, "message": line}
+        for line in lines[-300:]
+    ]
+
+
+def _plugin_log_path(config: Any) -> Path:
+    data_dir = Path(str(getattr(config, "qwen_persona_data_dir", "data/qwen_persona") or "data/qwen_persona"))
+    return data_dir / "bot_runtime.log"
+
+
+def _file_log_entries(path: Path, *, tail: int, stream: str) -> list[dict[str, str]]:
+    limit = max(0, min(int(tail), 1000))
+    if limit <= 0 or not path.is_file():
+        return []
+    lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+    return [{"time": "", "stream": stream, "message": line} for line in lines[-limit:]]
+
+
+def _settings_payload(config: Any) -> dict[str, Any]:
     return {
-        "name": name,
-        "kind": kind,
-        "value": value,
-        "reload_sensitive": name in RELOAD_SENSITIVE_FIELDS,
-        "danger": name in DANGER_FIELDS,
+        "values": config_to_dict(config),
+        "override_file": str(admin_config_path(config)),
     }
 
 
-def _settings_sections(config: Any) -> list[dict[str, Any]]:
-    values = config_to_dict(config)
-    groups = [
-        ("model", "模型与推理", [
-            "qwen_persona_mlx_model",
-            "qwen_persona_mlx_adapter_path",
-            "qwen_persona_mlx_auto_load",
-            "qwen_persona_mlx_trust_remote_code",
-            "qwen_persona_model_dir",
-            "qwen_persona_temperature",
-            "qwen_persona_top_p",
-            "qwen_persona_max_tokens",
-            "qwen_persona_request_timeout",
-        ]),
-        ("learning", "学习与回复", [
-            "qwen_persona_enabled_groups",
-            "qwen_persona_enable_learning",
-            "qwen_persona_enable_reply",
-            "qwen_persona_reply_probability",
-            "qwen_persona_follow_reply_probability",
-            "qwen_persona_context_scope",
-            "qwen_persona_context_messages",
-            "qwen_persona_trigger_keywords",
-            "qwen_persona_system_prompt",
-        ]),
-        ("training", "训练策略", [
-            "qwen_persona_enable_training",
-            "qwen_persona_train_times",
-            "qwen_persona_dataset_limit",
-            "qwen_persona_dataset_history_window",
-            "qwen_persona_external_corpus_enabled",
-            "qwen_persona_external_corpus_limit",
-            "qwen_persona_min_train_samples",
-            "qwen_persona_multimodal_training_enabled",
-            "qwen_persona_mlx_lora_train_modules",
-        ]),
-        ("stickers", "表情行为", [
-            "qwen_persona_enable_sending_stickers",
-            "qwen_persona_sticker_segment_types",
-            "qwen_persona_sticker_prompt_limit",
-            "qwen_persona_max_reply_stickers",
-            "qwen_persona_text_sticker_reply_probability",
-            "qwen_persona_media_image_fallback_text",
-            "qwen_persona_media_sticker_fallback_text",
-        ]),
-        ("rules", "规则过滤", [
-            "qwen_persona_command_prefixes",
-            "qwen_persona_command_regexes",
-            "qwen_persona_auto_read_picmenu_config",
-            "qwen_persona_blacklist_words",
-            "qwen_persona_blacklist_regexes",
-            "qwen_persona_blacklist_user_ids",
-            "qwen_persona_blacklist_group_ids",
-        ]),
-        ("system", "系统后台", [
-            "qwen_persona_admin_enabled",
-            "qwen_persona_admin_host",
-            "qwen_persona_admin_port",
-            "qwen_persona_admin_token",
-            "qwen_persona_admin_config_file",
-            "qwen_persona_data_dir",
-        ]),
-    ]
-    return [
-        {
-            "key": key,
-            "title": title,
-            "fields": [_field_payload(name, values[name]) for name in names if name in values],
-        }
-        for key, title, names in groups
-    ]
+def _validate_setting_value(config: Any, field_name: str, value: Any) -> Any:
+    allowed = set(config_field_names(config))
+    if field_name not in allowed:
+        raise HTTPException(status_code=400, detail=f"unknown setting: {field_name}")
+    if not hasattr(config, "__class__"):
+        return value
+    before = config_to_python_dict(config)
+    try:
+        validated = config.__class__(**{**before, field_name: value})
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid setting value: {field_name}") from exc
+    return config_to_dict(validated).get(field_name)
 
 
 def create_admin_app(
@@ -295,6 +249,88 @@ def create_admin_app(
         logs = mlx_runtime.logs(tail=max(0, min(int(tail), 1000))) if mlx_runtime and hasattr(mlx_runtime, "logs") else []
         return {"logs": logs}
 
+    async def run_runtime_action(action: str, confirmed: bool = False):
+        if action in {"reload", "unload"} and not confirmed:
+            return JSONResponse(
+                {
+                    "error": "confirmation required",
+                    "confirmation_required": True,
+                    "action": action,
+                },
+                status_code=409,
+            )
+        if not mlx_runtime or not hasattr(mlx_runtime, action):
+            raise HTTPException(status_code=503, detail="mlx runtime unavailable")
+        model = str(getattr(config, "qwen_persona_mlx_model", "") or "").strip() or "unknown"
+        result = await _maybe_await(getattr(mlx_runtime, action)())
+        runtime = _runtime_summary(dict(result or {}))
+        return {
+            "action": action,
+            "message": f"{action} model '{model}'",
+            "runtime": runtime,
+        }
+
+    @app.post("/api/runtime/load")
+    async def runtime_load(
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ):
+        authorize(token, x_admin_token)
+        return await run_runtime_action("load", confirmed=True)
+
+    @app.post("/api/runtime/reload")
+    async def runtime_reload(
+        request: Request,
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ):
+        authorize(token, x_admin_token)
+        payload = await request.json()
+        return await run_runtime_action("reload", confirmed=bool(payload.get("confirmed")))
+
+    @app.post("/api/runtime/unload")
+    async def runtime_unload(
+        request: Request,
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ):
+        authorize(token, x_admin_token)
+        payload = await request.json()
+        return await run_runtime_action("unload", confirmed=bool(payload.get("confirmed")))
+
+    @app.get("/api/plugin/logs")
+    async def plugin_logs(
+        tail: int = Query(default=300),
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        authorize(token, x_admin_token)
+        path = _plugin_log_path(config)
+        return {
+            "logs": _file_log_entries(path, tail=tail, stream="plugin"),
+            "path": str(path),
+            "exists": path.is_file(),
+        }
+
+    @app.get("/api/training/logs")
+    async def training_logs(
+        tail: int = Query(default=300),
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        authorize(token, x_admin_token)
+        progress = (
+            trainer.progress_snapshot()
+            if trainer is not None and hasattr(trainer, "progress_snapshot")
+            else None
+        )
+        logs = _log_tail_entries(
+            str((progress or {}).get("log_tail", "")),
+            stream="train",
+        )
+        limit = max(0, min(int(tail), 1000))
+        return {"logs": logs[-limit:]}
+
     @app.get("/api/inference-events")
     async def inference_events(
         limit: int = Query(default=300),
@@ -357,16 +393,13 @@ def create_admin_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @app.get("/api/settings/sections")
-    async def settings_sections(
+    @app.get("/api/settings")
+    async def settings(
         token: str | None = Query(default=None),
         x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
     ) -> dict[str, Any]:
         authorize(token, x_admin_token)
-        return {
-            "sections": _settings_sections(config),
-            "override_file": str(admin_config_path(config)),
-        }
+        return _settings_payload(config)
 
     @app.patch("/api/settings/fields/{field_name}")
     async def update_setting(
@@ -379,6 +412,7 @@ def create_admin_app(
         payload = await request.json()
         if not isinstance(payload, dict) or "value" not in payload:
             raise HTTPException(status_code=400, detail="value is required")
+        value = _validate_setting_value(config, field_name, payload["value"])
         requires_confirmation = field_name in RELOAD_SENSITIVE_FIELDS or field_name in DANGER_FIELDS
         if requires_confirmation and not bool(payload.get("confirmed")):
             return JSONResponse(
@@ -391,10 +425,10 @@ def create_admin_app(
                 },
                 status_code=409,
             )
-        result = save_callback({field_name: payload["value"]})
+        result = save_callback({field_name: value})
         return {
             "field": field_name,
-            "value": payload["value"],
+            "value": value,
             "confirmation_required": False,
             **result,
         }
@@ -421,7 +455,7 @@ def create_admin_app(
                 "logs": runtime_logs,
             },
             "settings": {
-                "sections": _settings_sections(config),
+                "values": config_to_dict(config),
                 "override_file": str(admin_config_path(config)),
             },
             "static": {

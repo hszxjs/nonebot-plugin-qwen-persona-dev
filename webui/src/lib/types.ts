@@ -135,24 +135,40 @@ export type SettingsField = {
   danger: boolean
 }
 
-export type SettingsSection = {
-  key: string
-  title: string
-  fields: SettingsField[]
-}
-
-export type SettingsSectionsPayload = {
-  sections: SettingsSection[]
+export type SettingsPayload = {
+  values: Record<string, ConfigValue>
   override_file: string
 }
 
 export type DiagnosticsPayload = {
   runtime: Record<string, unknown>
-  settings: SettingsSectionsPayload
+  settings: SettingsPayload
   static: {
     root: string
     built: boolean
     index: string
   }
   build: Record<string, unknown>
+}
+
+export type LogEntry = {
+  time: string
+  stream: string
+  message: string
+}
+
+export type LogsPayload = {
+  logs: LogEntry[]
+  path?: string
+  exists?: boolean
+}
+
+export type RuntimeAction = "load" | "reload" | "unload"
+
+export type RuntimeActionResult = {
+  action: RuntimeAction
+  message: string
+  runtime: RuntimeSummary
+  confirmation_required?: boolean
+  error?: string
 }

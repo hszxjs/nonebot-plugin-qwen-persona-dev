@@ -25,52 +25,12 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `fields` | `ConfigField[]` | 配置字段元数据，用于动态生成编辑器。 |
 | `values` | `Record<string, ConfigValue>` | 配置字段当前值。 |
 | `override_file` | `string` | 当前覆盖配置文件路径。 |
 | `changed` | `string[]` | 保存后变更的字段名；仅保存响应中存在。 |
 | `restart_required` | `string[]` | 保存后需要重启才完全生效的字段名；仅保存响应中存在。 |
 
-### ConfigField
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `name` | `string` | 配置字段名。 |
-| `env` | `string` | 环境变量名，当前为字段名大写。 |
-| `title` | `string` | 展示标题。 |
-| `description` | `string` | 展示说明。 |
-| `category` | `ConfigCategory` | 字段分类。 |
-| `kind` | `"bool" \| "int" \| "float" \| "json" \| "str"` | 按当前值推导出的数据类型。 |
-| `widget` | `"" \| "combo" \| "chips"` | 推荐编辑器类型。 |
-| `options` | `ConfigOption[]` | 可选项列表。 |
-| `allowCustom` | `boolean` | combo 是否允许自定义输入。 |
-| `secret` | `boolean` | 是否按敏感字段处理。 |
-| `multiline` | `boolean` | 是否倾向使用多行编辑。 |
-| `default` | `ConfigValue` | 当前默认值或当前值副本。 |
-| `restart_hint` | `boolean` | 修改后是否提示重启。 |
-| `order` | `number` | 分类内排序权重。 |
-| `visibleWhen` | `Record<string, string[]>` | 可见性条件；当前实现为空对象。 |
-
-### ConfigOption
-
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `value` | `string` | 选项值。 |
-| `label` | `string` | 选项标签。 |
-| `description` | `string?` | 选项说明。 |
-
-### ConfigCategory
-
-当前分类集合：
-
-- `后台网页`
-- `模型部署`
-- `模型调用`
-- `学习与回复`
-- `表情包`
-- `LoRA 训练`
-- `黑名单`
-- `其他`
+后端配置接口不传页面分区、label、description、widget 或选项。配置页和规则页的呈现语义由前端 `settings-schema.ts` 按字段名维护。
 
 ### ConfigValue
 
@@ -212,10 +172,9 @@
 
 ### 配置实现备注
 
-- `qwen_persona_mlx_model` 的 `widget` 为 `combo`，允许自定义输入。
-- `qwen_persona_mlx_lora_train_modules` 的 `widget` 为 `chips`，可选值为 `language`、`projection`、`vision_tower`。
-- 当前生效的设置渲染逻辑没有处理 `chips` 分支，因此该字段会按 JSON 文本编辑器显示。
-- 字段分类来自当前启发式规则，不一定等同于最终产品信息架构。
+- 后端只负责配置值读取、保存、字段白名单校验、类型校验和危险操作确认。
+- 前端设置页不显示规则字段；规则字段只在独立规则过滤页面呈现。
+- 前端字段没有说明时不显示说明行，不使用通用 fallback 文案。
 
 ## 运行统计数据
 
@@ -408,13 +367,23 @@
 | `stream` | `string` |
 | `message` | `string` |
 
+### LogsPayload
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `logs` | `MlxLogEntry[]` | 日志行。 |
+| `path` | `string?` | 文件日志来源路径；仅插件运行日志返回。 |
+| `exists` | `boolean?` | 文件日志来源是否存在；仅插件运行日志返回。 |
+
 ### MlxActionResult
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `status` | `string` | 动作状态，可能为 `action_scheduled`、`action_in_progress` 或运行时返回状态。 |
-| `action` | `string` | 动作名。 |
-| 其他字段 | `unknown` | 同步执行时会合并运行时状态字段。 |
+| `action` | `"load" \| "reload" \| "unload"` | 动作名。 |
+| `message` | `string` | 可直接展示的操作文案，例如 `load model 'xxx'`。 |
+| `runtime` | `MlxStatus` | 动作后的运行时状态摘要。 |
+| `confirmation_required` | `boolean?` | reload/unload 未确认时返回。 |
+| `error` | `string?` | 错误文本。 |
 
 ## 训练触发数据
 
@@ -518,8 +487,8 @@
 
 | 字段 | 类型 |
 | --- | --- |
-| `fields` | `ConfigField[]` |
 | `values` | `Record<string, ConfigValue>` |
+| `fieldSchema` | frontend internal |
 | `logsPaused` | `boolean` |
 | `modelFieldsDirty` | `boolean` |
 | `runtimeStats` | `RuntimeStats \| null` |
@@ -550,4 +519,4 @@
 - `RuntimeTotals.external_corpus_samples`、`RuntimeTotals.media_assets`、`RuntimeTotals.first_sample_at`、`RuntimeTotals.avg_training_chars` 当前属于已返回但未重点展示的数据。
 - `StickerItem.data` 必须作为开放结构保留，不能在前端强行收窄为固定协议字段。
 - `InferenceMetric` 同时来自客户端包装层和 MLX 运行时，聚合时需要保留 `source`。
-- 配置字段不应在前端硬编码完整列表；前端应消费 `ConfigField` 元数据并按业务需要补充特定组件。
+- 配置字段 UI schema 是前端内部契约；后端配置 API 保持 k-v 数据边界。

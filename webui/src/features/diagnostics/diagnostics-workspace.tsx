@@ -95,8 +95,8 @@ export function DiagnosticsWorkspaceView({ payload }: { payload: DiagnosticsPayl
                   <IconSettings />
                 </ItemMedia>
                 <ItemContent>
-                  <ItemTitle>sections</ItemTitle>
-                  <ItemDescription>{payload.settings.sections.length}</ItemDescription>
+                  <ItemTitle>values</ItemTitle>
+                  <ItemDescription>{Object.keys(payload.settings.values).length}</ItemDescription>
                 </ItemContent>
               </Item>
             </ItemGroup>

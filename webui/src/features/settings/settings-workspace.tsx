@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { IconDeviceFloppy, IconRefreshAlert } from "@tabler/icons-react"
+import { IconRefreshAlert } from "@tabler/icons-react"
 import { toast } from "sonner"
 
 import {
@@ -21,6 +21,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Field,
   FieldContent,
@@ -29,61 +30,139 @@ import {
   FieldLabel,
   FieldTitle,
 } from "@/components/ui/field"
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { saveSettingField, useSettingsSections } from "@/lib/api"
-import type {
-  ConfigValue,
-  SettingsField,
-  SettingsSectionsPayload,
-} from "@/lib/types"
+import { saveSettingField, useSettings } from "@/lib/api"
+import type { ConfigValue, SettingsPayload } from "@/lib/types"
+import {
+  bindSettingsSections,
+  rawNameBadge,
+  type BoundField,
+} from "./settings-schema"
 
 type PendingSave = {
-  field: SettingsField
+  field: BoundField
   value: ConfigValue
 } | null
 
-function fieldDescription(field: SettingsField) {
-  if (field.reload_sensitive) {
-    return "保存后可能触发 reload 或需要重启。"
+function stringArray(value: ConfigValue) {
+  if (Array.isArray(value)) return value.map(String)
+  if (typeof value === "string" && value.trim()) {
+    return value.split(/\n|,/).map((item) => item.trim()).filter(Boolean)
   }
-  if (field.danger) {
-    return "该字段会改变敏感命令或凭据。"
-  }
-  return "变更后自动保存。"
-}
-
-function numericBounds(field: SettingsField) {
-  if (field.name.includes("probability") || field.name.endsWith("top_p") || field.name.includes("dropout")) {
-    return { min: 0, max: 1, step: 0.01 }
-  }
-  if (field.name.includes("temperature")) {
-    return { min: 0, max: 2, step: 0.05 }
-  }
-  if (field.name.includes("tokens")) {
-    return { min: 1, max: 4096, step: 1 }
-  }
-  return { min: 0, max: 100, step: 1 }
+  return []
 }
 
 function fieldValueText(value: ConfigValue) {
-  if (Array.isArray(value)) return value.join(", ")
+  if (Array.isArray(value)) return value.join("\n")
   if (value && typeof value === "object") return JSON.stringify(value, null, 2)
   return String(value ?? "")
+}
+
+function parseTextValue(field: BoundField, text: string): ConfigValue {
+  if (field.control === "tokens") {
+    return text.split("\n").map((item) => item.trim()).filter(Boolean)
+  }
+  if (field.value && typeof field.value === "object" && !Array.isArray(field.value)) {
+    try {
+      return text.trim() ? JSON.parse(text) : {}
+    } catch {
+      return text
+    }
+  }
+  return text
+}
+
+function NumberControl({
+  field,
+  onChange,
+}: {
+  field: BoundField
+  onChange: (field: BoundField, value: ConfigValue) => void
+}) {
+  const value = Number(field.value || 0)
+  const min = field.min ?? 0
+  const max = field.max ?? 100
+  const step = field.step ?? 1
+  return (
+    <div className="grid gap-2 md:grid-cols-[minmax(160px,1fr)_120px]">
+      <Slider
+        min={min}
+        max={max}
+        step={step}
+        value={[value]}
+        onValueCommit={(next) => onChange(field, next[0] ?? value)}
+      />
+      <InputGroup>
+        <InputGroupInput
+          id={field.name}
+          type="number"
+          defaultValue={value}
+          step={step}
+          min={min}
+          max={max}
+          onBlur={(event) => onChange(field, Number(event.target.value))}
+        />
+        <InputGroupAddon align="inline-end">num</InputGroupAddon>
+      </InputGroup>
+    </div>
+  )
+}
+
+function CheckboxGroupControl({
+  field,
+  onChange,
+}: {
+  field: BoundField
+  onChange: (field: BoundField, value: ConfigValue) => void
+}) {
+  const selected = new Set(stringArray(field.value))
+  return (
+    <FieldGroup data-slot="checkbox-group">
+      {(field.options || []).map((option) => (
+        <Field key={option.value} orientation="horizontal">
+          <Checkbox
+            id={`${field.name}-${option.value}`}
+            checked={selected.has(option.value)}
+            onCheckedChange={(checked) => {
+              const next = new Set(selected)
+              if (checked) {
+                next.add(option.value)
+              } else {
+                next.delete(option.value)
+              }
+              onChange(field, [...next])
+            }}
+          />
+          <FieldLabel htmlFor={`${field.name}-${option.value}`}>
+            {option.label}
+          </FieldLabel>
+          {option.description ? (
+            <FieldDescription>{option.description}</FieldDescription>
+          ) : null}
+        </Field>
+      ))}
+    </FieldGroup>
+  )
 }
 
 function SettingControl({
   field,
   onChange,
 }: {
-  field: SettingsField
-  onChange: (field: SettingsField, value: ConfigValue) => void
+  field: BoundField
+  onChange: (field: BoundField, value: ConfigValue) => void
 }) {
-  if (field.kind === "bool") {
+  if (field.control === "switch") {
     return (
       <Switch
         id={field.name}
@@ -94,57 +173,37 @@ function SettingControl({
     )
   }
 
-  if (field.name === "qwen_persona_context_scope") {
+  if (field.control === "toggle") {
     return (
       <ToggleGroup
         type="single"
-        value={String(field.value || "group")}
+        value={String(field.value || "")}
         onValueChange={(value) => value && onChange(field, value)}
         spacing={2}
       >
-        <ToggleGroupItem value="group">group</ToggleGroupItem>
-        <ToggleGroupItem value="global">global</ToggleGroupItem>
-        <ToggleGroupItem value="mixed">mixed</ToggleGroupItem>
+        {(field.options || []).map((option) => (
+          <ToggleGroupItem key={option.value} value={option.value}>
+            {option.label}
+          </ToggleGroupItem>
+        ))}
       </ToggleGroup>
     )
   }
 
-  if (field.kind === "int" || field.kind === "float") {
-    const value = Number(field.value || 0)
-    const bounds = numericBounds(field)
-    return (
-      <div className="grid gap-2 md:grid-cols-[minmax(160px,1fr)_120px]">
-        <Slider
-          min={bounds.min}
-          max={bounds.max}
-          step={bounds.step}
-          value={[value]}
-          onValueCommit={(next) => onChange(field, next[0] ?? value)}
-        />
-        <InputGroup>
-          <InputGroupInput
-            type="number"
-            value={value}
-            onChange={(event) => onChange(field, Number(event.target.value))}
-          />
-          <InputGroupAddon align="inline-end">{field.kind}</InputGroupAddon>
-        </InputGroup>
-      </div>
-    )
+  if (field.control === "checkboxes") {
+    return <CheckboxGroupControl field={field} onChange={onChange} />
   }
 
-  if (field.kind === "json" || field.name.includes("prompt") || field.name.includes("command")) {
+  if (field.control === "number") {
+    return <NumberControl field={field} onChange={onChange} />
+  }
+
+  if (field.control === "textarea" || field.control === "tokens") {
     return (
       <Textarea
-        value={fieldValueText(field.value)}
-        onChange={(event) => {
-          const text = event.target.value
-          if (field.kind === "json") {
-            onChange(field, text.split(",").map((item) => item.trim()).filter(Boolean))
-            return
-          }
-          onChange(field, text)
-        }}
+        id={field.name}
+        defaultValue={fieldValueText(field.value)}
+        onBlur={(event) => onChange(field, parseTextValue(field, event.target.value))}
       />
     )
   }
@@ -152,9 +211,10 @@ function SettingControl({
   return (
     <InputGroup>
       <InputGroupInput
-        value={fieldValueText(field.value)}
-        type={field.danger ? "password" : "text"}
-        onChange={(event) => onChange(field, event.target.value)}
+        id={field.name}
+        defaultValue={fieldValueText(field.value)}
+        type={field.control === "password" ? "password" : "text"}
+        onBlur={(event) => onChange(field, event.target.value)}
       />
     </InputGroup>
   )
@@ -164,13 +224,14 @@ export function SettingsWorkspaceView({
   payload,
   onSaveField,
 }: {
-  payload: SettingsSectionsPayload
-  onSaveField: (field: SettingsField, value: ConfigValue, confirmed: boolean) => void
+  payload: SettingsPayload
+  onSaveField: (field: BoundField, value: ConfigValue, confirmed: boolean) => void
 }) {
   const [pending, setPending] = useState<PendingSave>(null)
+  const sections = bindSettingsSections(payload.values)
 
-  function requestSave(field: SettingsField, value: ConfigValue) {
-    if (field.reload_sensitive || field.danger) {
+  function requestSave(field: BoundField, value: ConfigValue) {
+    if (field.reloadSensitive || field.danger) {
       setPending({ field, value })
       return
     }
@@ -181,49 +242,64 @@ export function SettingsWorkspaceView({
     <div className="flex flex-col gap-4">
       <section>
         <h1>配置管理</h1>
-        <p>语义分区、自动保存和 modal 确认。</p>
+        <p>按运行领域管理插件参数，高风险项保存前确认。</p>
       </section>
       <Alert>
-        <IconDeviceFloppy />
-        <AlertTitle>自动保存</AlertTitle>
-        <AlertDescription>普通字段变更后立即保存；危险和 reload 字段需要确认。</AlertDescription>
+        <AlertTitle>配置文件</AlertTitle>
+        <AlertDescription>{payload.override_file}</AlertDescription>
       </Alert>
-      <div className="grid gap-4 xl:grid-cols-2">
-        {payload.sections.map((section) => (
-          <Card key={section.key}>
-            <CardHeader>
-              <CardTitle>{section.title}</CardTitle>
-              <CardDescription>{section.fields.length} 个字段</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                {section.fields.map((field) => (
-                  <Field key={field.name} orientation="responsive">
-                    <FieldContent>
-                      <FieldTitle>{field.name}</FieldTitle>
-                      <FieldDescription>{fieldDescription(field)}</FieldDescription>
-                      <div className="flex flex-wrap gap-2">
-                        {field.reload_sensitive ? <Badge variant="secondary">需要确认</Badge> : null}
-                        {field.danger ? <Badge variant="destructive">危险</Badge> : null}
+      <Tabs defaultValue={sections[0]?.key} className="min-w-0">
+        <TabsList className="max-w-full flex-wrap">
+          {sections.map((section) => (
+            <TabsTrigger key={section.key} value={section.key}>
+              {section.title}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {sections.map((section) => (
+          <TabsContent key={section.key} value={section.key}>
+            <Card>
+              <CardHeader>
+                <CardTitle>{section.title}</CardTitle>
+                <CardDescription>{section.fields.length} 个字段</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <FieldGroup>
+                  {section.fields.map((field) => (
+                    <Field key={field.name} orientation="responsive">
+                      <FieldContent>
+                        <FieldTitle>
+                          {field.label}
+                          <Badge variant="outline" title={field.name}>
+                            {rawNameBadge(field.name)}
+                          </Badge>
+                          {field.reloadSensitive ? <Badge variant="secondary">需要确认</Badge> : null}
+                          {field.danger ? <Badge variant="destructive">危险</Badge> : null}
+                        </FieldTitle>
+                        {field.description ? (
+                          <FieldDescription>{field.description}</FieldDescription>
+                        ) : null}
+                      </FieldContent>
+                      <FieldLabel htmlFor={field.name} className="sr-only">
+                        {field.name}
+                      </FieldLabel>
+                      <div className="w-full md:max-w-md">
+                        <SettingControl field={field} onChange={requestSave} />
                       </div>
-                    </FieldContent>
-                    <FieldLabel htmlFor={field.name} className="sr-only">
-                      {field.name}
-                    </FieldLabel>
-                    <SettingControl field={field} onChange={requestSave} />
-                  </Field>
-                ))}
-              </FieldGroup>
-            </CardContent>
-          </Card>
+                    </Field>
+                  ))}
+                </FieldGroup>
+              </CardContent>
+            </Card>
+          </TabsContent>
         ))}
-      </div>
+      </Tabs>
       <AlertDialog open={Boolean(pending)} onOpenChange={(open) => !open && setPending(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>确认保存该配置？</AlertDialogTitle>
             <AlertDialogDescription>
-              {pending?.field.name} 会改变运行行为，可能触发 reload、重启或中断当前任务。
+              {pending?.field.label || pending?.field.name} 会改变运行行为，可能触发 reload、重启或中断当前任务。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -247,7 +323,7 @@ export function SettingsWorkspaceView({
 }
 
 export function SettingsWorkspace() {
-  const { data, error, isLoading, mutate } = useSettingsSections()
+  const { data, error, isLoading, mutate } = useSettings()
 
   if (isLoading) {
     return <Skeleton className="h-96" />
@@ -268,9 +344,13 @@ export function SettingsWorkspace() {
     <SettingsWorkspaceView
       payload={data}
       onSaveField={async (field, value, confirmed) => {
-        await saveSettingField(field.name, value, confirmed)
-        toast.success("配置已保存")
-        await mutate()
+        try {
+          await saveSettingField(field.name, value, confirmed)
+          toast.success("配置已保存")
+          await mutate()
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : String(error))
+        }
       }}
     />
   )
