@@ -40,11 +40,14 @@ def should_analyze_background_media(
     command_like: bool,
     force_reply: bool,
     has_media: bool,
+    background_busy: bool = False,
 ) -> BackgroundMediaAnalysisDecision:
     if not enable_learning:
         return BackgroundMediaAnalysisDecision(False, "learning_disabled")
     if not has_media:
         return BackgroundMediaAnalysisDecision(False, "no_media")
+    if background_busy:
+        return BackgroundMediaAnalysisDecision(False, "background_busy")
     if not group_enabled:
         return BackgroundMediaAnalysisDecision(False, "group_disabled")
     if self_event:

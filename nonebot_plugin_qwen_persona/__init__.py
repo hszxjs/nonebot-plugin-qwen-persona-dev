@@ -309,6 +309,7 @@ def _should_schedule_background_media_analysis(
         command_like=_is_command_message(plain_text),
         force_reply=force_reply,
         has_media=any(str(part.get("type") or "") == "image" for part in media_parts),
+        background_busy=bool(_background_media_tasks),
     )
     return decision.allowed
 
@@ -552,6 +553,8 @@ def _schedule_background_media_analysis(
 ) -> None:
     image_parts = [part for part in media_parts if str(part.get("type") or "") == "image"]
     if not image_parts:
+        return
+    if _background_media_tasks:
         return
     task = asyncio.create_task(
         _run_background_media_analysis(ids=dict(ids), media_parts=image_parts)

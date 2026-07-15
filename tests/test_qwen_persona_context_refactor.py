@@ -151,6 +151,23 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(forced.allowed)
         self.assertEqual(forced.reason, "force_reply")
 
+    async def test_background_media_analysis_decision_rejects_when_background_busy(self) -> None:
+        from nonebot_plugin_qwen_persona.media_analysis import should_analyze_background_media
+
+        decision = should_analyze_background_media(
+            enable_learning=True,
+            group_enabled=True,
+            self_event=False,
+            blacklisted=False,
+            command_like=False,
+            force_reply=False,
+            has_media=True,
+            background_busy=True,
+        )
+
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason, "background_busy")
+
     async def test_search_context_samples_returns_matching_recent_text(self) -> None:
         from nonebot_plugin_qwen_persona.storage import PersonaStore
 
