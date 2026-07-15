@@ -41,6 +41,7 @@ class DummyRuntime:
             },
             "control": {"can_load": True, "can_unload": True, "can_reload": True},
             "metrics": {"last": None, "history": []},
+            "generation": {"active": 1, "queued": 2, "current": "chat"},
         }
 
     def logs(self, *, tail: int = 200) -> list[dict[str, str]]:
@@ -224,6 +225,9 @@ class WebuiRebuildApiTests(unittest.TestCase):
         self.assertEqual(payload["runtime"]["state"], "loaded")
         self.assertEqual(payload["runtime"]["operation"]["phase"], "downloading")
         self.assertEqual(payload["runtime"]["operation"]["percent"], 42.0)
+        self.assertEqual(payload["runtime"]["generation"]["active"], 1)
+        self.assertEqual(payload["runtime"]["generation"]["queued"], 2)
+        self.assertEqual(payload["runtime"]["generation"]["current"], "chat")
         self.assertEqual(payload["inference_events"]["limit"], 300)
         self.assertEqual(payload["inference_events"]["items"][0]["event_id"], "evt-1")
 

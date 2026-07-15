@@ -47,6 +47,21 @@ class SuccessfulTextBackend:
         return SimpleNamespace(text="正常回复")
 
 
+class RepeatingTailBackend(SuccessfulTextBackend):
+    def generate(self, *_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(text="咋了这是，刚想" + "润" * 80)
+
+
+class RepeatingCaptionBackend(SuccessfulTextBackend):
+    def generate(self, *_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(text="这张图片描绘了一位动漫少女，她手持一把带有“" + "润" * 80)
+
+
+class TokenMetricsBackend(SuccessfulTextBackend):
+    def generate(self, *_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(text="真实 token 指标", generation_tokens=7, finish_reason="length")
+
+
 class RecordingBackend:
     def __init__(self) -> None:
         self.loaded_paths: list[str] = []
@@ -189,6 +204,21 @@ class MlxRuntimeTests(unittest.TestCase):
         self.assertEqual(error_logs[-1]["level"], "error")
         self.assertEqual(error_logs[-1]["context"]["replacement_count"], 6)
 
+    def test_chat_truncates_repetitive_generated_tail(self) -> None:
+        import asyncio
+
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_qwen_persona.mlx_runtime import MlxVLMRuntime
+
+        runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=RepeatingTailBackend())
+
+        reply = asyncio.run(runtime.chat([{"role": "user", "content": "hello"}]))
+
+        self.assertEqual(reply, "咋了这是，刚想润润")
+        logs = [item for item in runtime.logs() if item["event"] == "generated_text_repetition_truncated"]
+        self.assertEqual(logs[-1]["level"], "warn")
+        self.assertEqual(logs[-1]["context"]["repeated_unit"], "润")
+
     def test_chat_success_records_metrics_without_datetime_import_regression(self) -> None:
         import asyncio
 
@@ -201,6 +231,22 @@ class MlxRuntimeTests(unittest.TestCase):
 
         self.assertEqual(reply, "正常回复")
         self.assertEqual(runtime.metrics_snapshot()["last"]["response_chars"], 4)
+
+    def test_chat_records_backend_generation_metrics_when_available(self) -> None:
+        import asyncio
+
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_qwen_persona.mlx_runtime import MlxVLMRuntime
+
+        runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=TokenMetricsBackend())
+
+        reply = asyncio.run(runtime.chat([{"role": "user", "content": "hello"}]))
+
+        self.assertEqual(reply, "真实 token 指标")
+        metric = runtime.metrics_snapshot()["last"]
+        self.assertEqual(metric["completion_tokens"], 7)
+        self.assertEqual(metric["finish_reason"], "length")
+        self.assertEqual(metric["source"], "mlx_vlm")
 
     def test_chat_passes_structured_messages_to_backend_template(self) -> None:
         import asyncio
@@ -248,6 +294,86 @@ class MlxRuntimeTests(unittest.TestCase):
         self.assertEqual(backend.generate_kwargs["repetition_penalty"], 1.08)
         self.assertEqual(backend.generate_kwargs["repetition_context_size"], 64)
 
+    def test_caption_media_uses_short_generation_profile(self) -> None:
+        import asyncio
+
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_qwen_persona.mlx_runtime import MlxVLMRuntime
+
+        backend = SamplingRecordingBackend()
+        runtime = MlxVLMRuntime(
+            QwenPersonaConfig(
+                qwen_persona_max_tokens=2048,
+                qwen_persona_mlx_lora_max_seq_length=2048,
+                qwen_persona_temperature=0.85,
+                qwen_persona_top_p=0.9,
+                qwen_persona_repetition_penalty=1.08,
+                qwen_persona_repetition_context_size=64,
+            ),
+            backend=backend,
+        )
+
+        caption = asyncio.run(
+            runtime.caption_media({"type": "image", "data": {"url": "https://example.invalid/a.png"}})
+        )
+
+        self.assertEqual(caption, "ok")
+        self.assertEqual(backend.generate_kwargs["max_tokens"], 64)
+        self.assertEqual(backend.generate_kwargs["temperature"], 0.2)
+        self.assertEqual(backend.generate_kwargs["top_p"], 0.8)
+        self.assertEqual(backend.generate_kwargs["repetition_penalty"], 1.15)
+        self.assertEqual(backend.generate_kwargs["repetition_context_size"], 128)
+
+    def test_sticker_selector_generation_profile_is_not_caption_limited(self) -> None:
+        import asyncio
+
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_qwen_persona.generation_profiles import GenerationPurpose
+        from nonebot_plugin_qwen_persona.mlx_runtime import MlxVLMRuntime
+
+        backend = SamplingRecordingBackend()
+        runtime = MlxVLMRuntime(
+            QwenPersonaConfig(
+                qwen_persona_max_tokens=2048,
+                qwen_persona_mlx_lora_max_seq_length=2048,
+                qwen_persona_temperature=0.85,
+                qwen_persona_top_p=0.9,
+                qwen_persona_repetition_penalty=1.08,
+                qwen_persona_repetition_context_size=64,
+            ),
+            backend=backend,
+        )
+
+        reply = asyncio.run(
+            runtime.chat(
+                [{"role": "user", "content": "select a sticker"}],
+                purpose=GenerationPurpose.STICKER_SELECTOR,
+            )
+        )
+
+        self.assertEqual(reply, "ok")
+        self.assertGreaterEqual(backend.generate_kwargs["max_tokens"], 128)
+        self.assertNotEqual(backend.generate_kwargs["max_tokens"], 64)
+        self.assertLessEqual(backend.generate_kwargs["temperature"], 0.3)
+        self.assertEqual(runtime.metrics_snapshot()["last"]["purpose"], "sticker_selector")
+
+    def test_caption_media_rejects_repetitive_generated_caption(self) -> None:
+        import asyncio
+
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_qwen_persona.mlx_runtime import MlxVLMRuntime
+
+        runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=RepeatingCaptionBackend())
+
+        caption = asyncio.run(
+            runtime.caption_media({"type": "image", "data": {"url": "https://example.invalid/a.png"}})
+        )
+
+        self.assertEqual(caption, "")
+        logs = [item for item in runtime.logs() if item["event"] == "generated_text_repetition_truncated"]
+        self.assertEqual(logs[-1]["context"]["rejected"], True)
+        self.assertEqual(logs[-1]["context"]["purpose"], "media_caption")
+
     def test_generation_queue_is_visible_while_second_chat_waits(self) -> None:
         import asyncio
 
@@ -271,7 +397,7 @@ class MlxRuntimeTests(unittest.TestCase):
 
         self.assertEqual(snapshot["generation"]["active"], 1)
         self.assertEqual(snapshot["generation"]["queued"], 1)
-        self.assertEqual(snapshot["generation"]["current"], "chat")
+        self.assertEqual(snapshot["generation"]["current"], "persona_reply")
 
     def test_hf_repo_downloads_to_configured_dir_before_loading(self) -> None:
         import asyncio

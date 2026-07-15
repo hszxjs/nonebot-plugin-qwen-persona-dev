@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any, Iterable, Mapping, Protocol
 
+from .generation_safety import is_low_quality_generated_text
 from .sticker import (
     STICKER_TOKEN_RE,
     build_training_text,
@@ -322,6 +323,8 @@ def _segment_to_dict(segment: Any) -> dict[str, Any]:
 def _safe_caption(text: str) -> str:
     cleaned = sanitize_model_reply_media_text(str(text or ""))
     cleaned = re.sub(r"(?:https?://|file://|base64://)\S+", "", cleaned, flags=re.IGNORECASE)
+    if is_low_quality_generated_text(cleaned):
+        return ""
     if is_generic_media_placeholder(cleaned):
         return ""
     return _clean_text(cleaned)[:120]

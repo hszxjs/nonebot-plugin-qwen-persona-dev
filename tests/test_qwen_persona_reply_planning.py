@@ -137,9 +137,38 @@ class StickerClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(sticker["data"]["_classification"]["sendable"])
         self.assertEqual(learning["sticker_events"][0]["status"], "accepted")
 
+    async def test_prepare_message_learning_rejects_garbled_caption_summary(self) -> None:
+        from nonebot_plugin_qwen_persona.media import prepare_message_learning
+
+        class Captioner:
+            async def caption_media(self, _part: dict[str, object]) -> str:
+                return "mp窗 Turing - pleas nodeType <think> Gam Gam Gam"
+
+        part = {
+            "type": "image",
+            "data": {
+                "url": "https://example.test/custom.webp",
+                "emoji_id": "10001",
+                "emoji_package_id": "20002",
+            },
+        }
+
+        learning = await prepare_message_learning(
+            [part],
+            sticker_segment_types={"image"},
+            captioner=Captioner(),
+            image_fallback_text="[图片]",
+            sticker_fallback_text="[表情]",
+        )
+
+        self.assertEqual(len(learning["stickers"]), 1)
+        self.assertFalse(learning["stickers"][0].get("summary"))
+        self.assertNotIn("Turing", learning["training_text"])
+
 
 class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_selector_uses_mlx_vlm_to_pick_exact_candidate_key(self) -> None:
+    async def test_selector_uses_short_candidate_id_and_maps_to_sticker_key(self) -> None:
+        from nonebot_plugin_qwen_persona.generation_profiles import GenerationPurpose
         from nonebot_plugin_qwen_persona.reply_planner import ReplyIntent
         from nonebot_plugin_qwen_persona.sticker_selector import select_reply_sticker
 
@@ -152,14 +181,16 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
                 messages: list[dict[str, object]],
                 *,
                 media_parts: list[dict[str, object]] | None = None,
+                purpose: object,
             ) -> str:
-                self.calls.append({"messages": messages, "media_parts": media_parts or []})
-                return '{"key": "image:good", "reason": "fits"}'
+                self.calls.append({"messages": messages, "media_parts": media_parts or [], "purpose": purpose})
+                return '{"id": "S1", "reason": "fits"}'
 
         runtime = Runtime()
+        long_key = "image:" + "very-long-sticker-key-" * 10
         candidates = [
             {
-                "key": "image:good",
+                "key": long_key,
                 "type": "image",
                 "summary": "震惊",
                 "uri": "https://example.invalid/good.gif",
@@ -172,7 +203,7 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
                 "summary": "困",
                 "uri": "123",
                 "data": {"id": "123"},
-                "count": 3,
+                "count": 5,
             },
         ]
 
@@ -184,12 +215,14 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
             intent=ReplyIntent.IMAGE_EXPLAIN,
         )
 
-        self.assertEqual(selection.key, "image:good")
+        self.assertEqual(selection.key, long_key)
         self.assertEqual(len(runtime.calls), 1)
+        self.assertEqual(runtime.calls[0]["purpose"], GenerationPurpose.STICKER_SELECTOR)
         self.assertEqual(len(runtime.calls[0]["media_parts"]), 1)
         prompt = runtime.calls[0]["messages"][1]["content"]
-        self.assertIn("image:good", prompt)
-        self.assertIn("只能选择候选 key", prompt)
+        self.assertIn("S1", prompt)
+        self.assertNotIn(long_key, prompt)
+        self.assertIn("只返回候选 id", prompt)
 
     async def test_selector_rejects_non_exact_key_with_warning(self) -> None:
         from nonebot_plugin_qwen_persona.reply_planner import ReplyIntent
@@ -201,13 +234,14 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
                 _messages: list[dict[str, object]],
                 *,
                 media_parts: list[dict[str, object]] | None = None,
+                purpose: object | None = None,
             ) -> str:
                 return '{"key": "good"}'
 
         with self.assertLogs("nonebot_plugin_qwen_persona.sticker_selector", level="WARNING") as logs:
             selection = await select_reply_sticker(
                 Runtime(),
-                candidates=[{"key": "image:good", "type": "image", "summary": "震惊", "count": 1}],
+                candidates=[{"key": "face:good", "type": "face", "summary": "震惊", "data": {"id": "1"}, "count": 5}],
                 trigger_text="这是什么",
                 reply_text="这是影之诗",
                 intent=ReplyIntent.IMAGE_EXPLAIN,
@@ -229,6 +263,7 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
                 messages: list[dict[str, object]],
                 *,
                 media_parts: list[dict[str, object]] | None = None,
+                purpose: object | None = None,
             ) -> str:
                 self.calls.append({"messages": messages, "media_parts": media_parts or []})
                 return '{"key": "face:smile", "reason": "requested sticker"}'
@@ -258,7 +293,7 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
                     "summary": "龇牙",
                     "uri": "123",
                     "data": {"id": "123"},
-                    "count": 3,
+                    "count": 5,
                 },
             ],
             trigger_text="发个表情看看",
@@ -268,9 +303,88 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(selection.key, "face:smile")
         prompt = runtime.calls[0]["messages"][1]["content"]
-        self.assertIn("face:smile", prompt)
+        self.assertIn("S1", prompt)
         self.assertNotIn("image:screenshot", prompt)
         self.assertEqual(runtime.calls[0]["media_parts"], [])
+
+    async def test_explicit_sticker_request_falls_back_to_sendable_candidate_on_invalid_output(self) -> None:
+        from nonebot_plugin_qwen_persona.reply_planner import ReplyIntent
+        from nonebot_plugin_qwen_persona.sticker_selector import select_reply_sticker
+
+        class Runtime:
+            async def chat(
+                self,
+                _messages: list[dict[str, object]],
+                *,
+                media_parts: list[dict[str, object]] | None = None,
+                purpose: object | None = None,
+            ) -> str:
+                return "🙂"
+
+        selection = await select_reply_sticker(
+            Runtime(),
+            candidates=[
+                {
+                    "key": "face:smile",
+                    "type": "face",
+                    "summary": "龇牙",
+                    "uri": "123",
+                    "data": {"id": "123"},
+                    "count": 5,
+                }
+            ],
+            trigger_text="发个表情看看",
+            reply_text="",
+            intent=ReplyIntent.STICKER_REQUEST,
+        )
+
+        self.assertEqual(selection.key, "face:smile")
+        self.assertTrue(selection.fallback)
+        self.assertEqual(selection.raw_text, "🙂")
+
+    async def test_selector_filters_low_frequency_candidates_and_falls_back_on_empty_output(self) -> None:
+        from nonebot_plugin_qwen_persona.reply_planner import ReplyIntent
+        from nonebot_plugin_qwen_persona.sticker_selector import select_reply_sticker
+
+        class Runtime:
+            async def chat(
+                self,
+                _messages: list[dict[str, object]],
+                *,
+                media_parts: list[dict[str, object]] | None = None,
+                purpose: object | None = None,
+            ) -> str:
+                return ""
+
+        selection = await select_reply_sticker(
+            Runtime(),
+            candidates=[
+                {
+                    "key": "face:low",
+                    "type": "face",
+                    "summary": "低频",
+                    "uri": "11",
+                    "data": {"id": "11"},
+                    "count": 4,
+                },
+                {
+                    "key": "face:high",
+                    "type": "face",
+                    "summary": "高频",
+                    "uri": "22",
+                    "data": {"id": "22"},
+                    "count": 5,
+                },
+            ],
+            trigger_text="随便说点啥",
+            reply_text="短回复",
+            intent=ReplyIntent.PERSONA_TEXT,
+            min_count=5,
+        )
+
+        self.assertEqual(selection.key, "face:high")
+        self.assertTrue(selection.fallback)
+        self.assertEqual(selection.usable_count, 1)
 
 
 class StickerMessageTests(unittest.TestCase):

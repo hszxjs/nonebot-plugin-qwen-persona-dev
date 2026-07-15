@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from .config import QwenPersonaConfig, effective_mlx_model
+from .generation_profiles import GenerationProfile, GenerationPurpose, profile_for_purpose
+from .generation_safety import trim_repetitive_tail
 from .mlx_backend import DefaultMlxBackend, MlxBackend
 from .model_download import HFDownloadManager, PreparedModel, is_existing_local_model, is_hf_repo_ref
-from .prompt_budget import effective_max_tokens
 from .runtime_state import InferenceMetric, MlxRuntimeLog, OperationProgress, RuntimeOperation, utc_timestamp
 
 
@@ -88,12 +89,14 @@ class MlxVLMRuntime:
         messages: list[dict[str, Any]],
         *,
         media_parts: list[dict[str, Any]] | None = None,
+        purpose: GenerationPurpose | str = GenerationPurpose.PERSONA_REPLY,
+        generation_profile: GenerationProfile | None = None,
     ) -> str:
-        async with self._generation_slot("chat"):
+        profile = generation_profile or profile_for_purpose(self.config, purpose)
+        async with self._generation_slot(profile.purpose.value):
             async with self._state_lock:
                 structured_messages = self._structured_messages(messages)
                 images = self._image_inputs_from_parts(media_parts or [])
-                config = self.config
                 if self._model is None:
                     load_result = await self._load_without_reentrant_lock(force=False)
                     if load_result.get("status") not in {"loaded", "already_loaded"}:
@@ -119,11 +122,11 @@ class MlxVLMRuntime:
                     processor,
                     templated,
                     images,
-                    max_tokens=effective_max_tokens(config),
-                    temperature=float(config.qwen_persona_temperature),
-                    top_p=float(config.qwen_persona_top_p),
-                    repetition_penalty=float(config.qwen_persona_repetition_penalty),
-                    repetition_context_size=int(config.qwen_persona_repetition_context_size),
+                    max_tokens=profile.max_tokens,
+                    temperature=profile.temperature,
+                    top_p=profile.top_p,
+                    repetition_penalty=profile.repetition_penalty,
+                    repetition_context_size=profile.repetition_context_size,
                 )
             except Exception as exc:
                 self._append_log(
@@ -134,7 +137,17 @@ class MlxVLMRuntime:
                 )
                 raise
             content = self._validate_generated_text(self._extract_text(output))
-            self._record_metric(content, time.perf_counter() - started)
+            content = self._truncate_repetitive_generated_text(
+                content,
+                reject=profile.reject_repetition,
+                purpose=profile.purpose.value,
+            )
+            self._record_metric(
+                content,
+                time.perf_counter() - started,
+                output=output,
+                purpose=profile.purpose.value,
+            )
             return content
 
     async def caption_media(self, part: dict[str, Any]) -> str:
@@ -149,7 +162,11 @@ class MlxVLMRuntime:
             )
             return ""
         prompt = "请用一句简短中文描述这张图片或表情的可见内容，不要复述文件名或链接。"
-        return await self.chat([{"role": "user", "content": prompt}], media_parts=[part])
+        return await self.chat(
+            [{"role": "user", "content": prompt}],
+            media_parts=[part],
+            purpose=GenerationPurpose.MEDIA_CAPTION,
+        )
 
     def status_snapshot(self) -> dict[str, Any]:
         payload = self._status_payload(status=self._state)
@@ -606,10 +623,47 @@ class MlxVLMRuntime:
             return True
         return replacement_count >= 2 and (replacement_count / max(1, response_chars)) >= 0.5
 
-    def _record_metric(self, content: str, elapsed: float) -> None:
+    def _truncate_repetitive_generated_text(
+        self,
+        content: str,
+        *,
+        reject: bool = False,
+        purpose: str = "",
+    ) -> str:
+        result = trim_repetitive_tail(content)
+        if not result.changed:
+            return content
+        self._append_log(
+            "stderr",
+            "generated text ended with repeated tail; truncated output",
+            level="warn",
+            event="generated_text_repetition_truncated",
+            context={
+                "original_chars": result.original_chars,
+                "truncated_chars": result.truncated_chars,
+                "repeated_unit": result.repeated_unit,
+                "repeated_count": result.repeated_count,
+                "cleaned_chars": len(result.text),
+                "rejected": bool(reject),
+                "purpose": purpose,
+            },
+        )
+        return "" if reject else result.text
+
+    def _record_metric(
+        self,
+        content: str,
+        elapsed: float,
+        *,
+        output: Any | None = None,
+        purpose: str = "",
+    ) -> None:
         if elapsed <= 0:
             return
-        tokens = self._estimate_tokens(content)
+        tokens = self._completion_tokens_from_output(output)
+        source = "mlx_vlm" if tokens is not None else "estimated"
+        if tokens is None:
+            tokens = self._estimate_tokens(content)
         if not tokens:
             return
         self._metrics.append(
@@ -617,12 +671,27 @@ class MlxVLMRuntime:
                 time=utc_timestamp(),
                 model=effective_mlx_model(self.config),
                 latency_seconds=round(elapsed, 3),
-                completion_tokens=None,
+                completion_tokens=tokens if source == "mlx_vlm" else None,
                 response_chars=len(content),
                 tps=round(tokens / elapsed, 2),
-                source="estimated",
+                source=source,
+                finish_reason=self._finish_reason_from_output(output),
+                purpose=purpose,
             )
         )
+
+    @staticmethod
+    def _completion_tokens_from_output(output: Any | None) -> int | None:
+        value = _output_value(output, "generation_tokens")
+        try:
+            tokens = int(value)
+        except (TypeError, ValueError):
+            return None
+        return tokens if tokens > 0 else None
+
+    @staticmethod
+    def _finish_reason_from_output(output: Any | None) -> str:
+        return str(_output_value(output, "finish_reason") or "")
 
     @staticmethod
     def _estimate_tokens(content: str) -> int | None:
@@ -630,6 +699,17 @@ class MlxVLMRuntime:
         if not content:
             return None
         return max(1, round(len(content) / 2))
+
+
+def _output_value(output: Any | None, key: str) -> Any:
+    if output is None:
+        return None
+    value = getattr(output, key, None)
+    if value is not None:
+        return value
+    if isinstance(output, dict):
+        return output.get(key)
+    return None
 
 
 class _SafeBPEStreamingDetokenizer:

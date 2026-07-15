@@ -45,7 +45,9 @@ class MlxBackendHotfixTests(unittest.TestCase):
             calls.append(kwargs)
             return SimpleNamespace(text="ok")
 
-        with patch("mlx_vlm.generate", fake_generate):
+        fake_mlx_vlm = types.ModuleType("mlx_vlm")
+        fake_mlx_vlm.generate = fake_generate  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"mlx_vlm": fake_mlx_vlm}):
             result = DefaultMlxBackend().generate(
                 SimpleNamespace(config=SimpleNamespace(model_type="qwen2_vl")),
                 object(),

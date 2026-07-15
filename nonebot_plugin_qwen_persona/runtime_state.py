@@ -102,3 +102,5 @@ class InferenceMetric:
     response_chars: int
     tps: float
     source: str
+    finish_reason: str = ""
+    purpose: str = ""

@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -303,7 +304,9 @@ class PersonaTrainer:
         raw_dataset_path: Path,
         run_id: str,
     ) -> tuple[Path, str]:
-        api_url = self.config.qwen_persona_lora_helper_api_url.strip()
+        api_url = self._normalize_lora_helper_api_url(
+            self.config.qwen_persona_lora_helper_api_url
+        )
         if not api_url:
             return raw_dataset_path, ""
 
@@ -345,7 +348,10 @@ class PersonaTrainer:
                     fallback += 1
                     target.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
                     if fallback <= 3:
-                        message = f"qwen persona lora helper fallback: {exc!r}"
+                        message = (
+                            "qwen persona lora helper fallback: "
+                            f"{self._format_lora_helper_error(exc)}"
+                        )
                         logger.warning(message)
                         self._append_progress_log(message)
                 if attempted - last_logged_attempt >= 10:
@@ -367,6 +373,41 @@ class PersonaTrainer:
             f"total={total} attempted={attempted} processed={processed} fallback={fallback}"
         )
         return assisted_path, log
+
+    @staticmethod
+    def _normalize_lora_helper_api_url(api_url: str) -> str:
+        value = str(api_url or "").strip()
+        if not value:
+            return ""
+        parts = urlsplit(value)
+        path = parts.path.rstrip("/")
+        if path.endswith("/chat/completions"):
+            normalized_path = path
+        elif path.endswith("/v1"):
+            normalized_path = f"{path}/chat/completions"
+        else:
+            return value
+        return urlunsplit(
+            (
+                parts.scheme,
+                parts.netloc,
+                normalized_path,
+                parts.query,
+                parts.fragment,
+            )
+        )
+
+    @staticmethod
+    def _format_lora_helper_error(exc: Exception) -> str:
+        if isinstance(exc, httpx.HTTPStatusError):
+            body = exc.response.text.replace("\n", " ").strip()
+            if len(body) > 500:
+                body = body[:497] + "..."
+            return (
+                f"HTTPStatusError(status_code={exc.response.status_code}, "
+                f"url={exc.request.url}, body={body!r})"
+            )
+        return repr(exc)
 
     @staticmethod
     def _lora_helper_progress_log(

@@ -101,6 +101,7 @@ class QwenPersonaConfig(BaseModel):
         default_factory=lambda: {"face", "mface", "emoji", "sticker", "image"}
     )
     qwen_persona_sticker_prompt_limit: int = 12
+    qwen_persona_min_reply_sticker_count: int = 5
     qwen_persona_sticker_repo_dir: str = "data/qwen_persona/sticker_repo"
     qwen_persona_sticker_repo_url: str = ""
     qwen_persona_enable_sending_stickers: bool = True
@@ -138,7 +139,7 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_mlx_lora_steps_per_report: int = 10
     qwen_persona_lora_helper_api_url: str = ""
     qwen_persona_lora_helper_api_key: str = ""
-    qwen_persona_lora_helper_model: str = "gpt-5.5-medium"
+    qwen_persona_lora_helper_model: str = "gpt-5.4-fast"
     qwen_persona_lora_helper_timeout: float = 120.0
     qwen_persona_lora_helper_sample_limit: int = 0
     qwen_persona_lora_helper_extra_body: dict[str, Any] = Field(default_factory=dict)

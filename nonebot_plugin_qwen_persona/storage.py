@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -11,6 +12,7 @@ from typing import Any, Iterable, Iterator
 from urllib.parse import quote, unquote, urlparse
 
 from .filters import is_command_like, is_training_noise, normalize_text
+from .generation_safety import is_low_quality_generated_text
 from .media import context_text_from_sample
 from .sticker import (
     build_training_text,
@@ -894,6 +896,110 @@ class PersonaStore:
             "skipped": 0,
         }
 
+    async def record_sticker_asset(
+        self,
+        *,
+        sticker: dict[str, Any],
+        group_id: str | None,
+        user_id: str | None,
+        summary: str = "",
+        increment_count: bool = True,
+    ) -> dict[str, int]:
+        return await asyncio.to_thread(
+            self._record_sticker_asset_sync,
+            sticker=sticker,
+            group_id=group_id,
+            user_id=user_id,
+            summary=summary,
+            increment_count=increment_count,
+        )
+
+    def _record_sticker_asset_sync(
+        self,
+        *,
+        sticker: dict[str, Any],
+        group_id: str | None,
+        user_id: str | None,
+        summary: str = "",
+        increment_count: bool = True,
+    ) -> dict[str, int]:
+        self._init_sync()
+        key = str(sticker.get("key") or "").strip()
+        segment_type = str(sticker.get("type") or "").strip()
+        data = dict(sticker.get("data") or {})
+        uri = str(
+            sticker.get("uri")
+            or data.get("url")
+            or data.get("file")
+            or data.get("file_id")
+            or data.get("id")
+            or ""
+        ).strip()
+        clean_summary = normalize_text(summary or str(sticker.get("summary") or ""))
+        if not key or not segment_type:
+            return {"stickers_upserted": 0, "media_inserted": 0, "skipped": 1}
+        if clean_summary:
+            data["summary"] = clean_summary
+        now = time.time()
+        count_delta = 1 if increment_count else 0
+        with self._connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO stickers (
+                    key, type, summary, uri, data_json, group_id, user_id,
+                    first_seen, last_seen, count
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    summary=COALESCE(NULLIF(excluded.summary, ''), stickers.summary),
+                    uri=CASE
+                        WHEN COALESCE(stickers.uri, '') LIKE 'file://%' THEN stickers.uri
+                        WHEN COALESCE(excluded.uri, '') != '' THEN excluded.uri
+                        ELSE stickers.uri
+                    END,
+                    data_json=excluded.data_json,
+                    group_id=COALESCE(excluded.group_id, stickers.group_id),
+                    user_id=COALESCE(excluded.user_id, stickers.user_id),
+                    last_seen=excluded.last_seen,
+                    count=stickers.count + excluded.count
+                """,
+                (
+                    key,
+                    segment_type,
+                    clean_summary,
+                    uri,
+                    json.dumps(data, ensure_ascii=False, default=str),
+                    group_id,
+                    user_id,
+                    now,
+                    now,
+                    count_delta,
+                ),
+            )
+            media_inserted = 0
+            if uri and clean_summary:
+                media_cursor = self._record_media_asset_conn(
+                    conn,
+                    source="sticker",
+                    source_key=key,
+                    uri=uri,
+                    prompt="请用一句中文描述这个群聊表情的含义。",
+                    answer=clean_summary,
+                    metadata={
+                        "group_id": group_id,
+                        "user_id": user_id,
+                        "sticker_type": segment_type,
+                        "background_analysis": True,
+                    },
+                    created_at=now,
+                )
+                media_inserted = int(media_cursor.rowcount or 0)
+        return {
+            "stickers_upserted": int(cursor.rowcount or 0),
+            "media_inserted": media_inserted,
+            "skipped": 0,
+        }
+
     def _record_media_asset_conn(
         self,
         conn: sqlite3.Connection,
@@ -1039,7 +1145,7 @@ class PersonaStore:
         with self._connection() as conn:
             rows = conn.execute(
                 f"""
-                SELECT user_id, group_id, plain_text, training_text, sticker_keys, created_at
+                SELECT user_id, group_id, message_id, plain_text, training_text, sticker_keys, created_at
                 FROM chat_samples
                 {where}
                 ORDER BY created_at DESC
@@ -1048,6 +1154,151 @@ class PersonaStore:
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
+
+    async def search_context_samples(
+        self,
+        *,
+        group_id: str | None,
+        query: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._search_context_samples_sync,
+            group_id=group_id,
+            query=query,
+            limit=limit,
+        )
+
+    def _search_context_samples_sync(
+        self,
+        *,
+        group_id: str | None,
+        query: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        self._init_sync()
+        terms = self._context_search_terms(query)
+        if not terms:
+            return []
+        limit = max(1, min(int(limit or 5), 30))
+        where = "WHERE group_id = ?" if group_id else ""
+        params: tuple[Any, ...] = (group_id, max(80, limit * 12)) if group_id else (max(80, limit * 12),)
+        with self._connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT user_id, group_id, message_id, plain_text, training_text, sticker_keys, created_at
+                FROM chat_samples
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+
+        scored: list[tuple[int, float, dict[str, Any]]] = []
+        for row in rows:
+            item = dict(row)
+            context_text = context_text_from_sample(item)
+            if not context_text or is_training_noise(context_text):
+                continue
+            haystack = self._context_search_haystack(item, context_text)
+            score = sum(len(term) for term in terms if term in haystack)
+            if score <= 0:
+                continue
+            scored.append((score, float(item.get("created_at") or 0), item))
+        scored.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+        return [item for _score, _created_at, item in scored[:limit]]
+
+    @staticmethod
+    def _context_search_terms(query: str) -> list[str]:
+        raw_terms = [
+            normalize_text(term)
+            for term in re.split(r"\s+", str(query or ""))
+            if normalize_text(term)
+        ]
+        terms: list[str] = []
+        seen: set[str] = set()
+        for term in raw_terms:
+            candidates = [term]
+            if len(term) >= 8 and re.search(r"[\u4e00-\u9fff]", term):
+                candidates.extend(term[index : index + 2] for index in range(0, len(term) - 1))
+            for candidate in candidates:
+                candidate = candidate.lower()
+                if len(candidate) < 1 or candidate in seen:
+                    continue
+                seen.add(candidate)
+                terms.append(candidate)
+        return terms
+
+    @staticmethod
+    def _context_search_haystack(item: dict[str, Any], context_text: str) -> str:
+        return " ".join(
+            str(value or "").lower()
+            for value in (
+                context_text,
+                item.get("plain_text"),
+                item.get("training_text"),
+                item.get("user_id"),
+            )
+        )
+
+    async def search_media_assets(
+        self,
+        *,
+        group_id: str | None,
+        query: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(
+            self._search_media_assets_sync,
+            group_id=group_id,
+            query=query,
+            limit=limit,
+        )
+
+    def _search_media_assets_sync(
+        self,
+        *,
+        group_id: str | None,
+        query: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        self._init_sync()
+        terms = self._context_search_terms(query)
+        if not terms:
+            return []
+        limit = max(1, min(int(limit or 5), 30))
+        rows = self._media_asset_rows(limit=max(80, limit * 12))
+        scored: list[tuple[int, float, dict[str, Any]]] = []
+        for item in rows:
+            metadata = self._json_object(item.get("metadata_json"))
+            if group_id and str(metadata.get("group_id") or "") != str(group_id):
+                continue
+            haystack = self._media_asset_search_haystack(item, metadata)
+            score = sum(len(term) for term in terms if term in haystack)
+            if score <= 0:
+                continue
+            item = dict(item)
+            item["metadata"] = metadata
+            scored.append((score, float(item.get("created_at") or 0), item))
+        scored.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
+        return [item for _score, _created_at, item in scored[:limit]]
+
+    @staticmethod
+    def _media_asset_search_haystack(
+        item: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> str:
+        return " ".join(
+            str(value or "").lower()
+            for value in (
+                item.get("prompt"),
+                item.get("answer"),
+                item.get("uri"),
+                item.get("source_key"),
+                json.dumps(metadata, ensure_ascii=False, default=str),
+            )
+        )
 
     async def top_stickers(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._top_stickers_sync, group_id, limit)
@@ -1897,7 +2148,7 @@ class PersonaStore:
                 for row in self._media_asset_rows(limit=media_limit):
                     uri = str(row.get("uri") or "").strip()
                     answer = normalize_text(str(row.get("answer") or ""))
-                    if not uri or not answer:
+                    if not uri or not answer or is_low_quality_generated_text(answer):
                         continue
                     prompt = normalize_text(str(row.get("prompt") or ""))
                     metadata = self._json_object(row.get("metadata_json"))
@@ -2064,10 +2315,12 @@ class PersonaStore:
             samples = conn.execute("SELECT COUNT(*) FROM chat_samples").fetchone()[0]
             stickers = conn.execute("SELECT COUNT(*) FROM stickers").fetchone()[0]
             training_runs = conn.execute("SELECT COUNT(*) FROM training_runs").fetchone()[0]
+            media_assets = conn.execute("SELECT COUNT(*) FROM media_assets").fetchone()[0]
         return {
             "samples": int(samples),
             "stickers": int(stickers),
             "training_runs": int(training_runs),
+            "media_assets": int(media_assets),
         }
 
     async def dashboard_stats(self, *, days: int = 14, group_limit: int = 8) -> dict[str, Any]:

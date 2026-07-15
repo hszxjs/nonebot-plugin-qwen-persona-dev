@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from .filters import is_question_like, normalize_text
+
 
 IMAGE_QUESTION_RE = re.compile(
     r"(这是什么|这是啥|什么图|看图|图里|图片|截图|表情|表情包|这个图|这图|啥意思)"
@@ -18,6 +20,7 @@ STICKER_REQUEST_RE = re.compile(
 
 class ReplyIntent(str, Enum):
     PERSONA_TEXT = "persona_text"
+    QUESTION_ANSWER = "question_answer"
     IMAGE_EXPLAIN = "image_explain"
     STICKER_REACTION = "sticker_reaction"
     STICKER_REQUEST = "sticker_request"
@@ -45,13 +48,17 @@ def classify_reply_intent(
         return ReplyIntent.STICKER_REQUEST
     if incoming_has_sticker and not text:
         return ReplyIntent.STICKER_REACTION
+    if is_question_like(text):
+        return ReplyIntent.QUESTION_ANSWER
     return ReplyIntent.PERSONA_TEXT
 
 
 def build_reply_plan(
     *,
     system_prompt: str,
-    history_lines: list[str],
+    history_lines: list[str] | None = None,
+    conversation_lines: list[str] | None = None,
+    style_memory_lines: list[str] | None = None,
     current_text: str,
     media_parts: list[dict[str, Any]],
     sticker_reply_allowed: bool,
@@ -62,10 +69,23 @@ def build_reply_plan(
         media_parts=media_parts,
         incoming_has_sticker=incoming_has_sticker,
     )
+    conversation_context = _clean_lines(conversation_lines)
+    style_memory = _clean_lines(style_memory_lines)
+    if history_lines and not style_memory:
+        style_memory = _clean_lines(history_lines)
+
     user_parts: list[str] = []
-    if history_lines:
-        user_parts.append("最近群聊样本：\n" + "\n".join(history_lines))
-    user_parts.append(f"当前消息：{str(current_text or '').strip() or '[有人在叫你]'}")
+    if conversation_context:
+        user_parts.append("当前对话上下文：\n" + "\n".join(conversation_context))
+    if style_memory:
+        user_parts.append(
+            "语气参考（只参考句长、松弛度和常见表达；不能把语气参考当作当前事实；"
+            "不要输出用户 id）：\n"
+            + "\n".join(style_memory)
+        )
+    else:
+        user_parts.append("语气参考：无。不要输出用户 id。")
+    user_parts.append(f"当前消息：{normalize_text(current_text) or '[有人在叫你]'}")
     if intent == ReplyIntent.IMAGE_EXPLAIN:
         user_parts.append(
             "回答用户对图片或表情的疑问。可以解释可见内容并顺势接一句群聊口吻，"
@@ -75,6 +95,11 @@ def build_reply_plan(
         user_parts.append("用户明确想要表情回复。不要输出 emoji，不要描述表情内容；主文本可以为空。")
     elif intent == ReplyIntent.STICKER_REACTION:
         user_parts.append("对这个表情自然接一句短回复，只输出文字。")
+    elif intent == ReplyIntent.QUESTION_ANSWER:
+        user_parts.append(
+            "用户在提问。先直接回答问题；如果上下文不足，就说明不确定并给出最可能的解释。"
+            "可以保留群聊口吻，但不要为了模仿人而绕开问题。"
+        )
     else:
         user_parts.append("请自然接一句，只输出文字，不要输出命令、JSON 或表情 token。")
     user_parts.append("只输出最终要发到群里的内容，不要写思考过程。")
@@ -94,3 +119,15 @@ def build_reply_plan(
         media_parts=list(media_parts),
         allow_sticker=bool(sticker_reply_allowed) or intent == ReplyIntent.STICKER_REQUEST,
     )
+
+
+def _clean_lines(lines: list[str] | None) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for line in lines or []:
+        cleaned = normalize_text(line)
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        result.append(cleaned)
+    return result

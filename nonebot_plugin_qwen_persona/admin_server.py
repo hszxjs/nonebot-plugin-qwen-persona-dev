@@ -93,6 +93,7 @@ def _runtime_summary(status: dict[str, Any]) -> dict[str, Any]:
         "loaded_adapter_path": status.get("loaded_adapter_path", ""),
         "last_error": status.get("last_error", ""),
         "operation": status.get("operation"),
+        "generation": status.get("generation", {"active": 0, "queued": 0, "current": None}),
         "control": status.get("control", {}),
         "metrics": status.get("metrics", {"last": None, "history": []}),
         "model_presets": MLX_MODEL_PRESETS,

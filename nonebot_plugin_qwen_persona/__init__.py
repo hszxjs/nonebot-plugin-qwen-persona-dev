@@ -26,21 +26,23 @@ from .filters import (
     sanitize_reply,
     should_force_reply,
     should_learn_text,
-    should_random_reply,
     should_use_sticker_reply,
 )
 from .inference_events import record_inference_event
+from .message_context import MessageContextEnvelope, build_message_context
 from .media import (
     context_text_from_sample,
     filter_training_text_sticker_tokens,
+    message_to_parts,
     prepare_message_learning,
-    reply_context_text_from_learning,
     sanitize_model_reply_media_text,
 )
+from .media_analysis import analyze_media_parts
 from .mlx_runtime import MlxVLMRuntime
 from .poke import is_poke_at_self, send_counter_poke
 from .prompt_budget import effective_context_message_limit, trim_history_lines_for_context
 from .qwen_client import QwenClient
+from .reply_decision import ReplyDecision, should_attempt_reply
 from .reply_planner import ReplyIntent, ReplyPlan, build_reply_plan
 from .repeat import (
     ConversationPatternTracker,
@@ -61,6 +63,7 @@ from .sticker import (
 from .sticker_repo import cleanup_sticker_repo_manifest, record_sticker_repo_manifest
 from .sticker_selector import select_reply_sticker
 from .storage import PersonaStore
+from .tool_registry import ToolRegistry
 from .trainer import PersonaTrainer, parse_time_slot
 
 __plugin_meta__ = PluginMetadata(
@@ -95,6 +98,7 @@ client = QwenClient(plugin_config, runtime=mlx_runtime)
 trainer = PersonaTrainer(plugin_config, store)
 repeat_tracker = RepeatTracker()
 conversation_pattern_tracker = ConversationPatternTracker()
+tool_registry = ToolRegistry()
 admin_server = AdminServer(
     config=plugin_config,
     save_callback=lambda values: _save_admin_config(values),
@@ -105,6 +109,7 @@ admin_server = AdminServer(
     trainer=trainer,
 )
 _schedule_installed = False
+_background_media_tasks: set[asyncio.Task[None]] = set()
 
 
 _CONFIG_RESTART_REQUIRED = {
@@ -241,34 +246,40 @@ def _is_to_me(event: Event, plain_text: str) -> bool:
     return bool(stripped and any(stripped.startswith(name) for name in nicknames if name))
 
 
-def _should_reply(bot: Bot, event: Event, plain_text: str, ids: dict[str, str | None]) -> bool:
-    if not plugin_config.qwen_persona_enable_reply:
-        return False
+def _reply_decision(
+    bot: Bot,
+    event: Event,
+    plain_text: str,
+    ids: dict[str, str | None],
+) -> ReplyDecision:
     private_chat = is_private_chat(event, ids)
-    if not private_chat and not _group_enabled(ids["group_id"]):
-        return False
-    if _is_self_event(bot, ids):
-        return False
-    if _is_command_message(plain_text):
-        return False
-    if _is_blacklisted(ids["user_id"], ids["group_id"], plain_text):
-        return False
     try:
         message = event.get_message()
     except Exception:
         message = ()
-    if should_force_reply(
+    force_reply = should_force_reply(
         event,
         ids,
         message,
         bot_self_id=_bot_self_id(bot),
         to_me=_is_to_me(event, plain_text),
-    ):
-        return True
-    probability = plugin_config.qwen_persona_reply_probability
-    if probability <= 0:
-        probability = plugin_config.qwen_persona_follow_reply_probability
-    return should_random_reply(plain_text, probability=probability, random_value=random.random())
+    )
+    return should_attempt_reply(
+        enable_reply=plugin_config.qwen_persona_enable_reply,
+        group_enabled=private_chat or _group_enabled(ids["group_id"]),
+        self_event=_is_self_event(bot, ids),
+        blacklisted=_is_blacklisted(ids["user_id"], ids["group_id"], plain_text),
+        command_like=_is_command_message(plain_text),
+        force_reply=force_reply,
+        has_text=bool(str(plain_text or "").strip()) or force_reply,
+        reply_probability=plugin_config.qwen_persona_reply_probability,
+        follow_reply_probability=plugin_config.qwen_persona_follow_reply_probability,
+        random_value=random.random(),
+    )
+
+
+def _should_reply(bot: Bot, event: Event, plain_text: str, ids: dict[str, str | None]) -> bool:
+    return _reply_decision(bot, event, plain_text, ids).allowed
 
 
 def _build_system_prompt() -> str:
@@ -283,6 +294,9 @@ def _build_system_prompt() -> str:
     ]
     if plugin_config.qwen_persona_sticker_repo_url:
         lines.append(f"表情包仓库：{plugin_config.qwen_persona_sticker_repo_url}")
+    tool_description = tool_registry.describe_for_prompt()
+    if tool_description:
+        lines.append("可用工具：\n" + tool_description)
     return "\n".join(line for line in lines if line)
 
 
@@ -363,35 +377,118 @@ def _is_context_noise(text: str) -> bool:
 
 
 async def _build_model_reply_plan(
-    plain_text: str,
+    envelope: MessageContextEnvelope,
     group_id: str | None,
     *,
+    ids: dict[str, str | None],
     sticker_reply_allowed: bool,
     incoming_has_sticker: bool,
     media_parts: list[dict[str, Any]],
 ) -> ReplyPlan:
-    history = await _recent_context_samples(
-        group_id,
-        effective_context_message_limit(plugin_config),
+    context_limit = effective_context_message_limit(plugin_config)
+    query_text = _context_query_text(envelope)
+    history, relevant_samples, relevant_media_assets = await asyncio.gather(
+        _recent_context_samples(group_id, context_limit),
+        _search_relevant_context_samples(group_id, query_text, max(3, context_limit // 2)),
+        _search_relevant_media_assets(group_id, query_text, max(2, context_limit // 3)),
     )
-    history_lines: list[str] = []
-    for item in reversed(history):
+
+    conversation_lines = _conversation_lines_from_envelope(envelope)
+    for item in relevant_samples:
         context_text = context_text_from_sample(item)
         context_text, _sticker_keys = parse_sticker_tokens(context_text)
         if _is_context_noise(context_text):
             continue
         if context_text:
-            history_lines.append(f"{item.get('user_id') or 'someone'}: {context_text}")
-    history_lines = trim_history_lines_for_context(history_lines, plugin_config)
+            conversation_lines.append(f"相关历史：{context_text}")
+    for item in relevant_media_assets:
+        answer = str(item.get("answer") or "").strip()
+        if answer and not _is_context_noise(answer):
+            conversation_lines.append(f"历史图片理解：{answer}")
+
+    style_memory_lines: list[str] = []
+    current_message_id = str(ids.get("message_id") or "")
+    for item in reversed(history):
+        if current_message_id and str(item.get("message_id") or "") == current_message_id:
+            continue
+        context_text = context_text_from_sample(item)
+        context_text, _sticker_keys = parse_sticker_tokens(context_text)
+        if _is_context_noise(context_text):
+            continue
+        if context_text:
+            style_memory_lines.append(context_text)
+    conversation_lines = trim_history_lines_for_context(conversation_lines, plugin_config)
+    style_memory_lines = trim_history_lines_for_context(style_memory_lines, plugin_config)
 
     return build_reply_plan(
         system_prompt=_build_system_prompt(),
-        history_lines=history_lines,
-        current_text=plain_text,
+        conversation_lines=conversation_lines,
+        style_memory_lines=style_memory_lines,
+        current_text=envelope.current_text,
         media_parts=media_parts,
         sticker_reply_allowed=sticker_reply_allowed,
         incoming_has_sticker=incoming_has_sticker,
     )
+
+
+def _context_query_text(envelope: MessageContextEnvelope) -> str:
+    chunks = [envelope.current_text]
+    chunks.extend(envelope.quoted_texts)
+    chunks.extend(envelope.forwarded_texts)
+    return " ".join(chunk for chunk in chunks if chunk).strip()
+
+
+async def _search_relevant_context_samples(
+    group_id: str | None,
+    query: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not query:
+        return []
+    scope = str(getattr(plugin_config, "qwen_persona_context_scope", "mixed") or "mixed")
+    search_group_id = None if scope == "global" else group_id
+    try:
+        return await store.search_context_samples(
+            group_id=search_group_id,
+            query=query,
+            limit=limit,
+        )
+    except Exception as exc:
+        logger.warning(f"qwen persona context search failed: {exc!r}")
+        return []
+
+
+async def _search_relevant_media_assets(
+    group_id: str | None,
+    query: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    if not query:
+        return []
+    scope = str(getattr(plugin_config, "qwen_persona_context_scope", "mixed") or "mixed")
+    search_group_id = None if scope == "global" else group_id
+    try:
+        return await store.search_media_assets(
+            group_id=search_group_id,
+            query=query,
+            limit=limit,
+        )
+    except Exception as exc:
+        logger.warning(f"qwen persona media context search failed: {exc!r}")
+        return []
+
+
+def _conversation_lines_from_envelope(envelope: MessageContextEnvelope) -> list[str]:
+    lines: list[str] = []
+    for text in envelope.quoted_texts:
+        lines.append(f"引用消息：{text}")
+    for text in envelope.forwarded_texts:
+        lines.append(f"合并转发：{text}")
+    if envelope.sticker_keys:
+        lines.append("当前消息包含群聊表情。")
+    if envelope.media_parts:
+        lines.append("当前消息包含图片或表情媒体，必要时直接看图回答。")
+    return lines
 
 
 async def _build_reply_input_text(
@@ -402,21 +499,105 @@ async def _build_reply_input_text(
         learning = await prepare_message_learning(
             message,
             sticker_segment_types=plugin_config.qwen_persona_sticker_segment_types,
-            captioner=mlx_runtime,
-            image_fallback_text=plugin_config.qwen_persona_media_image_fallback_text,
-            sticker_fallback_text=plugin_config.qwen_persona_media_sticker_fallback_text,
+            captioner=None,
+            image_fallback_text="",
+            sticker_fallback_text="",
         )
     except Exception as exc:
         logger.debug(f"qwen persona reply media context skipped: {exc!r}")
-        return plain_text, [], []
+        return plain_text, [], [part for part in message_to_parts(message) if part.get("type") != "text"]
 
-    reply_context = reply_context_text_from_learning(learning)
     sticker_keys = [
         str(item.get("key") or "").strip()
         for item in learning.get("stickers") or []
         if str(item.get("key") or "").strip()
     ]
-    return reply_context or plain_text, sticker_keys, list(learning.get("media_parts") or [])
+    return plain_text, sticker_keys, list(learning.get("media_parts") or [])
+
+
+def _schedule_background_media_analysis(
+    ids: dict[str, str | None],
+    media_parts: list[dict[str, Any]],
+) -> None:
+    image_parts = [part for part in media_parts if str(part.get("type") or "") == "image"]
+    if not image_parts:
+        return
+    task = asyncio.create_task(
+        _run_background_media_analysis(ids=dict(ids), media_parts=image_parts)
+    )
+    _background_media_tasks.add(task)
+
+    def _discard(done: asyncio.Task[None]) -> None:
+        _background_media_tasks.discard(done)
+
+    task.add_done_callback(_discard)
+
+
+async def _run_background_media_analysis(
+    *,
+    ids: dict[str, str | None],
+    media_parts: list[dict[str, Any]],
+) -> None:
+    if not await _wait_for_generation_idle(timeout_seconds=12.0):
+        await _record_sticker_event(
+            event_type="media_analysis",
+            status="skipped",
+            group_id=ids.get("group_id"),
+            user_id=ids.get("user_id"),
+            message="background media analysis skipped: generation busy",
+            details={"media_count": len(media_parts)},
+        )
+        return
+    try:
+        result = await analyze_media_parts(
+            store=store,
+            captioner=mlx_runtime,
+            parts=media_parts,
+            group_id=ids.get("group_id"),
+            user_id=ids.get("user_id"),
+            sticker_segment_types=set(plugin_config.qwen_persona_sticker_segment_types),
+        )
+    except Exception as exc:
+        logger.warning(f"qwen persona background media analysis failed: {exc!r}")
+        await _record_sticker_event(
+            event_type="media_analysis",
+            status="failed",
+            group_id=ids.get("group_id"),
+            user_id=ids.get("user_id"),
+            message=f"{type(exc).__name__}: {exc}",
+            details={"media_count": len(media_parts)},
+        )
+        return
+    for event in result.events:
+        await _record_sticker_event(
+            event_type=str(event.get("event_type") or "media_analysis"),
+            status=str(event.get("status") or "unknown"),
+            key=str(event.get("key") or "") or None,
+            group_id=ids.get("group_id"),
+            user_id=ids.get("user_id"),
+            message=str(event.get("message") or ""),
+            details=dict(event.get("details") or {}),
+        )
+
+
+async def _wait_for_generation_idle(*, timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    while True:
+        try:
+            generation = dict(mlx_runtime.status_snapshot().get("generation") or {})
+            active = int(generation.get("active") or 0)
+            queued = int(generation.get("queued") or 0)
+        except Exception:
+            return True
+        if active <= 0 and queued <= 0:
+            return True
+        if time.monotonic() >= deadline:
+            logger.warning(
+                "qwen persona background media analysis skipped: "
+                f"generation busy active={active}, queued={queued}"
+            )
+            return False
+        await asyncio.sleep(1.0)
 
 
 async def _send_repeat_if_needed(event: Event, ids: dict[str, str | None], message: Any) -> bool:
@@ -597,6 +778,7 @@ async def _select_reply_sticker_key(
         trigger_text=trigger_text,
         reply_text=reply_text,
         intent=intent,
+        min_count=plugin_config.qwen_persona_min_reply_sticker_count,
     )
     await _record_sticker_event(
         event_type="selector",
@@ -609,6 +791,8 @@ async def _select_reply_sticker_key(
             "intent": str(getattr(intent, "value", intent)),
             "candidate_count": selection.candidate_count,
             "usable_count": selection.usable_count,
+            "min_count": plugin_config.qwen_persona_min_reply_sticker_count,
+            "fallback": selection.fallback,
             "trigger_text": trigger_text[:240],
             "reply_text": reply_text[:240],
             "raw_text": selection.raw_text[:500],
@@ -755,6 +939,11 @@ async def _startup() -> None:
 
 @driver.on_shutdown
 async def _shutdown() -> None:
+    for task in list(_background_media_tasks):
+        task.cancel()
+    if _background_media_tasks:
+        await asyncio.gather(*_background_media_tasks, return_exceptions=True)
+        _background_media_tasks.clear()
     await mlx_runtime.close()
     admin_server.stop()
 
@@ -778,9 +967,9 @@ async def _learn_from_event(bot: Bot, event: Event) -> None:
     learning = await prepare_message_learning(
         message,
         sticker_segment_types=plugin_config.qwen_persona_sticker_segment_types,
-        captioner=mlx_runtime,
-        image_fallback_text=plugin_config.qwen_persona_media_image_fallback_text,
-        sticker_fallback_text=plugin_config.qwen_persona_media_sticker_fallback_text,
+        captioner=None,
+        image_fallback_text="",
+        sticker_fallback_text="",
     )
     plain_text = str(learning["plain_text"])
     raw_message_text = str(message)
@@ -895,6 +1084,9 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         conversation_pattern_tracker.reset(ids["group_id"])
         return
     plain_text = extract_plain_text(message)
+    reply_input_text, incoming_sticker_keys, media_parts = await _build_reply_input_text(message, plain_text)
+    if is_private_chat(event, ids) or _group_enabled(ids["group_id"]):
+        _schedule_background_media_analysis(ids, media_parts)
     if await _send_repeat_if_needed(event, ids, message):
         conversation_pattern_tracker.reset(ids["group_id"])
         matcher.stop_propagation()
@@ -902,18 +1094,27 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     if await _send_pattern_reply_if_known(bot, event, ids, message, plain_text):
         matcher.stop_propagation()
         return
-    if not _should_reply(bot, event, plain_text, ids):
+    reply_decision = _reply_decision(bot, event, plain_text, ids)
+    if not reply_decision.allowed:
         return
 
-    reply_input_text, incoming_sticker_keys, media_parts = await _build_reply_input_text(message, plain_text)
+    envelope = build_message_context(
+        message=message,
+        event=event,
+        current_text=reply_input_text,
+        media_parts=media_parts,
+        sticker_keys=incoming_sticker_keys,
+        forced_by_at=reply_decision.reason == "force_reply",
+    )
     sticker_reply_allowed = should_use_sticker_reply(
         incoming_has_sticker=bool(incoming_sticker_keys),
         text_sticker_probability=plugin_config.qwen_persona_text_sticker_reply_probability,
         random_value=random.random(),
     )
     reply_plan = await _build_model_reply_plan(
-        reply_input_text,
+        envelope,
         ids["group_id"],
+        ids=ids,
         sticker_reply_allowed=sticker_reply_allowed,
         incoming_has_sticker=bool(incoming_sticker_keys),
         media_parts=media_parts,

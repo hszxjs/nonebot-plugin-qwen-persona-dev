@@ -84,6 +84,86 @@ class TrainerProgressTests(unittest.TestCase):
             self.assertIn("processed=0", log)
             self.assertIn("fallback=2", log)
 
+    def test_lora_helper_base_v1_url_posts_to_chat_completions_endpoint(self) -> None:
+        import asyncio
+        import json
+
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_qwen_persona.trainer import PersonaTrainer
+
+        class CapturingTrainer(PersonaTrainer):
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                super().__init__(*args, **kwargs)
+                self.helper_urls: list[str] = []
+
+            async def _assist_lora_record(self, *, api_url: str, record: dict[str, object]) -> dict[str, object]:
+                self.helper_urls.append(api_url)
+                return record
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dataset_path = Path(tmp) / "raw.jsonl"
+            record = {"messages": [{"role": "user", "content": "u"}]}
+            raw_dataset_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            trainer = CapturingTrainer(
+                QwenPersonaConfig(
+                    qwen_persona_lora_helper_api_url="https://dm-fox.rjj.cc/codex/v1",
+                    qwen_persona_lora_helper_sample_limit=1,
+                ),
+                store=object(),  # type: ignore[arg-type]
+            )
+
+            asyncio.run(
+                trainer._maybe_build_assisted_dataset(
+                    raw_dataset_path=raw_dataset_path,
+                    run_id="url-test",
+                )
+            )
+
+        self.assertEqual(
+            trainer.helper_urls,
+            ["https://dm-fox.rjj.cc/codex/v1/chat/completions"],
+        )
+
+    def test_lora_helper_fallback_log_includes_http_error_body(self) -> None:
+        import asyncio
+        import json
+
+        import httpx
+
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_qwen_persona.trainer import PersonaTrainer
+
+        class HttpFailingTrainer(PersonaTrainer):
+            async def _assist_lora_record(self, *, api_url: str, record: dict[str, object]) -> dict[str, object]:
+                request = httpx.Request("POST", api_url)
+                response = httpx.Response(
+                    404,
+                    request=request,
+                    json={"error": {"message": "model test is not available"}},
+                )
+                raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raw_dataset_path = Path(tmp) / "raw.jsonl"
+            record = {"messages": [{"role": "user", "content": "u"}]}
+            raw_dataset_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+            trainer = HttpFailingTrainer(
+                QwenPersonaConfig(
+                    qwen_persona_lora_helper_api_url="https://helper.test/v1",
+                    qwen_persona_lora_helper_sample_limit=1,
+                ),
+                store=object(),  # type: ignore[arg-type]
+            )
+
+            asyncio.run(
+                trainer._maybe_build_assisted_dataset(
+                    raw_dataset_path=raw_dataset_path,
+                    run_id="http-error-test",
+                )
+            )
+
+        self.assertIn("model test is not available", trainer.progress_snapshot()["log_tail"])
+
 
 if __name__ == "__main__":
     unittest.main()
