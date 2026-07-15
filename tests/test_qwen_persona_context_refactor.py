@@ -124,6 +124,33 @@ class MessageContextEnvelopeTests(unittest.TestCase):
 
 
 class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
+    async def test_background_media_analysis_decision_filters_plain_commands(self) -> None:
+        from nonebot_plugin_qwen_persona.media_analysis import should_analyze_background_media
+
+        command = should_analyze_background_media(
+            enable_learning=True,
+            group_enabled=True,
+            self_event=False,
+            blacklisted=False,
+            command_like=True,
+            force_reply=False,
+            has_media=True,
+        )
+        forced = should_analyze_background_media(
+            enable_learning=True,
+            group_enabled=True,
+            self_event=False,
+            blacklisted=False,
+            command_like=True,
+            force_reply=True,
+            has_media=True,
+        )
+
+        self.assertFalse(command.allowed)
+        self.assertEqual(command.reason, "command_like")
+        self.assertTrue(forced.allowed)
+        self.assertEqual(forced.reason, "force_reply")
+
     async def test_search_context_samples_returns_matching_recent_text(self) -> None:
         from nonebot_plugin_qwen_persona.storage import PersonaStore
 

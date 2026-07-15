@@ -37,7 +37,7 @@ from .media import (
     prepare_message_learning,
     sanitize_model_reply_media_text,
 )
-from .media_analysis import analyze_media_parts
+from .media_analysis import analyze_media_parts, should_analyze_background_media
 from .mlx_runtime import MlxVLMRuntime
 from .poke import is_poke_at_self, send_counter_poke
 from .prompt_budget import effective_context_message_limit, trim_history_lines_for_context
@@ -280,6 +280,37 @@ def _reply_decision(
 
 def _should_reply(bot: Bot, event: Event, plain_text: str, ids: dict[str, str | None]) -> bool:
     return _reply_decision(bot, event, plain_text, ids).allowed
+
+
+def _should_schedule_background_media_analysis(
+    bot: Bot,
+    event: Event,
+    plain_text: str,
+    ids: dict[str, str | None],
+    media_parts: list[dict[str, Any]],
+) -> bool:
+    private_chat = is_private_chat(event, ids)
+    try:
+        message = event.get_message()
+    except Exception:
+        message = ()
+    force_reply = should_force_reply(
+        event,
+        ids,
+        message,
+        bot_self_id=_bot_self_id(bot),
+        to_me=_is_to_me(event, plain_text),
+    )
+    decision = should_analyze_background_media(
+        enable_learning=plugin_config.qwen_persona_enable_learning,
+        group_enabled=private_chat or _group_enabled(ids["group_id"]),
+        self_event=_is_self_event(bot, ids),
+        blacklisted=_is_blacklisted(ids["user_id"], ids["group_id"], plain_text),
+        command_like=_is_command_message(plain_text),
+        force_reply=force_reply,
+        has_media=any(str(part.get("type") or "") == "image" for part in media_parts),
+    )
+    return decision.allowed
 
 
 def _build_system_prompt() -> str:
@@ -1085,7 +1116,7 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         return
     plain_text = extract_plain_text(message)
     reply_input_text, incoming_sticker_keys, media_parts = await _build_reply_input_text(message, plain_text)
-    if is_private_chat(event, ids) or _group_enabled(ids["group_id"]):
+    if _should_schedule_background_media_analysis(bot, event, plain_text, ids, media_parts):
         _schedule_background_media_analysis(ids, media_parts)
     if await _send_repeat_if_needed(event, ids, message):
         conversation_pattern_tracker.reset(ids["group_id"])

@@ -25,6 +25,39 @@ class MediaAnalysisResult:
     events: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class BackgroundMediaAnalysisDecision:
+    allowed: bool
+    reason: str
+
+
+def should_analyze_background_media(
+    *,
+    enable_learning: bool,
+    group_enabled: bool,
+    self_event: bool,
+    blacklisted: bool,
+    command_like: bool,
+    force_reply: bool,
+    has_media: bool,
+) -> BackgroundMediaAnalysisDecision:
+    if not enable_learning:
+        return BackgroundMediaAnalysisDecision(False, "learning_disabled")
+    if not has_media:
+        return BackgroundMediaAnalysisDecision(False, "no_media")
+    if not group_enabled:
+        return BackgroundMediaAnalysisDecision(False, "group_disabled")
+    if self_event:
+        return BackgroundMediaAnalysisDecision(False, "self_event")
+    if blacklisted:
+        return BackgroundMediaAnalysisDecision(False, "blacklisted")
+    if force_reply:
+        return BackgroundMediaAnalysisDecision(True, "force_reply")
+    if command_like:
+        return BackgroundMediaAnalysisDecision(False, "command_like")
+    return BackgroundMediaAnalysisDecision(True, "accepted")
+
+
 async def analyze_media_parts(
     *,
     store: Any,
