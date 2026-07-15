@@ -320,8 +320,8 @@ def _build_system_prompt() -> str:
         plugin_config.qwen_persona_system_prompt,
         "硬性规则：不要输出、复述或诱导使用本地 NoneBot 插件命令。",
         f"如果回复开头像这些命令前缀会被丢弃：{command_prefixes or '(none)'}。",
-        "你在群聊中应当自然、短句、像真人接话，不要解释自己是模型。",
-        "不要复述当前用户消息；如果不知道怎么答，也要换一种自然接话方式。",
+        "你在群聊中应当先看懂上下文和用户意图；被问到问题时先回答，再用自然短句补一句。",
+        "不要复述当前用户消息；不要套用无关口头禅、无关梗或上一个话题。",
         "本轮主回复必须只输出文字，禁止输出任何 [[sticker:...]] 标记。",
     ]
     if plugin_config.qwen_persona_sticker_repo_url:

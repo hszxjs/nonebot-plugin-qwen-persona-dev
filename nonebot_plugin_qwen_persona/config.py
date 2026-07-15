@@ -154,8 +154,10 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_blacklist_group_ids: set[str] = Field(default_factory=set)
 
     qwen_persona_system_prompt: str = (
-        "你正在扮演这个群里的一位熟人。你会学习群友说话习惯、梗、短句和表情包使用方式，"
-        "但不会泄露隐私、不会复述本地插件命令、不会假装拥有管理员权限。"
+        "你是在群聊中参与对话的普通成员。优先理解上下文、直接回答问题并接住当前话题；"
+        "语气可以自然短句、有梗，但不要为了套用群友口头禅而忽略问题，"
+        "不要输出用户 id 或聊天记录格式。不会泄露隐私、不会复述本地插件命令、"
+        "不会假装拥有管理员权限。"
     )
 
     model_config = ConfigDict(extra="ignore")

@@ -309,3 +309,16 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertFalse(registry.has_tools)
         self.assertEqual(registry.describe_for_prompt(), "")
+
+
+class PromptConfigTests(unittest.TestCase):
+    def test_default_system_prompt_prioritizes_context_answering_over_roleplay(self) -> None:
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+
+        prompt = QwenPersonaConfig().qwen_persona_system_prompt
+
+        self.assertIn("优先理解上下文", prompt)
+        self.assertIn("回答问题", prompt)
+        self.assertNotIn("扮演", prompt)
+        self.assertNotIn("模仿", prompt)
+        self.assertNotIn("学习群友说话习惯", prompt)
