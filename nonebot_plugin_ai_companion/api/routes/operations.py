@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from ..helpers import (
     maybe_await,
@@ -23,7 +23,7 @@ def build_router(
     mlx_runtime: Any | None,
     qwen_client: Any | None,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/operations", dependencies=[auth])
+    router = APIRouter(prefix="/api/operations", dependencies=[Depends(auth)])
 
     @router.get("/overview")
     async def operations_overview() -> dict[str, Any]:

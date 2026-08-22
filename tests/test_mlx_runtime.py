@@ -178,9 +178,7 @@ def test_chat_sanitizes_isolated_generated_replacement_characters() -> None:
     reply = asyncio.run(runtime.chat([{"role": "user", "content": "hello"}]))
 
     assert reply == "你好呀"
-    assert any(
-        item["event"] == "generated_text_sanitized" and item["level"] == "warn" for item in runtime.logs()
-    )
+    assert any(item["event"] == "generated_text_sanitized" and item["level"] == "warn" for item in runtime.logs())
 
 
 def test_chat_rejects_mostly_corrupt_generated_replacement_characters() -> None:
@@ -299,9 +297,7 @@ def test_caption_media_uses_short_generation_profile() -> None:
         backend=backend,
     )
 
-    caption = asyncio.run(
-        runtime.caption_media({"type": "image", "data": {"url": "https://example.invalid/a.png"}})
-    )
+    caption = asyncio.run(runtime.caption_media({"type": "image", "data": {"url": "https://example.invalid/a.png"}}))
 
     assert caption == "ok"
     assert backend.generate_kwargs["max_tokens"] == 64
@@ -349,9 +345,7 @@ def test_caption_media_rejects_repetitive_generated_caption() -> None:
 
     runtime = MlxVLMRuntime(AiCompanionConfig(), backend=RepeatingCaptionBackend())
 
-    caption = asyncio.run(
-        runtime.caption_media({"type": "image", "data": {"url": "https://example.invalid/a.png"}})
-    )
+    caption = asyncio.run(runtime.caption_media({"type": "image", "data": {"url": "https://example.invalid/a.png"}}))
 
     assert caption == ""
     logs = [item for item in runtime.logs() if item["event"] == "generated_text_repetition_truncated"]

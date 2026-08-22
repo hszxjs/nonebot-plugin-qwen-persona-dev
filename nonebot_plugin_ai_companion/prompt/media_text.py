@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from ..context.media_parts import CQ_CODE_RE
 from ..providers.generation_safety import is_low_quality_generated_text
@@ -62,11 +63,7 @@ def reply_context_text_from_learning(learning: Mapping[str, Any]) -> str:
     training_text = str(learning.get("training_text") or "")
     without_sticker_tokens = STICKER_TOKEN_RE.sub("", training_text)
     media_context = clean_media_text(str(learning.get("media_context_text") or ""))
-    if (
-        not plain_text
-        and not media_context
-        and not context_text_from_training_text(without_sticker_tokens)
-    ):
+    if not plain_text and not media_context and not context_text_from_training_text(without_sticker_tokens):
         return ""
     chunks = []
     base = clean_media_text(without_sticker_tokens)
@@ -128,9 +125,7 @@ def filter_training_text_sticker_tokens(
     stickers: Iterable[Mapping[str, Any]],
 ) -> str:
     allowed_keys = {
-        str(sticker.get("key") or "").strip()
-        for sticker in stickers
-        if str(sticker.get("key") or "").strip()
+        str(sticker.get("key") or "").strip() for sticker in stickers if str(sticker.get("key") or "").strip()
     }
     base_text, sticker_keys = parse_sticker_tokens_unique(training_text)
     kept_keys = [key for key in sticker_keys if key in allowed_keys]

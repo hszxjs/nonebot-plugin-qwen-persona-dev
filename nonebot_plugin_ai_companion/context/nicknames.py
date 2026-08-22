@@ -3,6 +3,7 @@
 主语指代提取用：把 @ 的 qq 号、被引用消息的发送者解析成可读昵称，
 让 bot 知道"谁在对谁说话"。避免每条消息都打 get_group_member_info API。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -46,7 +47,7 @@ class NicknameResolver:
             )
             # 群名片优先，其次昵称
             nickname = str(info.get("card") or info.get("nickname") or "").strip() or None
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("nickname resolve timeout: group=%s user=%s", group_id, user_id)
         except (ValueError, TypeError) as exc:
             logger.debug("nickname resolve bad id: %r", exc)
@@ -76,7 +77,7 @@ class NicknameResolver:
             return_exceptions=True,
         )
         out: dict[str, str | None] = {}
-        for uid, res in zip(user_ids, results):
+        for uid, res in zip(user_ids, results, strict=False):
             out[uid] = res if isinstance(res, str) else None
         return out
 

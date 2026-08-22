@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import AiCompanionConfig, effective_mlx_model
+from ..contracts import InferenceMetric, MlxRuntimeLog, OperationProgress, RuntimeOperation, utc_timestamp
 from ..model_manager.download import HFDownloadManager, PreparedModel, is_existing_local_model, is_hf_repo_ref
 from ..model_manager.presets import MLX_MODEL_PRESETS
 from .base import ProviderCapabilities
@@ -20,8 +21,6 @@ from .generation_profiles import GenerationProfile, GenerationPurpose, profile_f
 from .generation_safety import trim_repetitive_tail
 from .mlx_backend import DefaultMlxBackend, MlxBackend
 from .registry import register
-from ..contracts import InferenceMetric, MlxRuntimeLog, OperationProgress, RuntimeOperation, utc_timestamp
-
 
 REPLACEMENT_CHAR = "\ufffd"
 
@@ -34,6 +33,7 @@ REPLACEMENT_CHAR = "\ufffd"
 )
 class MlxVLMRuntime:
     provider_name = "mlx"
+
     def __init__(
         self,
         config: AiCompanionConfig,
@@ -49,9 +49,7 @@ class MlxVLMRuntime:
         self._backend = backend or DefaultMlxBackend(warning_sink=self._append_backend_warning)
         self._download_manager = download_manager or HFDownloadManager()
         self._managed_downloads = (
-            download_manager is not None
-            or provided_backend is None
-            or isinstance(provided_backend, DefaultMlxBackend)
+            download_manager is not None or provided_backend is None or isinstance(provided_backend, DefaultMlxBackend)
         )
         self._model: Any | None = None
         self._processor: Any | None = None
@@ -289,7 +287,7 @@ class MlxVLMRuntime:
         self._state = "not_loaded"
         gc.collect()
         try:
-            import mlx.core as mx
+            import mlx.core as mx  # pyrefly: ignore[missing-import]
         except ImportError:
             return
         try:
@@ -735,11 +733,11 @@ def _output_value(output: Any | None, key: str) -> Any:
 class _SafeBPEStreamingDetokenizer:
     def __init__(self, source: Any) -> None:
         self.trim_space = bool(getattr(source, "trim_space", False))
-        self.tokenmap = list(getattr(source, "tokenmap"))
-        self._byte_decoder = dict(getattr(source, "_byte_decoder"))
+        self.tokenmap = list(source.tokenmap)
+        self._byte_decoder = dict(source._byte_decoder)
         self.reset()
 
-    def __copy__(self) -> "_SafeBPEStreamingDetokenizer":
+    def __copy__(self) -> _SafeBPEStreamingDetokenizer:
         copied = object.__new__(type(self))
         copied.trim_space = self.trim_space
         copied.tokenmap = self.tokenmap
@@ -753,7 +751,9 @@ class _SafeBPEStreamingDetokenizer:
         self.text = ""
         self.tokens: list[int] = []
 
-    def add_token(self, token: int, skip_special_token_ids: list[int] | set[int] = []) -> None:
+    def add_token(self, token: int, skip_special_token_ids: list[int] | set[int] | None = None) -> None:
+        if skip_special_token_ids is None:
+            skip_special_token_ids = set()
         if token in skip_special_token_ids:
             return
         token_id = int(token)

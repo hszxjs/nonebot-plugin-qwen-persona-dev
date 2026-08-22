@@ -41,13 +41,7 @@ def is_hf_repo_ref(model_ref: str) -> bool:
 
 
 def local_repo_dir(model_ref: str) -> str:
-    return (
-        str(model_ref or "")
-        .strip()
-        .replace("/", "--")
-        .replace("\\", "--")
-        .replace(":", "--")
-    )
+    return str(model_ref or "").strip().replace("/", "--").replace("\\", "--").replace(":", "--")
 
 
 class HFDownloadManager:
@@ -179,7 +173,7 @@ class HFDownloadManager:
                 kwargs.setdefault("disable", True)
                 super().__init__(*args, **kwargs)
 
-            def update(self, n: int | float = 1) -> Any:
+            def update(self, n: float | None = 1) -> Any:
                 result = super().update(n)
                 downloaded["bytes"] += int(n or 0)
                 progress.update(

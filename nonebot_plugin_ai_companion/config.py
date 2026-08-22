@@ -4,8 +4,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-
-
 MLX_LORA_MODULES: tuple[str, ...] = ("language", "projection", "vision_tower")
 
 
@@ -62,9 +60,7 @@ class AiCompanionConfig(BaseModel):
 
     ai_companion_min_sample_chars: int = 2
     ai_companion_max_sample_chars: int = 600
-    ai_companion_command_prefixes: list[str] = Field(
-        default_factory=lambda: ["/", "!", "！", "#", "＃", ".", "。"]
-    )
+    ai_companion_command_prefixes: list[str] = Field(default_factory=lambda: ["/", "!", "！", "#", "＃", ".", "。"])
     ai_companion_command_regexes: list[str] = Field(
         default_factory=lambda: [
             r"^\s*(/|!|！|#|＃|\.|。)\S+",
@@ -123,9 +119,7 @@ class AiCompanionConfig(BaseModel):
     ai_companion_external_corpus_limit: int = 0
     ai_companion_min_train_samples: int = 20
     ai_companion_multimodal_training_enabled: bool = True
-    ai_companion_mlx_lora_train_modules: list[str] = Field(
-        default_factory=lambda: ["language"]
-    )
+    ai_companion_mlx_lora_train_modules: list[str] = Field(default_factory=lambda: ["language"])
     ai_companion_mlx_lora_rank: int = 8
     ai_companion_mlx_lora_scale: float = 20.0
     ai_companion_mlx_lora_dropout: float = 0.0
@@ -147,7 +141,7 @@ class AiCompanionConfig(BaseModel):
     ai_companion_lora_helper_extra_body: dict[str, Any] = Field(default_factory=dict)
     ai_companion_lora_helper_system_prompt: str = (
         "你是群聊 LoRA 数据清洗助手。请保留群友自然口吻、梗和表情 token，"
-        "去掉命令、隐私、广告和重复噪声。只返回一个 JSON 对象，结构保持 {\"messages\": [...], \"metadata\": {...}}。"
+        '去掉命令、隐私、广告和重复噪声。只返回一个 JSON 对象，结构保持 {"messages": [...], "metadata": {...}}。'
     )
 
     # 对话推理后端切换：mlx = 本地 Qwen MLX，glm = GLM 在线 API（OpenAI 兼容）。
@@ -181,7 +175,7 @@ class AiCompanionConfig(BaseModel):
 
     # 合并转发消息：调 get_forward_msg API 展开内容，提取文字+图片。
     ai_companion_forward_max_messages: int = 20  # 最多展开的转发条数（防爆 token）
-    ai_companion_forward_max_chars: int = 1500   # 转发文字合并后的最大字符
+    ai_companion_forward_max_chars: int = 1500  # 转发文字合并后的最大字符
     # 图片智能控制：消息里图片超过此数则跳过识别，只处理文字（省成本/延迟）。
     ai_companion_media_image_limit: int = 5
     # 图文相关性判断：识别图片后，若与文字无关则丢弃图片描述只保留文字。
@@ -204,10 +198,7 @@ class AiCompanionConfig(BaseModel):
 
 
 def effective_mlx_model(config: AiCompanionConfig) -> str:
-    return (
-        config.ai_companion_mlx_model.strip()
-        or "mlx-community/Qwen3.5-9B-MLX-4bit"
-    )
+    return config.ai_companion_mlx_model.strip() or "mlx-community/Qwen3.5-9B-MLX-4bit"
 
 
 def effective_chat_model(config: AiCompanionConfig) -> str:

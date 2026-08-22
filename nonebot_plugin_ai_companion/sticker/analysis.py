@@ -6,15 +6,14 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from ..prompt.text import normalize_text
-from .model import sticker_to_record
 from .classifier import classify_sticker_segment
+from .model import sticker_to_record
 
 logger = logging.getLogger(__name__)
 
 
 class MediaCaptioner(Protocol):
-    async def caption_media(self, part: dict[str, Any]) -> str:
-        ...
+    async def caption_media(self, part: dict[str, Any]) -> str: ...
 
 
 @dataclass(frozen=True)

@@ -7,8 +7,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .base import BaseProvider
@@ -66,9 +67,7 @@ def register(
         )
         existing = _REGISTRY.get(name)
         if existing is not None and existing.factory is not cls:
-            raise ProviderRegistrationError(
-                f"provider {name!r} already registered by {existing.factory!r}"
-            )
+            raise ProviderRegistrationError(f"provider {name!r} already registered by {existing.factory!r}")
         _REGISTRY[name] = spec
         return cls
 

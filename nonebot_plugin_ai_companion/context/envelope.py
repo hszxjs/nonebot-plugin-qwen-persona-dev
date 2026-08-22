@@ -143,8 +143,8 @@ def _texts_from_forwarded_nodes(message: Any) -> list[str]:
         data = _get_field(segment, "data", {}) or {}
         if not isinstance(data, dict):
             continue
-        for field in ("content", "message"):
-            texts.extend(_texts_from_message(data.get(field)))
+        for text_key in ("content", "message"):
+            texts.extend(_texts_from_message(data.get(text_key)))
     return _dedupe_texts(texts)
 
 

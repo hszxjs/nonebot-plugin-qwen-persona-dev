@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 DEFAULT_LONG_TEXT_THRESHOLD = 700
 DEFAULT_MAX_CHUNK_CHARS = 650
 DEFAULT_MAX_NORMAL_LINES = 8
@@ -79,4 +78,3 @@ def _should_use_forward(
     if "```" in content:
         return True
     return len(content.splitlines()) > max(1, int(max_normal_lines))
-

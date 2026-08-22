@@ -6,7 +6,8 @@ import asyncio
 import hashlib
 import json
 import time
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from ..prompt.text import normalize_text
 from .db import PersonaDatabase
@@ -93,7 +94,7 @@ class ExternalCorpusRepo:
 
                 source_id = normalize_text(str(record.get("source_id") or ""))
                 if not source_id:
-                    source_id = hashlib.sha256(f"{source}\0{text}".encode("utf-8")).hexdigest()
+                    source_id = hashlib.sha256(f"{source}\0{text}".encode()).hexdigest()
                 metadata = record.get("metadata")
                 metadata_json = json.dumps(
                     metadata if isinstance(metadata, dict) else {},
@@ -102,7 +103,7 @@ class ExternalCorpusRepo:
                 )
                 created_at = record.get("created_at")
                 try:
-                    created_at_value = float(created_at)
+                    created_at_value = float(created_at) if created_at is not None else time.time()
                 except (TypeError, ValueError):
                     created_at_value = time.time()
                 cursor = conn.execute(

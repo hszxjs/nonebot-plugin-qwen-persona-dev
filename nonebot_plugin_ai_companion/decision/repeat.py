@@ -53,9 +53,7 @@ class RepeatTracker:
         segments = extract_segments(message)
         stickers = [
             sticker
-            for sticker in (
-                sticker_to_record(segment, sticker_segment_types) for segment in segments
-            )
+            for sticker in (sticker_to_record(segment, sticker_segment_types) for segment in segments)
             if sticker is not None
         ]
         sticker_keys = [item["key"] for item in stickers]
@@ -123,10 +121,7 @@ class ConversationPatternTracker:
         self._last_message_by_group[group_id] = current
         if previous is None or previous.user_id == current.user_id:
             return None
-        if (
-            self.max_gap_seconds > 0
-            and current.observed_at - previous.observed_at > self.max_gap_seconds
-        ):
+        if self.max_gap_seconds > 0 and current.observed_at - previous.observed_at > self.max_gap_seconds:
             return None
         return ConversationPatternCandidate(trigger=previous, response=current)
 
@@ -150,9 +145,7 @@ def build_conversation_pattern_message(
         segments = extract_segments(message)
         keys = [
             sticker["key"]
-            for sticker in (
-                sticker_to_record(segment, sticker_segment_types) for segment in segments
-            )
+            for sticker in (sticker_to_record(segment, sticker_segment_types) for segment in segments)
             if sticker is not None
         ]
     signature = build_repeat_signature(text, keys)

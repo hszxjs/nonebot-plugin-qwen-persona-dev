@@ -11,6 +11,7 @@
 - SauceNAO 配额耗尽（short_remaining/long_remaining <= 0）自动跳过。
 - 全程容错：任何异常都返回 ""，绝不阻塞主回复。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -47,6 +48,7 @@ def _debug_log(message: str) -> None:
     """追加一行诊断日志到文件，带时间戳。失败静默。"""
     try:
         from pathlib import Path
+
         path = Path(_DEBUG_LOG_PATH)
         path.parent.mkdir(parents=True, exist_ok=True)
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {message}\n"
@@ -63,8 +65,9 @@ def _downscale_for_search(image_bytes: bytes, *, max_size: int = _SEARCH_MAX_SIZ
     用线程执行避免阻塞事件循环。失败时返回原图（让搜索照常尝试）。
     """
     try:
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         img = Image.open(io.BytesIO(image_bytes))
         img = img.convert("RGB")
@@ -72,7 +75,7 @@ def _downscale_for_search(image_bytes: bytes, *, max_size: int = _SEARCH_MAX_SIZ
         if max_dim > max_size:
             ratio = max_size / max_dim
             new_size = (max(1, int(img.width * ratio)), max(1, int(img.height * ratio)))
-            img = img.resize(new_size, Image.LANCZOS)
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=_SEARCH_JPEG_QUALITY, optimize=True)
         return buf.getvalue()
@@ -114,6 +117,7 @@ _IQDB_SOURCE_HOSTS = {
     "anime-pictures": "Anime-Pictures",
 }
 
+
 # SauceNAO 配额耗尽标记（用于自动跳过）。
 class _SauceNaoQuotaExhausted(Exception):
     pass
@@ -153,13 +157,15 @@ class AnimeCaptioner:
         min_sim = float(getattr(self.config, "ai_companion_anime_min_similarity", 80.0))
         # 搜索前压缩缩放：大图（如 9MB）直接上传 SauceNAO/iqdb 会超时，且命中率低。
         search_bytes = _downscale_for_search(image_bytes)
-        _debug_log(f"SEARCH_START hash={content_hash[:8]} orig={len(image_bytes)} search={len(search_bytes)} min_sim={min_sim} saucenao={'yes' if self._saucenao_available() else 'no'}")
+        _debug_log(
+            f"SEARCH_START hash={content_hash[:8]} orig={len(image_bytes)} search={len(search_bytes)} min_sim={min_sim} saucenao={'yes' if self._saucenao_available() else 'no'}"
+        )
         try:
             caption = await asyncio.wait_for(
                 self._search_both(search_bytes, content_hash, min_sim),
                 timeout=_TOTAL_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             _debug_log(f"TIMEOUT hash={content_hash[:8]}")
             caption = ""
         except Exception as exc:  # noqa: BLE001 — captioner 必须容错，不阻塞主回复
@@ -215,9 +221,7 @@ class AnimeCaptioner:
                 return value
         return ""
 
-    async def _search_both(
-        self, image_bytes: bytes, content_hash: str, min_sim: float
-    ) -> str:
+    async def _search_both(self, image_bytes: bytes, content_hash: str, min_sim: float) -> str:
         """多路并发：SauceNAO + iqdb + GLM-V 视觉识图，合并所有非空结果。
 
         视觉模型理解任意图（角色/场景/动作），SauceNAO/iqdb 认知名角色（精确 tag），
@@ -281,17 +285,22 @@ class AnimeCaptioner:
 
         payload = {
             "model": model,
-            "messages": [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": (
-                        "这是一张二次元/动漫图片。请用一句话描述：1) 如果能认出角色，"
-                        "说角色名和出处作品（不确定就说'不确定角色'）；2) 简述画面"
-                        "（人物外观/场景/动作/有文字则读出关键文字）。不要编造。"
-                    )},
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                ],
-            }],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "这是一张二次元/动漫图片。请用一句话描述：1) 如果能认出角色，"
+                                "说角色名和出处作品（不确定就说'不确定角色'）；2) 简述画面"
+                                "（人物外观/场景/动作/有文字则读出关键文字）。不要编造。"
+                            ),
+                        },
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
             "max_tokens": 1024,
             "temperature": 0.2,
         }
@@ -307,7 +316,7 @@ class AnimeCaptioner:
                         body = response.json() if response.text else {}
                         code = str((body.get("error") or {}).get("code", ""))
                         if code == "1305" and attempt < max_retries:
-                            await asyncio.sleep(min(4.0, 1.0 * (2 ** attempt)))
+                            await asyncio.sleep(min(4.0, 1.0 * (2**attempt)))
                             continue
                         _debug_log(f"VISION_429 code={code} body={response.text[:100]!r}")
                         return ""
@@ -408,7 +417,6 @@ def _parse_iqdb_html(html: str, min_sim: float) -> str:
     # 来源：href="https://danbooru.donmai.us/posts/123" 等
     best_similarity = 0.0
     best_source = ""
-    best_source_url = ""
 
     # 提取所有图库链接 + 其所在区块的相似度
     # iqdb 页面结构：每个结果是一个 <table>，含缩略图、来源链接、相似度
@@ -418,12 +426,12 @@ def _parse_iqdb_html(html: str, min_sim: float) -> str:
         r'href="(https?://(?:www\.)?([^/]+)/(?:posts|post|index)\.php\?[^"]*|https?://(?:www\.)?([^/]+)/\d+)"',
         re.I,
     )
-    sim_pattern = re.compile(r'(\d+(?:\.\d+)?)\s*%\s*similar', re.I)
+    sim_pattern = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*similar", re.I)
 
     # 按 <table 切块，逐块找相似度和来源
     blocks = re.split(r'<table[^>]*class="[^"]*pages', html)
     if len(blocks) == 1:
-        blocks = re.split(r'<table', html)
+        blocks = re.split(r"<table", html)
     for block in blocks[1:]:
         # 跳过"your image"块（上传的原图）
         if "your image" in block.lower():
@@ -440,12 +448,10 @@ def _parse_iqdb_html(html: str, min_sim: float) -> str:
         src_match = source_pattern.search(block)
         if not src_match:
             continue
-        url = src_match.group(1)
         host = (src_match.group(2) or src_match.group(3) or "").lower()
         source_name = _IQDB_SOURCE_HOSTS.get(host, host or "未知图库")
         best_similarity = sim
         best_source = source_name
-        best_source_url = url
 
     if best_similarity < min_sim or not best_source:
         return ""
@@ -463,7 +469,11 @@ def _format_saucenao_result(result: dict[str, Any], similarity: float) -> str:
 
     # 低于 80% 的命中不可靠，标注"疑似"提示 bot 这是猜测而非确定。
     confidence = "疑似" if similarity < 80 else ""
-    prefix = f"二次元图片(相似度 {similarity:.0f}%{('，' + confidence) if confidence else ''})" if confidence else f"二次元图片(相似度 {similarity:.0f}%)"
+    prefix = (
+        f"二次元图片(相似度 {similarity:.0f}%{('，' + confidence) if confidence else ''})"
+        if confidence
+        else f"二次元图片(相似度 {similarity:.0f}%)"
+    )
     parts: list[str] = [prefix]
 
     # 角色 tag（Danbooru 风格，如 "hatsune_miku"）
@@ -475,7 +485,6 @@ def _format_saucenao_result(result: dict[str, Any], similarity: float) -> str:
             parts.append(f"角色 {'、'.join(names[:3])}")
 
     # 作品/来源（过滤掉 "original"，无意义）
-    source = data.get("source") or ""
     material = data.get("material") or ""
     if material:
         materials = [

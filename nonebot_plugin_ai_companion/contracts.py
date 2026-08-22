@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -57,11 +57,7 @@ class RuntimeOperation:
         if total_bytes is not None:
             self.total_bytes = int(total_bytes)
         if percent is not _UNSET:
-            self.percent = (
-                None
-                if percent is None
-                else round(max(0.0, min(float(percent), 100.0)), 2)
-            )
+            self.percent = None if percent is None else round(max(0.0, min(cast("float", percent), 100.0)), 2)
         elif self.downloaded_bytes is not None and self.total_bytes:
             self.percent = round(
                 max(0.0, min((self.downloaded_bytes / self.total_bytes) * 100.0, 100.0)),
@@ -118,8 +114,7 @@ class InferenceMetric:
 class MediaCaptioner(Protocol):
     """图片/表情描述器：AnimeCaptioner、MlxVLMRuntime 等实现该接口。"""
 
-    async def caption_media(self, part: dict[str, Any]) -> str:
-        ...
+    async def caption_media(self, part: dict[str, Any]) -> str: ...
 
 
 class StickerSelectionRuntime(Protocol):
@@ -131,17 +126,14 @@ class StickerSelectionRuntime(Protocol):
         *,
         media_parts: list[dict[str, Any]] | None = None,
         purpose: GenerationPurpose | str = ...,
-    ) -> str:
-        ...
+    ) -> str: ...
 
 
 class PromptTool(Protocol):
     name: str
 
-    def describe_for_prompt(self) -> str:
-        ...
+    def describe_for_prompt(self) -> str: ...
 
 
 class DownloadProgress(Protocol):
-    def update(self, **kwargs: Any) -> None:
-        ...
+    def update(self, **kwargs: Any) -> None: ...

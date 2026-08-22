@@ -182,7 +182,7 @@ def make_client(
     store: DummyStore | None = None,
     **config_overrides: object,
 ) -> TestClient:
-    from nonebot_plugin_ai_companion.admin_server import create_admin_app
+    from nonebot_plugin_ai_companion.api.server import create_admin_app
     from nonebot_plugin_ai_companion.config import AiCompanionConfig
 
     config = AiCompanionConfig(
@@ -245,10 +245,7 @@ def test_settings_payload_is_value_contract_without_ui_metadata() -> None:
     assert "override_file" in payload
     assert "sections" not in payload
     assert "fields" not in payload
-    assert (
-        payload["values"]["ai_companion_mlx_model"]
-        == "mlx-community/Qwen3.5-9B-MLX-4bit"
-    )
+    assert payload["values"]["ai_companion_mlx_model"] == "mlx-community/Qwen3.5-9B-MLX-4bit"
 
 
 def test_setting_update_rejects_unknown_and_invalid_values() -> None:
@@ -340,9 +337,7 @@ def test_plugin_logs_tail_runtime_log_file(tmp_path: Path) -> None:
         "older\n07-12 plugin ready\n07-12 handled event\n",
         encoding="utf-8",
     )
-    response = make_client(ai_companion_data_dir=str(data_dir)).get(
-        "/api/plugin/logs?tail=2&token=secret"
-    )
+    response = make_client(ai_companion_data_dir=str(data_dir)).get("/api/plugin/logs?tail=2&token=secret")
 
     assert response.status_code == 200
     assert [item["message"] for item in response.json()["logs"]] == [

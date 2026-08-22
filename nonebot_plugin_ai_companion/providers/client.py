@@ -37,9 +37,7 @@ class QwenClient:
         self.glm_backend.reconfigure(config)
         new_backend = config.ai_companion_inference_backend
         if prev_backend != new_backend:
-            logger.info(
-                "inference backend switched: %s -> %s", prev_backend, new_backend
-            )
+            logger.info("inference backend switched: %s -> %s", prev_backend, new_backend)
 
     @property
     def _active(self) -> BaseProvider:

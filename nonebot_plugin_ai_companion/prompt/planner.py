@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from .text import is_question_like, normalize_text
 
-
-IMAGE_QUESTION_RE = re.compile(
-    r"(这是什么|这是啥|什么图|看图|图里|图片|截图|表情|表情包|这个图|这图|啥意思)"
-)
+IMAGE_QUESTION_RE = re.compile(r"(这是什么|这是啥|什么图|看图|图里|图片|截图|表情|表情包|这个图|这图|啥意思)")
 STICKER_REQUEST_RE = re.compile(
     r"((发|来|给|整|丢|甩).{0,8}(表情包|表情|贴纸|贴图|sticker|meme)|"
     r"(表情包|表情|贴纸|贴图|sticker|meme).{0,8}(看看|来一个|发一个|整一个|有吗))",
@@ -18,7 +15,7 @@ STICKER_REQUEST_RE = re.compile(
 )
 
 
-class ReplyIntent(str, Enum):
+class ReplyIntent(StrEnum):
     PERSONA_TEXT = "persona_text"
     QUESTION_ANSWER = "question_answer"
     IMAGE_EXPLAIN = "image_explain"
@@ -82,8 +79,7 @@ def build_reply_plan(
     if style_memory:
         user_parts.append(
             "语气参考（只参考句长、松弛度和常见表达；不能把语气参考当作当前事实；"
-            "不要输出用户 id）：\n"
-            + "\n".join(style_memory)
+            "不要输出用户 id）：\n" + "\n".join(style_memory)
         )
     else:
         user_parts.append("语气参考：无。不要输出用户 id。")

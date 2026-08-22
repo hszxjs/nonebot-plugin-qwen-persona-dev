@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import httpx
 
@@ -57,13 +56,9 @@ async def check_media_relevance(
             )
         if r.status_code != 200:
             return True
-        content = str(
-            (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "")
-        ).strip()
+        content = str((r.json().get("choices") or [{}])[0].get("message", {}).get("content", "")).strip()
         relevant = "无关" not in content
-        logger.info(
-            "ai companion media relevance: judge=%r relevant=%s", content[:20], relevant
-        )
+        logger.info("ai companion media relevance: judge=%r relevant=%s", content[:20], relevant)
         return relevant
     except Exception as exc:  # noqa: BLE001 — 判断失败保守保留，属预期内可吞异常
         logger.debug("media relevance check skipped: %r", exc)

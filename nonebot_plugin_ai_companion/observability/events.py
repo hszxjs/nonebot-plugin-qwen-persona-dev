@@ -203,7 +203,6 @@ class InferenceEventRepo:
         }
 
 
-
 class StickerEventRepo:
     def __init__(self, db: PersonaDatabase) -> None:
         self.db = db

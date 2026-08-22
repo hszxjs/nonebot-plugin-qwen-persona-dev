@@ -16,8 +16,8 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
-from .api.server import AdminServer
 from .anime_captioner import AnimeCaptioner
+from .api.server import AdminServer
 from .bot_env import BotEnvironment
 from .chat_service import ChatService
 from .config import AiCompanionConfig, load_plugin_config, normalize_matcher_priorities
@@ -42,10 +42,7 @@ from .tools.registry import ToolRegistry
 __plugin_meta__ = PluginMetadata(
     name="AI Companion",
     description="AI 对话伙伴：本地 MLX / 在线 GLM 双推理后端，学习群友语气与表情包，支持 LoRA 训练。",
-    usage=(
-        "配置推理后端后，@机器人即可聊天。\n"
-        "命令：人格状态、人格训练（SUPERUSER）。"
-    ),
+    usage=("配置推理后端后，@机器人即可聊天。\n命令：人格状态、人格训练（SUPERUSER）。"),
     type="application",
     homepage="https://github.com/hszxjs/nonebot-plugin-qwen-persona-dev",
     supported_adapters=None,
@@ -179,21 +176,12 @@ async def _startup() -> None:
     try:
         summary_cleanup = await store.normalize_sticker_summaries_from_protocol()
         if summary_cleanup.get("updated"):
-            logger.info(
-                "ai companion sticker summary cleanup: "
-                f"updated={summary_cleanup.get('updated', 0)}"
-            )
+            logger.info(f"ai companion sticker summary cleanup: updated={summary_cleanup.get('updated', 0)}")
     except Exception as exc:
         logger.warning(f"ai companion sticker summary cleanup skipped: {exc!r}")
     try:
-        repo_cleanup = await cleanup_sticker_repo_manifest(
-            plugin_config.ai_companion_sticker_repo_dir
-        )
-        if (
-            repo_cleanup.get("removed")
-            or repo_cleanup.get("media_deleted")
-            or repo_cleanup.get("summary_updated")
-        ):
+        repo_cleanup = await cleanup_sticker_repo_manifest(plugin_config.ai_companion_sticker_repo_dir)
+        if repo_cleanup.get("removed") or repo_cleanup.get("media_deleted") or repo_cleanup.get("summary_updated"):
             logger.info(
                 "ai companion sticker repo cleanup: "
                 f"removed={repo_cleanup.get('removed', 0)}, "
@@ -203,9 +191,7 @@ async def _startup() -> None:
     except Exception as exc:
         logger.warning(f"ai companion sticker repo cleanup skipped: {exc!r}")
     try:
-        backfill = await store.backfill_stickers_from_raw_segments(
-            plugin_config.ai_companion_sticker_segment_types
-        )
+        backfill = await store.backfill_stickers_from_raw_segments(plugin_config.ai_companion_sticker_segment_types)
         if backfill.get("samples_updated") or backfill.get("stickers_upserted"):
             logger.info(
                 "ai companion sticker backfill: "
@@ -215,9 +201,7 @@ async def _startup() -> None:
     except Exception as exc:
         logger.warning(f"ai companion sticker backfill skipped: {exc!r}")
     try:
-        dedupe = await store.deduplicate_stickers_by_canonical_key(
-            plugin_config.ai_companion_sticker_segment_types
-        )
+        dedupe = await store.deduplicate_stickers_by_canonical_key(plugin_config.ai_companion_sticker_segment_types)
         if any(dedupe.values()):
             logger.info(
                 "ai companion sticker dedupe: "
@@ -235,8 +219,7 @@ async def _startup() -> None:
         try:
             load_result = await mlx_runtime.load()
             logger.info(
-                "ai companion mlx runtime load result: "
-                f"{load_result.get('status')}, model={load_result.get('model')}"
+                f"ai companion mlx runtime load result: {load_result.get('status')}, model={load_result.get('model')}"
             )
         except Exception as exc:
             logger.exception(f"ai companion mlx runtime auto load failed: {exc!r}")
@@ -316,7 +299,7 @@ persona_train = on_command(
 
 
 @persona_train.handle()
-async def _manual_train(args: Any = CommandArg()) -> None:
+async def _manual_train(args: Any = CommandArg()) -> None:  # noqa: B008
     reason = (args.extract_plain_text().strip() if args else "") or "manual"
     result = await trainer.run_training(reason=reason)
     await persona_train.finish(

@@ -18,9 +18,5 @@ class ToolRegistry:
     def describe_for_prompt(self) -> str:
         if not self.tools:
             return ""
-        descriptions = [
-            tool.describe_for_prompt().strip()
-            for tool in self.tools
-            if tool.describe_for_prompt().strip()
-        ]
+        descriptions = [tool.describe_for_prompt().strip() for tool in self.tools if tool.describe_for_prompt().strip()]
         return "\n".join(descriptions)

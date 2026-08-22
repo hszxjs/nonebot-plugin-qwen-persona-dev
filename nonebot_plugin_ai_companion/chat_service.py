@@ -15,8 +15,7 @@ from nonebot.matcher import Matcher
 
 from .bot_env import BotEnvironment
 from .config import AiCompanionConfig
-from .context.envelope import MessageContextEnvelope, build_message_context
-from .context.envelope import _at_targets_from_message
+from .context.envelope import MessageContextEnvelope, _at_targets_from_message, build_message_context
 from .context.forward import count_forward_segments, resolve_forward
 from .context.media_parts import message_to_parts
 from .context.nicknames import NicknameResolver
@@ -124,9 +123,7 @@ class ChatService:
                 )
                 if f_texts:
                     forward_block = "【合并转发】\n" + "\n".join(f_texts)
-                    plain_text = (
-                        (plain_text + "\n" + forward_block).strip() if plain_text else forward_block
-                    )
+                    plain_text = (plain_text + "\n" + forward_block).strip() if plain_text else forward_block
                     logger.info(
                         "ai companion forward expanded: texts=%d media=%d",
                         len(f_texts),
@@ -134,13 +131,11 @@ class ChatService:
                     )
             except Exception as exc:  # noqa: BLE001 — 展开失败不阻塞回复
                 logger.debug("forward expand skipped: %r", exc)
-        reply_input_text, incoming_sticker_keys, media_parts, media_context_text = (
-            await self._build_reply_input_text(message, plain_text)
+        reply_input_text, incoming_sticker_keys, media_parts, media_context_text = await self._build_reply_input_text(
+            message, plain_text
         )
         # 图片智能控制：图片超过阈值则丢弃图片识别（清空 media_context_text），只保留文字。
-        image_count = sum(
-            1 for p in media_parts if str(p.get("type") or "") in {"image", "mface", "emoji", "sticker"}
-        )
+        image_count = sum(1 for p in media_parts if str(p.get("type") or "") in {"image", "mface", "emoji", "sticker"})
         image_limit = int(self.config.ai_companion_media_image_limit)
         if image_count > image_limit and media_context_text:
             logger.info(
@@ -175,13 +170,10 @@ class ChatService:
             if reply_obj is not None:
                 reply_sender_obj = getattr(reply_obj, "sender", None)
                 if isinstance(reply_sender_obj, dict):
-                    reply_sender_id = str(
-                        reply_sender_obj.get("user_id") or reply_sender_obj.get("qq") or ""
-                    )
+                    reply_sender_id = str(reply_sender_obj.get("user_id") or reply_sender_obj.get("qq") or "")
                 elif reply_sender_obj is not None:
                     reply_sender_id = str(
-                        getattr(reply_sender_obj, "user_id", "")
-                        or getattr(reply_sender_obj, "qq", "")
+                        getattr(reply_sender_obj, "user_id", "") or getattr(reply_sender_obj, "qq", "")
                     )
             if reply_sender_id and group_id:
                 reply_nickname = await self.nickname_resolver.resolve(bot, group_id, reply_sender_id)
@@ -216,9 +208,7 @@ class ChatService:
         raw_reply = ""
         if reply_plan.intent != ReplyIntent.STICKER_REQUEST:
             try:
-                raw_reply = await self.client.chat(
-                    reply_plan.messages, media_parts=reply_plan.media_parts
-                )
+                raw_reply = await self.client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
             except Exception as exc:
                 await record_inference_event(
                     store=self.store,
@@ -238,9 +228,7 @@ class ChatService:
                 logger.warning(f"ai companion chat failed: {exc!r}")
                 return
 
-            metrics = (
-                self.client.metrics_snapshot() if hasattr(self.client, "metrics_snapshot") else {"last": None}
-            )
+            metrics = self.client.metrics_snapshot() if hasattr(self.client, "metrics_snapshot") else {"last": None}
             last_metric = metrics.get("last") if isinstance(metrics, dict) else None
             tps = last_metric.get("tps") if isinstance(last_metric, dict) else None
             await record_inference_event(
@@ -252,11 +240,7 @@ class ChatService:
                     if hasattr(self.client, "active_model_name")
                     else self.config.ai_companion_mlx_model
                 ),
-                adapter=(
-                    self.config.ai_companion_mlx_adapter_path
-                    if self.client.active_backend() == "mlx"
-                    else ""
-                ),
+                adapter=(self.config.ai_companion_mlx_adapter_path if self.client.active_backend() == "mlx" else ""),
                 started_at=inference_started,
                 finished_at=time.perf_counter(),
                 input_text=reply_input_text,
@@ -272,9 +256,7 @@ class ChatService:
         if generated_sticker_keys:
             logger.warning(
                 "ai companion generated sticker tokens ignored: "
-                + ",".join(
-                    generated_sticker_keys[: self.config.ai_companion_max_reply_stickers]
-                )
+                + ",".join(generated_sticker_keys[: self.config.ai_companion_max_reply_stickers])
             )
         clean_text = sanitize_reply(
             reply_text,
@@ -282,9 +264,7 @@ class ChatService:
             regexes=self.env.command_regex_values(),
         )
         clean_text = self.env.remove_blacklisted_reply_lines(clean_text)
-        if is_echo_reply(clean_text, reply_input_text) or is_question_deflection_reply(
-            clean_text, reply_input_text
-        ):
+        if is_echo_reply(clean_text, reply_input_text) or is_question_deflection_reply(clean_text, reply_input_text):
             clean_text = ""
         sticker_keys: list[str] = []
         if reply_plan.allow_sticker and (
@@ -458,9 +438,7 @@ class ChatService:
         merged: list[dict[str, Any]] = list(group_samples[:limit])
         seen = {self._sample_fingerprint(item) for item in merged}
         other_group_samples = [
-            item
-            for item in global_samples
-            if str(item.get("group_id") or "") != str(group_id or "")
+            item for item in global_samples if str(item.get("group_id") or "") != str(group_id or "")
         ]
         for item in other_group_samples:
             fingerprint = self._sample_fingerprint(item)
@@ -542,8 +520,7 @@ class ChatService:
             conversation_lines.append(media_context_text)
         # 诊断：记录 caption 是否进了 conversation_lines
         append_caption_debug_log(
-            f"PROMPT media_context_text={media_context_text!r} "
-            f"conversation_lines_count={len(conversation_lines)}",
+            f"PROMPT media_context_text={media_context_text!r} conversation_lines_count={len(conversation_lines)}",
             data_dir=self.config.ai_companion_data_dir,
         )
         for item in relevant_samples:
@@ -646,11 +623,7 @@ class ChatService:
         if envelope.sender_name:
             lines.append(f"说话人：{envelope.sender_name}")
         if envelope.reply_sender:
-            reply_name = (
-                envelope.reply_sender.get("nickname")
-                or envelope.reply_sender.get("user_id")
-                or "某人"
-            )
+            reply_name = envelope.reply_sender.get("nickname") or envelope.reply_sender.get("user_id") or "某人"
             for text in envelope.quoted_texts:
                 lines.append(f"回复{reply_name}的消息：{text}")
             if not envelope.quoted_texts:
@@ -682,9 +655,7 @@ class ChatService:
             return
         if self.background_media_tasks:
             return
-        task = asyncio.create_task(
-            self._run_background_media_analysis(ids=dict(ids), media_parts=image_parts)
-        )
+        task = asyncio.create_task(self._run_background_media_analysis(ids=dict(ids), media_parts=image_parts))
         self.background_media_tasks.add(task)
 
         def _discard(done: asyncio.Task[None]) -> None:
@@ -758,8 +729,7 @@ class ChatService:
                 return True
             if time.monotonic() >= deadline:
                 logger.warning(
-                    "ai companion background media analysis skipped: "
-                    f"generation busy active={active}, queued={queued}"
+                    f"ai companion background media analysis skipped: generation busy active={active}, queued={queued}"
                 )
                 return False
             await asyncio.sleep(1.0)
@@ -843,9 +813,7 @@ class ChatService:
             regexes=self.env.command_regex_values(),
         )
         reply_text = self.env.remove_blacklisted_reply_lines(reply_text)
-        sticker_keys = [
-            str(key) for key in pattern.get("response_sticker_keys", []) if str(key).strip()
-        ]
+        sticker_keys = [str(key) for key in pattern.get("response_sticker_keys", []) if str(key).strip()]
         if not reply_text and not sticker_keys:
             return False
 

@@ -72,9 +72,7 @@ def test_qwen35_hotfix_preserves_converted_mlx_norm_weights() -> None:
     module = types.SimpleNamespace(Model=BrokenModel)
 
     assert _patch_qwen35_norm_sanitize_module(module, identity_sanitize_key)
-    out = BrokenModel().sanitize(
-        {"language_model.model.layers.0.input_layernorm.weight": FakeArray(0.0)}
-    )
+    out = BrokenModel().sanitize({"language_model.model.layers.0.input_layernorm.weight": FakeArray(0.0)})
 
     assert out["language_model.model.layers.0.input_layernorm.weight"].value == 0.0
 

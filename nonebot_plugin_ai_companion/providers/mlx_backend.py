@@ -3,8 +3,9 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +28,7 @@ class MlxBackend(Protocol):
         *,
         adapter_path: str | None,
         trust_remote_code: bool,
-    ) -> tuple[Any, Any]:
-        ...
+    ) -> tuple[Any, Any]: ...
 
     def apply_chat_template(
         self,
@@ -37,8 +37,7 @@ class MlxBackend(Protocol):
         messages: list[dict[str, Any]],
         *,
         num_images: int,
-    ) -> str:
-        ...
+    ) -> str: ...
 
     def generate(
         self,
@@ -52,8 +51,7 @@ class MlxBackend(Protocol):
         top_p: float,
         repetition_penalty: float,
         repetition_context_size: int,
-    ) -> Any:
-        ...
+    ) -> Any: ...
 
 
 class DefaultMlxBackend:
@@ -200,6 +198,7 @@ def _patch_qwen35_norm_sanitize_module(model_module: Any, sanitize_key: Callable
             and getattr(value, "ndim", None) == 1
         }
         sanitized = sanitize(self, weights)
+        assert sanitized is not None
         for key in mlx_norm_keys:
             value = sanitized.get(key)
             if getattr(value, "ndim", None) == 1:
@@ -207,7 +206,8 @@ def _patch_qwen35_norm_sanitize_module(model_module: Any, sanitize_key: Callable
         return sanitized
 
     setattr(patched_sanitize, _QWEN35_SANITIZE_HOTFIX_ATTR, True)
-    setattr(model_cls, "sanitize", patched_sanitize)
+    assert model_cls is not None
+    model_cls.sanitize = patched_sanitize
     return True
 
 

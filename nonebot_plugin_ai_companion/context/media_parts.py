@@ -63,13 +63,7 @@ def _parse_cq_params(raw: str) -> dict[str, str]:
 
 
 def _cq_unescape(value: str) -> str:
-    return (
-        str(value)
-        .replace("&#44;", ",")
-        .replace("&#91;", "[")
-        .replace("&#93;", "]")
-        .replace("&amp;", "&")
-    )
+    return str(value).replace("&#44;", ",").replace("&#91;", "[").replace("&#93;", "]").replace("&amp;", "&")
 
 
 def _segment_to_dict(segment: Any) -> dict[str, Any]:

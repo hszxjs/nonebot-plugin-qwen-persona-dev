@@ -4,9 +4,7 @@ import json
 from pathlib import Path
 
 
-async def test_export_sft_dataset_filters_self_and_generated_chat_log_outputs(
-    tmp_path: Path, persona_store
-) -> None:
+async def test_export_sft_dataset_filters_self_and_generated_chat_log_outputs(tmp_path: Path, persona_store) -> None:
     await persona_store.record_sample(
         platform="qq",
         user_id="10001",
@@ -72,9 +70,7 @@ async def test_export_sft_dataset_filters_self_and_generated_chat_log_outputs(
     assert all("10001:" not in prompt for prompt in user_prompts)
 
 
-async def test_export_sft_dataset_skips_low_quality_media_asset_answers(
-    tmp_path: Path, persona_store
-) -> None:
+async def test_export_sft_dataset_skips_low_quality_media_asset_answers(tmp_path: Path, persona_store) -> None:
     await persona_store.record_media_asset(
         source="sticker",
         source_key="bad",
@@ -107,9 +103,7 @@ async def test_export_sft_dataset_skips_low_quality_media_asset_answers(
     assert rows[0]["messages"][-1]["content"] == "一个动漫角色惊讶地张大嘴巴。"
 
 
-async def test_export_sft_dataset_filters_external_and_media_chat_log_prefixes(
-    tmp_path: Path, persona_store
-) -> None:
+async def test_export_sft_dataset_filters_external_and_media_chat_log_prefixes(tmp_path: Path, persona_store) -> None:
     await persona_store.import_external_corpus_samples(
         source="external",
         records=[

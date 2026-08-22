@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ...runtime_config import (
@@ -58,7 +59,7 @@ def build_router(
     auth,
     save_callback: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> APIRouter:
-    router = APIRouter(prefix="/api/settings", dependencies=[auth])
+    router = APIRouter(prefix="/api/settings", dependencies=[Depends(auth)])
 
     @router.get("")
     async def settings() -> dict[str, Any]:
@@ -67,15 +68,13 @@ def build_router(
             "override_file": str(admin_config_path(config)),
         }
 
-    @router.patch("/fields/{field_name}")
-    async def update_setting(field_name: str, request: Request) -> dict[str, Any]:
+    @router.patch("/fields/{field_name}", response_model=None)
+    async def update_setting(field_name: str, request: Request) -> dict[str, Any] | JSONResponse:
         payload = await request.json()
         if not isinstance(payload, dict) or "value" not in payload:
             raise HTTPException(status_code=400, detail="value is required")
         value = _validate_setting_value(config, field_name, payload["value"])
-        requires_confirmation = (
-            field_name in RELOAD_SENSITIVE_FIELDS or field_name in DANGER_FIELDS
-        )
+        requires_confirmation = field_name in RELOAD_SENSITIVE_FIELDS or field_name in DANGER_FIELDS
         if requires_confirmation and not bool(payload.get("confirmed")):
             return JSONResponse(
                 {

@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from ..memory.corpus import external_corpus_rows
 from ..memory.db import PersonaDatabase
 from ..prompt.media_text import context_text_from_sample
-from ..prompt.text import is_command_like, is_training_noise, normalize_text
+from ..prompt.text import normalize_text
 from ..providers.generation_safety import is_low_quality_generated_text
 from ..sticker.assets import media_asset_rows
 
@@ -35,18 +36,18 @@ def _is_excluded_dataset_row(
         return True
     return False
 
+
 def _strip_chat_log_prefix(text: str) -> str:
     return CHAT_LOG_PREFIX_RE.sub("", str(text or "")).strip()
+
 
 def _has_chat_log_prefix(text: str) -> bool:
     return bool(CHAT_LOG_PREFIX_RE.match(str(text or "")))
 
+
 def _sanitize_metadata_chat_log_prefixes(value: Any) -> Any:
     if isinstance(value, dict):
-        return {
-            str(key): _sanitize_metadata_chat_log_prefixes(item)
-            for key, item in value.items()
-        }
+        return {str(key): _sanitize_metadata_chat_log_prefixes(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_sanitize_metadata_chat_log_prefixes(item) for item in value]
     if isinstance(value, str):
@@ -168,11 +169,15 @@ class SftDatasetExporter:
                 ):
                     continue
                 assistant_text = _strip_chat_log_prefix(assistant_text)
-                if not assistant_text or self.db.is_noise_text(
-                    assistant_text,
-                    command_prefixes=command_prefixes,
-                    command_regexes=command_regexes,
-                ) or is_low_quality_generated_text(assistant_text):
+                if (
+                    not assistant_text
+                    or self.db.is_noise_text(
+                        assistant_text,
+                        command_prefixes=command_prefixes,
+                        command_regexes=command_regexes,
+                    )
+                    or is_low_quality_generated_text(assistant_text)
+                ):
                     continue
                 record = {
                     "images": [],
@@ -218,9 +223,7 @@ class SftDatasetExporter:
                     text = _strip_chat_log_prefix(raw_text)
                     if not text:
                         continue
-                    metadata = _sanitize_metadata_chat_log_prefixes(
-                        self.db.json_object(row.get("metadata_json"))
-                    )
+                    metadata = _sanitize_metadata_chat_log_prefixes(self.db.json_object(row.get("metadata_json")))
                     user_prompt = normalize_text(str(metadata.get("user_prompt") or ""))
                     user_content = (
                         "下面是外部公开社区语境，请按这种口吻自然接话：\n" + user_prompt
@@ -264,12 +267,8 @@ class SftDatasetExporter:
                     ):
                         continue
                     answer = _strip_chat_log_prefix(raw_answer)
-                    prompt = _strip_chat_log_prefix(
-                        normalize_text(str(row.get("prompt") or ""))
-                    )
-                    metadata = _sanitize_metadata_chat_log_prefixes(
-                        self.db.json_object(row.get("metadata_json"))
-                    )
+                    prompt = _strip_chat_log_prefix(normalize_text(str(row.get("prompt") or "")))
+                    metadata = _sanitize_metadata_chat_log_prefixes(self.db.json_object(row.get("metadata_json")))
                     record = {
                         "images": [uri],
                         "messages": [

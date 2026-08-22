@@ -16,6 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from ..config import AiCompanionConfig, effective_chat_model, normalized_lora_modules
+
 if TYPE_CHECKING:
     from ..store import PersonaStore
 
@@ -125,9 +126,7 @@ class PersonaTrainer:
             self._progress["dataset_path"] = dataset_path
         if output_dir is not None:
             self._progress["output_dir"] = output_dir
-        self._append_progress_log(
-            self._progress_stage_log(stage=stage, status=status)
-        )
+        self._append_progress_log(self._progress_stage_log(stage=stage, status=status))
         if log:
             self._append_progress_log(log)
 
@@ -205,18 +204,13 @@ class PersonaTrainer:
             command_prefixes=self.config.ai_companion_command_prefixes,
             command_regexes=self.config.ai_companion_command_regexes,
             external_limit=external_limit,
-            include_multimodal_assets=bool(
-                self.config.ai_companion_multimodal_training_enabled
-            ),
+            include_multimodal_assets=bool(self.config.ai_companion_multimodal_training_enabled),
             excluded_user_ids=self.config.ai_companion_dataset_excluded_user_ids,
         )
         self._set_progress(stage="dataset_exported", sample_count=sample_count)
 
         if sample_count < self.config.ai_companion_min_train_samples:
-            log = (
-                f"sample_count={sample_count}, "
-                f"min_train_samples={self.config.ai_companion_min_train_samples}"
-            )
+            log = f"sample_count={sample_count}, min_train_samples={self.config.ai_companion_min_train_samples}"
             await self.store.begin_training_run(
                 run_id=run_id,
                 reason=reason,
@@ -313,9 +307,7 @@ class PersonaTrainer:
         raw_dataset_path: Path,
         run_id: str,
     ) -> tuple[Path, str]:
-        api_url = self._normalize_lora_helper_api_url(
-            self.config.ai_companion_lora_helper_api_url
-        )
+        api_url = self._normalize_lora_helper_api_url(self.config.ai_companion_lora_helper_api_url)
         if not api_url:
             return raw_dataset_path, ""
 
@@ -329,9 +321,10 @@ class PersonaTrainer:
         last_logged_attempt = 0
         assisted_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with raw_dataset_path.open("r", encoding="utf-8") as source, assisted_path.open(
-            "w", encoding="utf-8", newline="\n"
-        ) as target:
+        with (
+            raw_dataset_path.open("r", encoding="utf-8") as source,
+            assisted_path.open("w", encoding="utf-8", newline="\n") as target,
+        ):
             for line in source:
                 if not line.strip():
                     continue
@@ -345,7 +338,8 @@ class PersonaTrainer:
                     if skipped <= 3:
                         logger.warning(
                             "lora_helper: skip malformed dataset line %d: %r",
-                            total, str(exc),
+                            total,
+                            str(exc),
                         )
                     continue
                 if limit > 0 and attempted >= limit:
@@ -369,10 +363,7 @@ class PersonaTrainer:
                     fallback += 1
                     target.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
                     if fallback <= 3:
-                        message = (
-                            "ai companion lora helper fallback: "
-                            f"{self._format_lora_helper_error(exc)}"
-                        )
+                        message = f"ai companion lora helper fallback: {self._format_lora_helper_error(exc)}"
                         logger.warning(message)
                         self._append_progress_log(message)
                 if attempted - last_logged_attempt >= 10:
@@ -424,10 +415,7 @@ class PersonaTrainer:
             body = exc.response.text.replace("\n", " ").strip()
             if len(body) > 500:
                 body = body[:497] + "..."
-            return (
-                f"HTTPStatusError(status_code={exc.response.status_code}, "
-                f"url={exc.request.url}, body={body!r})"
-            )
+            return f"HTTPStatusError(status_code={exc.response.status_code}, url={exc.request.url}, body={body!r})"
         return repr(exc)
 
     @staticmethod
@@ -438,17 +426,12 @@ class PersonaTrainer:
         processed: int,
         fallback: int,
     ) -> str:
-        return (
-            "[lora_helper_progress] "
-            f"read={total} attempted={attempted} processed={processed} fallback={fallback}"
-        )
+        return f"[lora_helper_progress] read={total} attempted={attempted} processed={processed} fallback={fallback}"
 
     async def _assist_lora_record(self, *, api_url: str, record: dict[str, Any]) -> dict[str, Any]:
         headers = {"Content-Type": "application/json"}
         if self.config.ai_companion_lora_helper_api_key.strip():
-            headers["Authorization"] = (
-                f"Bearer {self.config.ai_companion_lora_helper_api_key.strip()}"
-            )
+            headers["Authorization"] = f"Bearer {self.config.ai_companion_lora_helper_api_key.strip()}"
 
         extra_body = dict(self.config.ai_companion_lora_helper_extra_body)
         # response_format 对 GLM 系列（含 glm-5.2）的 OpenAI 兼容端点是可选的，
@@ -500,13 +483,13 @@ class PersonaTrainer:
                     last_exc = exc
                     if attempt >= max_retries:
                         raise
-                    await asyncio.sleep(min(8.0, 0.5 * (2 ** attempt)))
+                    await asyncio.sleep(min(8.0, 0.5 * (2**attempt)))
                 except httpx.TransportError as exc:
                     # 网络层错误（连接/超时/读中断）通常可重试。
                     last_exc = exc
                     if attempt >= max_retries:
                         raise
-                    await asyncio.sleep(min(8.0, 0.5 * (2 ** attempt)))
+                    await asyncio.sleep(min(8.0, 0.5 * (2**attempt)))
             else:
                 # 理论上不会到达，保险起见。
                 raise last_exc  # type: ignore[misc]
@@ -579,9 +562,7 @@ class PersonaTrainer:
         sample_count: int,
     ) -> tuple[str, str]:
         if importlib.util.find_spec("mlx_vlm") is None:
-            log = (
-                "mlx-vlm is not installed; install project dependencies before MLX LoRA training."
-            )
+            log = "mlx-vlm is not installed; install project dependencies before MLX LoRA training."
             return "skipped_missing_mlx_vlm", log
 
         output_dir = Path(str(mapping["output_dir"]))
@@ -634,9 +615,7 @@ class PersonaTrainer:
         warnings: list[str] = []
         if "vision_tower" in modules:
             command.append("--train-vision")
-            warnings.append(
-                "vision_tower training is enabled; this can exceed 16GB unified memory."
-            )
+            warnings.append("vision_tower training is enabled; this can exceed 16GB unified memory.")
         if "projection" in modules:
             warnings.append(
                 "projection module selection is recorded for review; mlx-vlm CLI trains language LoRA and optionally unfreezes the vision stack."

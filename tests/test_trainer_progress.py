@@ -78,10 +78,7 @@ def test_lora_helper_limit_bounds_attempts_not_successes(tmp_path: Path) -> None
         pass
 
     raw_dataset_path = tmp_path / "raw.jsonl"
-    records = [
-        {"messages": [{"role": "user", "content": f"u-{index}"}]}
-        for index in range(5)
-    ]
+    records = [{"messages": [{"role": "user", "content": f"u-{index}"}]} for index in range(5)]
     raw_dataset_path.write_text(
         "\n".join(json.dumps(record) for record in records) + "\n",
         encoding="utf-8",
@@ -142,12 +139,9 @@ def test_lora_helper_base_v1_url_posts_to_chat_completions_endpoint(tmp_path: Pa
         )
     )
 
-    assert (
-        trainer.helper_urls
-        == [
-            "https://dm-fox.rjj.cc/codex/v1/chat/completions",
-        ]
-    )
+    assert trainer.helper_urls == [
+        "https://dm-fox.rjj.cc/codex/v1/chat/completions",
+    ]
 
 
 def test_lora_helper_fallback_log_includes_http_error_body(tmp_path: Path) -> None:

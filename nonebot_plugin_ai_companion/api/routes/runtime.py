@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..helpers import maybe_await, runtime_summary
 
 
 def build_router(*, config: Any, auth, mlx_runtime: Any | None, qwen_client: Any | None) -> APIRouter:
-    router = APIRouter(prefix="/api/runtime", dependencies=[auth])
+    router = APIRouter(prefix="/api/runtime", dependencies=[Depends(auth)])
 
     async def current_status() -> dict[str, Any]:
         if qwen_client and hasattr(qwen_client, "status_snapshot"):
@@ -27,9 +27,7 @@ def build_router(*, config: Any, auth, mlx_runtime: Any | None, qwen_client: Any
     @router.get("/logs")
     async def runtime_logs(tail: int = 300) -> dict[str, Any]:
         logs = (
-            mlx_runtime.logs(tail=max(0, min(int(tail), 1000)))
-            if mlx_runtime and hasattr(mlx_runtime, "logs")
-            else []
+            mlx_runtime.logs(tail=max(0, min(int(tail), 1000))) if mlx_runtime and hasattr(mlx_runtime, "logs") else []
         )
         return {"logs": logs}
 

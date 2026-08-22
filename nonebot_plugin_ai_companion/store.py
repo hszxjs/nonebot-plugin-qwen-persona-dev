@@ -7,8 +7,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .finetune.dataset import SftDatasetExporter
 from .finetune.runs import TrainingRunRepo
@@ -133,12 +134,8 @@ class PersonaStore:
     async def recent_samples(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
         return await self.samples.recent_samples(group_id=group_id, limit=limit)
 
-    async def search_context_samples(
-        self, *, group_id: str | None, query: str, limit: int
-    ) -> list[dict[str, Any]]:
-        return await self.samples.search_context_samples(
-            group_id=group_id, query=query, limit=limit
-        )
+    async def search_context_samples(self, *, group_id: str | None, query: str, limit: int) -> list[dict[str, Any]]:
+        return await self.samples.search_context_samples(group_id=group_id, query=query, limit=limit)
 
     # ---- 表情域：资产与表情 ----
     async def record_media_asset(self, **kwargs: Any) -> dict[str, int]:
@@ -147,12 +144,8 @@ class PersonaStore:
     async def record_sticker_asset(self, **kwargs: Any) -> dict[str, int]:
         return await self.stickers.record_sticker_asset(**kwargs)
 
-    async def search_media_assets(
-        self, *, group_id: str | None, query: str, limit: int
-    ) -> list[dict[str, Any]]:
-        return await self.stickers.search_media_assets(
-            group_id=group_id, query=query, limit=limit
-        )
+    async def search_media_assets(self, *, group_id: str | None, query: str, limit: int) -> list[dict[str, Any]]:
+        return await self.stickers.search_media_assets(group_id=group_id, query=query, limit=limit)
 
     async def top_stickers(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
         return await self.stickers.top_stickers(group_id=group_id, limit=limit)
@@ -175,17 +168,13 @@ class PersonaStore:
     async def normalize_sticker_summaries_from_protocol(self) -> dict[str, int]:
         return await self.stickers.normalize_sticker_summaries_from_protocol()
 
-    async def deduplicate_stickers_by_canonical_key(
-        self, sticker_segment_types: Iterable[str]
-    ) -> dict[str, int]:
+    async def deduplicate_stickers_by_canonical_key(self, sticker_segment_types: Iterable[str]) -> dict[str, int]:
         return await self.stickers.deduplicate_stickers_by_canonical_key(sticker_segment_types)
 
     async def cleanup_legacy_media_artifacts(self) -> dict[str, int]:
         return await self.stickers.cleanup_legacy_media_artifacts()
 
-    async def backfill_stickers_from_raw_segments(
-        self, sticker_segment_types: Iterable[str]
-    ) -> dict[str, int]:
+    async def backfill_stickers_from_raw_segments(self, sticker_segment_types: Iterable[str]) -> dict[str, int]:
         return await self.stickers.backfill_stickers_from_raw_segments(sticker_segment_types)
 
     # ---- 微调域：数据集与运行 ----

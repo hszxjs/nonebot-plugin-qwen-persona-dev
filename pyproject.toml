@@ -50,6 +50,9 @@ exclude = ["webui", "webui_static", "data"]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ignore = [
     "E501",  # 长行留给 formatter 处理，存量代码里有长字符串提示词
+    "SIM102",  # 存量嵌套 if 表达的是决策层级，强并会降低可读性
+    "SIM103",  # 显式 return True/False 的分支带注释语义，不内联
+    "SIM108",  # 多行 if/else 比 ternary 更可读（含中文注释的存量分支）
     "SIM117",  # 嵌套 with 在 sqlite 连接管理里更清晰
 ]
 

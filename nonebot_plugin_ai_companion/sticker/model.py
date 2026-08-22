@@ -4,7 +4,8 @@ import hashlib
 import json
 import logging
 import re
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 from urllib.parse import urlparse
 
 from .classifier import (
@@ -75,11 +76,7 @@ def _stable_sticker_key(segment_type: str, data: dict[str, Any]) -> str:
         if QQ_FILE_DIGEST_RE.fullmatch(file_stem):
             basis = {"qq_file_digest": file_stem.lower()}
     if not basis:
-        basis = {
-            field: str(data[field])
-            for field in STICKER_KEY_FIELDS
-            if field in data and data[field] is not None
-        }
+        basis = {field: str(data[field]) for field in STICKER_KEY_FIELDS if field in data and data[field] is not None}
     if not basis:
         basis = {key: str(value) for key, value in sorted(data.items()) if value is not None}
     payload = json.dumps(
@@ -232,11 +229,7 @@ def build_onebot_v11_sticker_segment(message_segment: Any, record: dict[str, Any
         }
         return message_segment("mface", segment_data) if segment_data else None
     if segment_type in {"emoji", "sticker"}:
-        segment_data = {
-            str(item): str(value)
-            for item, value in data.items()
-            if value is not None
-        }
+        segment_data = {str(item): str(value) for item, value in data.items() if value is not None}
         return message_segment(segment_type, segment_data) if segment_data else None
     return None
 

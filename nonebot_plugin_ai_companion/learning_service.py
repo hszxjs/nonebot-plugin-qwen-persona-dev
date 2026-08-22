@@ -75,9 +75,7 @@ class LearningService:
         if self.env.is_command_message(plain_text) or self.env.is_command_message(raw_message_text):
             self.conversation_pattern_tracker.reset(ids["group_id"])
             return
-        if self.env.is_blacklisted(
-            ids["user_id"], ids["group_id"], plain_text + "\n" + raw_message_text
-        ):
+        if self.env.is_blacklisted(ids["user_id"], ids["group_id"], plain_text + "\n" + raw_message_text):
             self.conversation_pattern_tracker.reset(ids["group_id"])
             return
 
@@ -135,9 +133,7 @@ class LearningService:
             sticker_segment_types=self.config.ai_companion_sticker_segment_types,
             plain_text=plain_text,
             sticker_keys=[
-                str(sticker.get("key") or "").strip()
-                for sticker in stickers
-                if str(sticker.get("key") or "").strip()
+                str(sticker.get("key") or "").strip() for sticker in stickers if str(sticker.get("key") or "").strip()
             ],
         )
         if candidate is None:

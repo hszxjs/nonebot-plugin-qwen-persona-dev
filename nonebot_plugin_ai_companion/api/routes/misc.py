@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from ..helpers import file_log_entries, maybe_await, plugin_log_path, runtime_summary
 
@@ -21,7 +21,7 @@ def build_router(
     mlx_runtime: Any | None,
     static_root: Path,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api", dependencies=[auth])
+    router = APIRouter(prefix="/api", dependencies=[Depends(auth)])
 
     @router.get("/inference-events")
     async def inference_events(limit: int = 300, offset: int = 0) -> dict[str, Any]:
@@ -45,9 +45,7 @@ def build_router(
             if mlx_runtime and hasattr(mlx_runtime, "status_snapshot")
             else {"state": "mlx_runtime_unavailable", "healthy": False}
         )
-        runtime_logs = (
-            mlx_runtime.logs(tail=300) if mlx_runtime and hasattr(mlx_runtime, "logs") else []
-        )
+        runtime_logs = mlx_runtime.logs(tail=300) if mlx_runtime and hasattr(mlx_runtime, "logs") else []
         from ...runtime_config import admin_config_path, config_to_dict
 
         return {

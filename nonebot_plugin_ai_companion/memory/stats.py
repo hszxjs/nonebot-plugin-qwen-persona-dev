@@ -18,6 +18,7 @@ def _mask_group_id(group_id: Any) -> str:
         return "*" * len(value)
     return f"{value[:2]}...{value[-2:]}"
 
+
 class StatsRepo:
     def __init__(self, db: PersonaDatabase) -> None:
         self.db = db
@@ -65,32 +66,22 @@ class StatsRepo:
         with self.db.connection() as conn:
             total_samples = int(conn.execute("SELECT COUNT(*) FROM chat_samples").fetchone()[0])
             trainable_samples = int(
-                conn.execute(
-                    "SELECT COUNT(*) FROM chat_samples WHERE training_text != ''"
-                ).fetchone()[0]
+                conn.execute("SELECT COUNT(*) FROM chat_samples WHERE training_text != ''").fetchone()[0]
             )
             stickers = int(conn.execute("SELECT COUNT(*) FROM stickers").fetchone()[0])
-            external_corpus_samples = int(
-                conn.execute("SELECT COUNT(*) FROM external_corpus_samples").fetchone()[0]
-            )
-            media_assets = int(
-                conn.execute("SELECT COUNT(*) FROM media_assets").fetchone()[0]
-            )
+            external_corpus_samples = int(conn.execute("SELECT COUNT(*) FROM external_corpus_samples").fetchone()[0])
+            media_assets = int(conn.execute("SELECT COUNT(*) FROM media_assets").fetchone()[0])
             training_runs = int(conn.execute("SELECT COUNT(*) FROM training_runs").fetchone()[0])
             groups = int(
-                conn.execute(
-                    "SELECT COUNT(DISTINCT group_id) FROM chat_samples WHERE group_id IS NOT NULL"
-                ).fetchone()[0]
+                conn.execute("SELECT COUNT(DISTINCT group_id) FROM chat_samples WHERE group_id IS NOT NULL").fetchone()[
+                    0
+                ]
             )
             users = int(
-                conn.execute(
-                    "SELECT COUNT(DISTINCT user_id) FROM chat_samples WHERE user_id IS NOT NULL"
-                ).fetchone()[0]
+                conn.execute("SELECT COUNT(DISTINCT user_id) FROM chat_samples WHERE user_id IS NOT NULL").fetchone()[0]
             )
             samples_with_stickers = int(
-                conn.execute(
-                    "SELECT COUNT(*) FROM chat_samples WHERE sticker_keys != '[]'"
-                ).fetchone()[0]
+                conn.execute("SELECT COUNT(*) FROM chat_samples WHERE sticker_keys != '[]'").fetchone()[0]
             )
             today_start = time.mktime(
                 (
@@ -140,11 +131,7 @@ class StatsRepo:
                 LIMIT 1
                 """
             ).fetchone()
-            pending_since = (
-                float(last_success["finished_at"] or last_success["started_at"])
-                if last_success
-                else 0.0
-            )
+            pending_since = float(last_success["finished_at"] or last_success["started_at"]) if last_success else 0.0
             pending_samples = int(
                 conn.execute(
                     """
@@ -211,12 +198,10 @@ class StatsRepo:
                 "pending_since": pending_since or None,
             },
             "charts": {
-                "learning_trend": [
-                    {"label": label, "count": count} for label, count in buckets.items()
-                ],
+                "learning_trend": [{"label": label, "count": count} for label, count in buckets.items()],
                 "group_contribution": [
                     {
-                        "label": self._mask_group_id(row["group_id"]),
+                        "label": _mask_group_id(row["group_id"]),
                         "count": int(row["count"]),
                     }
                     for row in group_rows

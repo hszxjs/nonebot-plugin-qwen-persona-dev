@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from ..contracts import StickerSelectionRuntime
-from ..providers.generation_profiles import GenerationPurpose
 from ..prompt.planner import ReplyIntent
+from ..providers.generation_profiles import GenerationPurpose
 from .classifier import is_sendable_sticker_record
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,8 @@ async def select_reply_sticker(
     usable_candidates = [
         item
         for item in candidates
-        if str(item.get("key") or "").strip() and is_sendable_sticker_record(item)
+        if str(item.get("key") or "").strip()
+        and is_sendable_sticker_record(item)
         and _sticker_count(item) >= min_count_value
     ]
     if not usable_candidates:
@@ -172,10 +173,7 @@ def _selector_messages(
     return [
         {
             "role": "system",
-            "content": (
-                "你是群聊表情选择器。只能选择候选 id，不能发明、补全或改写 id。"
-                "如果没有合适表情，返回 NONE。"
-            ),
+            "content": ("你是群聊表情选择器。只能选择候选 id，不能发明、补全或改写 id。如果没有合适表情，返回 NONE。"),
         },
         {
             "role": "user",

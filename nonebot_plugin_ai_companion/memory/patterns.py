@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from .db import PersonaDatabase
 
@@ -74,6 +75,7 @@ class ConversationPatternRepo:
                     now,
                 ),
             )
+
     async def get_conversation_pattern(
         self,
         *,
@@ -113,9 +115,7 @@ class ConversationPatternRepo:
         if not row:
             return None
         item = dict(row)
-        item["response_sticker_keys"] = self.db.json_list(
-            item.get("response_sticker_keys")
-        )
+        item["response_sticker_keys"] = self.db.json_list(item.get("response_sticker_keys"))
         return item
 
     async def cleanup_empty_patterns(self) -> int:
@@ -142,9 +142,7 @@ class ConversationPatternRepo:
         def _sync() -> int:
             self.db.ensure_schema()
             with self.db.connection() as conn:
-                rows = conn.execute(
-                    "SELECT rowid, trigger_text, response_text FROM conversation_patterns"
-                ).fetchall()
+                rows = conn.execute("SELECT rowid, trigger_text, response_text FROM conversation_patterns").fetchall()
                 ids = [
                     int(row["rowid"])
                     for row in rows

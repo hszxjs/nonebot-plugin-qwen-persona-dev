@@ -15,10 +15,7 @@ logger = logging.getLogger(__name__)
 async def run_scheduled_training(trainer: PersonaTrainer) -> None:
     try:
         result = await trainer.run_training(reason="scheduled")
-        logger.info(
-            "ai companion scheduled training finished: "
-            f"{result.status}, samples={result.sample_count}"
-        )
+        logger.info(f"ai companion scheduled training finished: {result.status}, samples={result.sample_count}")
     except Exception as exc:
         logger.exception(f"ai companion scheduled training failed: {exc!r}")
 

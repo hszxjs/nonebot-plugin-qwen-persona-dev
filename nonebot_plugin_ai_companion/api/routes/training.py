@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..helpers import log_tail_entries, training_operation, training_running
 
@@ -14,14 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 def build_router(*, config: Any, auth, trainer: Any | None) -> APIRouter:
-    router = APIRouter(prefix="/api/training", dependencies=[auth])
+    router = APIRouter(prefix="/api/training", dependencies=[Depends(auth)])
 
     @router.get("/logs")
     async def training_logs(tail: int = 300) -> dict[str, Any]:
         progress = (
-            trainer.progress_snapshot()
-            if trainer is not None and hasattr(trainer, "progress_snapshot")
-            else None
+            trainer.progress_snapshot() if trainer is not None and hasattr(trainer, "progress_snapshot") else None
         )
         logs = log_tail_entries(str((progress or {}).get("log_tail", "")), stream="train")
         limit = max(0, min(int(tail), 1000))
@@ -62,11 +60,7 @@ def build_router(*, config: Any, auth, trainer: Any | None) -> APIRouter:
         action = "run_full_external" if full_external_corpus else "run"
         return {
             "action": action,
-            "message": (
-                "start full external corpus training"
-                if full_external_corpus
-                else "start training"
-            ),
+            "message": ("start full external corpus training" if full_external_corpus else "start training"),
             "training": training_operation(trainer),
         }
 

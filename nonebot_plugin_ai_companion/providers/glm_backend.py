@@ -4,13 +4,13 @@
 接口对齐 MlxVLMRuntime 的 chat / metrics_snapshot / status_snapshot / reconfigure，
 使上层（admin_server、inference_events）无需感知后端差异。
 """
+
 from __future__ import annotations
 
 import asyncio
 import base64
 import logging
 import mimetypes
-import os
 import re
 from collections import deque
 from dataclasses import asdict
@@ -99,7 +99,7 @@ def _uri_to_data_url(uri: str) -> str | None:
         return uri
     if uri.startswith("base64://"):
         # MLX 路径会跳过这种，但 GLM 需要它；补上 data URL 前缀需要 MIME，缺失则按 jpeg。
-        raw = uri[len("base64://"):]
+        raw = uri[len("base64://") :]
         return f"data:image/jpeg;base64,{raw}"
     # 本地路径
     candidate = uri[7:] if uri.startswith("file://") else uri
@@ -246,13 +246,10 @@ class GlmBackend:
             # 纯文本模式：剥离图片，但记录有图片被丢弃（便于排查）。
             if media_parts:
                 dropped = sum(
-                    1 for p in media_parts
-                    if isinstance(p, dict) and str(p.get("type") or "") in _MEDIA_PART_TYPES
+                    1 for p in media_parts if isinstance(p, dict) and str(p.get("type") or "") in _MEDIA_PART_TYPES
                 )
                 if dropped:
-                    logger.info(
-                        "glm_backend: %d media part(s) dropped (multimodal disabled)", dropped
-                    )
+                    logger.info("glm_backend: %d media part(s) dropped (multimodal disabled)", dropped)
             openai_messages = messages
         payload: dict[str, Any] = {
             "model": self._model,
@@ -310,14 +307,14 @@ class GlmBackend:
                         self._last_error = f"HTTP {exc.response.status_code} after retries"
                         self._healthy = False
                         raise
-                    await asyncio.sleep(min(8.0, 0.5 * (2 ** attempt)))
+                    await asyncio.sleep(min(8.0, 0.5 * (2**attempt)))
                 except httpx.TransportError as exc:
                     last_exc = exc
                     if attempt >= _MAX_RETRIES:
                         self._last_error = f"transport error: {type(exc).__name__}"
                         self._healthy = False
                         raise
-                    await asyncio.sleep(min(8.0, 0.5 * (2 ** attempt)))
+                    await asyncio.sleep(min(8.0, 0.5 * (2**attempt)))
         # 理论上不可达
         raise last_exc  # type: ignore[misc]
 
@@ -370,10 +367,7 @@ class GlmBackend:
         )
 
     def default_models(self) -> list[dict[str, str]]:
-        return [
-            {"value": name, "label": name, "description": "GLM 在线 API 模型"}
-            for name in _FALLBACK_MODELS
-        ]
+        return [{"value": name, "label": name, "description": "GLM 在线 API 模型"} for name in _FALLBACK_MODELS]
 
     async def health_check(self) -> bool:
         # 无独立探活端点：以最近一次调用的健康状态为准（进程启动后默认健康）。

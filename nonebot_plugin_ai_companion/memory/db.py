@@ -10,19 +10,16 @@ import asyncio
 import json
 import re
 import sqlite3
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 from ..prompt.text import is_command_like, is_training_noise, normalize_text
 
 
 def context_search_terms(query: str) -> list[str]:
-    raw_terms = [
-        normalize_text(term)
-        for term in re.split(r"\s+", str(query or ""))
-        if normalize_text(term)
-    ]
+    raw_terms = [normalize_text(term) for term in re.split(r"\s+", str(query or "")) if normalize_text(term)]
     terms: list[str] = []
     seen: set[str] = set()
     for term in raw_terms:
@@ -219,14 +216,8 @@ class PersonaDatabase:
                 )
                 """
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_chat_samples_group_time "
-                "ON chat_samples(group_id, created_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_stickers_group_count "
-                "ON stickers(group_id, count)"
-            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_samples_group_time ON chat_samples(group_id, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_stickers_group_count ON stickers(group_id, count)")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_conversation_patterns_lookup "
                 "ON conversation_patterns(group_id, trigger_signature, count)"
@@ -235,18 +226,9 @@ class PersonaDatabase:
                 "CREATE INDEX IF NOT EXISTS idx_external_corpus_source_time "
                 "ON external_corpus_samples(source, created_at)"
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_media_assets_source_time "
-                "ON media_assets(source, created_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_inference_events_time "
-                "ON inference_events(created_at DESC)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_sticker_events_time "
-                "ON sticker_events(created_at DESC)"
-            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_media_assets_source_time ON media_assets(source, created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_inference_events_time ON inference_events(created_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_sticker_events_time ON sticker_events(created_at DESC)")
 
     @staticmethod
     def is_noise_text(

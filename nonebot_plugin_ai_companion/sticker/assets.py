@@ -10,8 +10,9 @@ import asyncio
 import json
 import sqlite3
 import time
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
 from ..memory.db import PersonaDatabase, context_search_terms
@@ -60,28 +61,28 @@ def insert_media_asset_conn(
 
 
 def media_asset_rows(db: PersonaDatabase, *, limit: int) -> list[dict[str, Any]]:
-        if limit < 0:
-            return []
-        with db.connection() as conn:
-            if limit == 0:
-                rows = conn.execute(
-                    """
+    if limit < 0:
+        return []
+    with db.connection() as conn:
+        if limit == 0:
+            rows = conn.execute(
+                """
                     SELECT id, source, source_key, uri, prompt, answer, metadata_json, created_at
                     FROM media_assets
                     ORDER BY created_at DESC
                     """
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
                     SELECT id, source, source_key, uri, prompt, answer, metadata_json, created_at
                     FROM media_assets
                     ORDER BY created_at DESC
                     LIMIT ?
                     """,
-                    (int(limit),),
-                ).fetchall()
-        return [dict(row) for row in rows]
+                (int(limit),),
+            ).fetchall()
+    return [dict(row) for row in rows]
 
 
 class StickerAssetRepo:
@@ -143,6 +144,7 @@ class StickerAssetRepo:
             "duplicates": 0 if inserted else 1,
             "skipped": 0,
         }
+
     async def record_sticker_asset(
         self,
         *,
@@ -175,12 +177,7 @@ class StickerAssetRepo:
         segment_type = str(sticker.get("type") or "").strip()
         data = dict(sticker.get("data") or {})
         uri = str(
-            sticker.get("uri")
-            or data.get("url")
-            or data.get("file")
-            or data.get("file_id")
-            or data.get("id")
-            or ""
+            sticker.get("uri") or data.get("url") or data.get("file") or data.get("file_id") or data.get("id") or ""
         ).strip()
         clean_summary = normalize_text(summary or str(sticker.get("summary") or ""))
         if not key or not segment_type:
@@ -246,6 +243,7 @@ class StickerAssetRepo:
             "media_inserted": media_inserted,
             "skipped": 0,
         }
+
     async def search_media_assets(
         self,
         *,
@@ -303,6 +301,7 @@ class StickerAssetRepo:
                 json.dumps(metadata, ensure_ascii=False, default=str),
             )
         )
+
     async def top_stickers(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._top_stickers_sync, group_id, limit)
 
@@ -394,9 +393,7 @@ class StickerAssetRepo:
         where = "WHERE " + " AND ".join(where_parts) if where_parts else ""
 
         with self.db.connection() as conn:
-            total = int(
-                conn.execute(f"SELECT COUNT(*) FROM stickers {where}", params).fetchone()[0]
-            )
+            total = int(conn.execute(f"SELECT COUNT(*) FROM stickers {where}", params).fetchone()[0])
             rows = conn.execute(
                 f"""
                 SELECT key, type, summary, uri, data_json, group_id, user_id,
@@ -444,6 +441,7 @@ class StickerAssetRepo:
         item["sendable"] = bool(classification.sendable)
         item["preview_url"] = self._sticker_preview_url(item)
         return item
+
     def _sticker_preview_url(self, item: dict[str, Any]) -> str | None:
         key = str(item.get("key") or "").strip()
         if not key:
@@ -510,6 +508,7 @@ class StickerAssetRepo:
         except ValueError:
             return None
         return path
+
     async def delete_stickers(self, keys: list[str]) -> dict[str, int]:
         return await asyncio.to_thread(self._delete_stickers_sync, keys)
 
@@ -575,9 +574,7 @@ class StickerAssetRepo:
         self.db.ensure_schema()
         updated = 0
         with self.db.connection() as conn:
-            rows = conn.execute(
-                "SELECT key, summary, data_json FROM stickers"
-            ).fetchall()
+            rows = conn.execute("SELECT key, summary, data_json FROM stickers").fetchall()
             for row in rows:
                 data = self.db.json_object(row["data_json"])
                 protocol_summary = meaningful_protocol_summary(data)
@@ -600,6 +597,7 @@ class StickerAssetRepo:
                 )
                 updated += int(cursor.rowcount or 0)
         return {"updated": updated}
+
     async def deduplicate_stickers_by_canonical_key(
         self,
         sticker_segment_types: Iterable[str],
@@ -705,28 +703,16 @@ class StickerAssetRepo:
                     ),
                 )
                 merged_stickers += max(0, len(grouped_rows) - 1)
-                rekeyed_stickers += sum(
-                    1 for old_key in old_keys if old_key != canonical_key
-                )
+                rekeyed_stickers += sum(1 for old_key in old_keys if old_key != canonical_key)
 
             if key_map:
-                samples = conn.execute(
-                    "SELECT id, training_text, sticker_keys FROM chat_samples"
-                ).fetchall()
+                samples = conn.execute("SELECT id, training_text, sticker_keys FROM chat_samples").fetchall()
                 for row in samples:
-                    current_keys = [
-                        str(key)
-                        for key in self.db.json_list(row["sticker_keys"])
-                        if str(key).strip()
-                    ]
-                    mapped_keys = list(
-                        dict.fromkeys(key_map.get(key, key) for key in current_keys)
-                    )
+                    current_keys = [str(key) for key in self.db.json_list(row["sticker_keys"]) if str(key).strip()]
+                    mapped_keys = list(dict.fromkeys(key_map.get(key, key) for key in current_keys))
                     training_text = str(row["training_text"] or "")
                     base_text, embedded_keys = parse_sticker_tokens(training_text)
-                    mapped_embedded_keys = list(
-                        dict.fromkeys(key_map.get(key, key) for key in embedded_keys)
-                    )
+                    mapped_embedded_keys = list(dict.fromkeys(key_map.get(key, key) for key in embedded_keys))
                     next_training_text = training_text
                     if mapped_embedded_keys != embedded_keys:
                         next_training_text = build_training_text(
@@ -734,10 +720,7 @@ class StickerAssetRepo:
                             mapped_embedded_keys,
                         )
                     next_sticker_keys = json.dumps(mapped_keys, ensure_ascii=False)
-                    if (
-                        next_training_text == training_text
-                        and next_sticker_keys == str(row["sticker_keys"] or "[]")
-                    ):
+                    if next_training_text == training_text and next_sticker_keys == str(row["sticker_keys"] or "[]"):
                         continue
                     conn.execute(
                         """
@@ -754,6 +737,7 @@ class StickerAssetRepo:
             "rekeyed_stickers": rekeyed_stickers,
             "rewritten_samples": rewritten_samples,
         }
+
     async def cleanup_legacy_media_artifacts(self) -> dict[str, int]:
         return await asyncio.to_thread(self._cleanup_legacy_media_artifacts_sync)
 
@@ -799,9 +783,7 @@ class StickerAssetRepo:
                 sample = dict(row)
                 training_text = str(sample.get("training_text") or "")
                 has_legacy_media_description = (
-                    "图片：" in training_text
-                    or "表情：" in training_text
-                    or "图：" in training_text
+                    "图片：" in training_text or "表情：" in training_text or "图：" in training_text
                 )
                 sticker_keys = [
                     key
@@ -817,9 +799,7 @@ class StickerAssetRepo:
                 else:
                     continue
                 next_sticker_keys = json.dumps(sticker_keys, ensure_ascii=False)
-                if safe_text == training_text and next_sticker_keys == str(
-                    sample.get("sticker_keys") or "[]"
-                ):
+                if safe_text == training_text and next_sticker_keys == str(sample.get("sticker_keys") or "[]"):
                     continue
                 conn.execute(
                     """
@@ -838,6 +818,7 @@ class StickerAssetRepo:
             "deleted_image_stickers": deleted_image_stickers,
             "updated_samples": updated_samples,
         }
+
     async def backfill_stickers_from_raw_segments(
         self,
         sticker_segment_types: Iterable[str],
@@ -882,9 +863,8 @@ class StickerAssetRepo:
                 for segment in raw_segments:
                     if not isinstance(segment, dict):
                         continue
-                    if (
-                        str(segment.get("type") or "") == "image"
-                        and is_transient_image_sticker_data(dict(segment.get("data") or {}))
+                    if str(segment.get("type") or "") == "image" and is_transient_image_sticker_data(
+                        dict(segment.get("data") or {})
                     ):
                         continue
                     record = sticker_to_record(segment, enabled_types)
@@ -945,9 +925,7 @@ class StickerAssetRepo:
                     base_text = str(sample.get("plain_text") or "").strip()
                 if not base_text:
                     summaries = [
-                        f"表情：{item.get('summary')}"
-                        for item in recovered
-                        if str(item.get("summary") or "").strip()
+                        f"表情：{item.get('summary')}" for item in recovered if str(item.get("summary") or "").strip()
                     ]
                     base_text = " ".join(summaries)
                 for key in embedded_keys:
@@ -957,10 +935,7 @@ class StickerAssetRepo:
 
                 next_training_text = build_training_text(base_text, merged_keys)
                 next_sticker_keys = json.dumps(merged_keys, ensure_ascii=False)
-                if (
-                    next_training_text != training_text
-                    or next_sticker_keys != str(sample.get("sticker_keys") or "[]")
-                ):
+                if next_training_text != training_text or next_sticker_keys != str(sample.get("sticker_keys") or "[]"):
                     conn.execute(
                         """
                         UPDATE chat_samples

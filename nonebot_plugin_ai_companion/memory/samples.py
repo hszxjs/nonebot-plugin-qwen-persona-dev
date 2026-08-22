@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import time
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 from ..prompt.media_text import context_text_from_sample
-from ..prompt.text import is_training_noise, normalize_text
+from ..prompt.text import is_training_noise
 from ..sticker.assets import insert_media_asset_conn
 from .db import PersonaDatabase, context_search_terms
 
@@ -43,6 +43,7 @@ class ChatSampleRepo:
             stickers,
             learn_reason,
         )
+
     def _record_sample_sync(
         self,
         platform: str | None,
@@ -130,6 +131,7 @@ class ChatSampleRepo:
                         },
                         created_at=now,
                     )
+
     async def recent_samples(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._recent_samples_sync, group_id, limit)
 
@@ -149,6 +151,7 @@ class ChatSampleRepo:
                 params,
             ).fetchall()
         return [dict(row) for row in rows]
+
     async def search_context_samples(
         self,
         *,
@@ -240,9 +243,7 @@ class ChatSampleRepo:
         def _sync() -> int:
             self.db.ensure_schema()
             with self.db.connection() as conn:
-                rows = conn.execute(
-                    "SELECT id, training_text FROM chat_samples WHERE training_text != ''"
-                ).fetchall()
+                rows = conn.execute("SELECT id, training_text FROM chat_samples WHERE training_text != ''").fetchall()
                 ids = [
                     int(row["id"])
                     for row in rows

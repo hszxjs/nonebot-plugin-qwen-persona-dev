@@ -6,7 +6,6 @@ from enum import StrEnum
 from ..config import AiCompanionConfig
 from ..prompt.budget import effective_max_tokens
 
-
 CAPTION_MAX_TOKENS = 64
 CAPTION_TEMPERATURE = 0.2
 CAPTION_TOP_P = 0.8

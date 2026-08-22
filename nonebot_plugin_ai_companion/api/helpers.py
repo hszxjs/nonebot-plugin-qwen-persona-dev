@@ -36,11 +36,7 @@ def runtime_summary(status: dict[str, Any]) -> dict[str, Any]:
 
 
 def training_operation(trainer: Any | None) -> dict[str, Any]:
-    progress = (
-        trainer.progress_snapshot()
-        if trainer is not None and hasattr(trainer, "progress_snapshot")
-        else None
-    )
+    progress = trainer.progress_snapshot() if trainer is not None and hasattr(trainer, "progress_snapshot") else None
     return {
         "running": bool(progress and progress.get("status") == "running"),
         "available": trainer is not None,
@@ -58,20 +54,12 @@ def training_running(trainer: Any | None) -> bool:
 def training_config(config: Any) -> dict[str, Any]:
     return {
         "target_configured": True,
-        "helper_configured": bool(
-            str(getattr(config, "ai_companion_lora_helper_api_url", "") or "").strip()
-        ),
+        "helper_configured": bool(str(getattr(config, "ai_companion_lora_helper_api_url", "") or "").strip()),
         "min_train_samples": int(getattr(config, "ai_companion_min_train_samples", 0) or 0),
         "dataset_limit": int(getattr(config, "ai_companion_dataset_limit", 0) or 0),
-        "external_corpus_enabled": bool(
-            getattr(config, "ai_companion_external_corpus_enabled", False)
-        ),
-        "external_corpus_limit": int(
-            getattr(config, "ai_companion_external_corpus_limit", 0) or 0
-        ),
-        "multimodal_training_enabled": bool(
-            getattr(config, "ai_companion_multimodal_training_enabled", False)
-        ),
+        "external_corpus_enabled": bool(getattr(config, "ai_companion_external_corpus_enabled", False)),
+        "external_corpus_limit": int(getattr(config, "ai_companion_external_corpus_limit", 0) or 0),
+        "multimodal_training_enabled": bool(getattr(config, "ai_companion_multimodal_training_enabled", False)),
         "mlx_lora_modules": normalized_lora_modules(config),
     }
 
@@ -82,9 +70,7 @@ def log_tail_entries(log_tail: str, *, stream: str = "train") -> list[dict[str, 
 
 
 def plugin_log_path(config: Any) -> Path:
-    data_dir = Path(
-        str(getattr(config, "ai_companion_data_dir", "data/qwen_persona") or "data/qwen_persona")
-    )
+    data_dir = Path(str(getattr(config, "ai_companion_data_dir", "data/qwen_persona") or "data/qwen_persona"))
     return data_dir / "bot_runtime.log"
 
 
@@ -92,9 +78,5 @@ def file_log_entries(path: Path, *, tail: int, stream: str) -> list[dict[str, st
     limit = max(0, min(int(tail), 1000))
     if limit <= 0 or not path.is_file():
         return []
-    lines = [
-        line.strip()
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
-        if line.strip()
-    ]
+    lines = [line.strip() for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
     return [{"time": "", "stream": stream, "message": line} for line in lines[-limit:]]

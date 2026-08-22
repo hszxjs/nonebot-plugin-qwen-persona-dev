@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 from urllib.parse import urlparse
-
 
 ONEBOT_STICKER_TYPES = {"face", "mface", "emoji", "sticker"}
 GENERIC_MEDIA_PLACEHOLDERS = {

@@ -6,6 +6,7 @@ OneBot V11 里群友发的合并转发到达 bot 时通常是一个 forward 段�
 
 容错：API 失败/超时返回空，绝不阻塞主回复。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -47,7 +48,7 @@ async def resolve_forward(
                 _call_get_forward_msg(bot, fid),
                 timeout=_FORWARD_API_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.info("forward_resolver: get_forward_msg timeout id=%s", fid)
             continue
         except Exception as exc:  # noqa: BLE001

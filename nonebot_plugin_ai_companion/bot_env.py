@@ -59,9 +59,7 @@ class BotEnvironment:
 
     def command_start_values(self) -> list[str]:
         values = list(self.config.ai_companion_command_prefixes)
-        values.extend(
-            str(item) for item in getattr(self.driver_config, "command_start", set()) or set()
-        )
+        values.extend(str(item) for item in getattr(self.driver_config, "command_start", set()) or set())
         return values
 
     def command_regex_values(self) -> list[str]:
@@ -86,13 +84,9 @@ class BotEnvironment:
 
     # ---- 黑名单 ----
     def is_blacklisted(self, user_id: str | None, group_id: str | None, text: str) -> bool:
-        if user_id and user_id in {
-            str(item) for item in self.config.ai_companion_blacklist_user_ids
-        }:
+        if user_id and user_id in {str(item) for item in self.config.ai_companion_blacklist_user_ids}:
             return True
-        if group_id and group_id in {
-            str(item) for item in self.config.ai_companion_blacklist_group_ids
-        }:
+        if group_id and group_id in {str(item) for item in self.config.ai_companion_blacklist_group_ids}:
             return True
         for word in self.config.ai_companion_blacklist_words:
             word = str(word).strip()
@@ -124,9 +118,7 @@ class BotEnvironment:
         if bool(value):
             return True
 
-        nicknames = [
-            str(item) for item in getattr(self.driver_config, "nickname", set()) or set()
-        ]
+        nicknames = [str(item) for item in getattr(self.driver_config, "nickname", set()) or set()]
         nicknames.extend(self.config.ai_companion_trigger_keywords)
         stripped = plain_text.lstrip()
         return bool(stripped and any(stripped.startswith(name) for name in nicknames if name))

@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -60,16 +61,12 @@ def create_admin_app(
             qwen_client=qwen_client,
         )
     )
-    app.include_router(
-        runtime.build_router(config=config, auth=auth, mlx_runtime=mlx_runtime, qwen_client=qwen_client)
-    )
+    app.include_router(runtime.build_router(config=config, auth=auth, mlx_runtime=mlx_runtime, qwen_client=qwen_client))
     app.include_router(training.build_router(config=config, auth=auth, trainer=trainer))
     app.include_router(stickers.build_router(config=config, auth=auth, store=store))
     app.include_router(settings.build_router(config=config, auth=auth, save_callback=save_callback))
     app.include_router(
-        misc.build_router(
-            config=config, auth=auth, store=store, mlx_runtime=mlx_runtime, static_root=root
-        )
+        misc.build_router(config=config, auth=auth, store=store, mlx_runtime=mlx_runtime, static_root=root)
     )
 
     @app.api_route("/{path:path}", methods=["GET", "HEAD"])

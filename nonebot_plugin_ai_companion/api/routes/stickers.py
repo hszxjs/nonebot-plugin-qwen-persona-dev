@@ -5,19 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from ..helpers import maybe_await
 
 
 def build_router(*, config: Any, auth, store: Any | None) -> APIRouter:
-    router = APIRouter(prefix="/api/stickers", dependencies=[auth])
+    router = APIRouter(prefix="/api/stickers", dependencies=[Depends(auth)])
 
     @router.get("")
-    async def stickers(
-        limit: int = 80, offset: int = 0, q: str = "", type: str = ""
-    ) -> dict[str, Any]:
+    async def stickers(limit: int = 80, offset: int = 0, q: str = "", type: str = "") -> dict[str, Any]:
         if not store or not hasattr(store, "list_stickers"):
             return {
                 "items": [],
@@ -28,9 +26,7 @@ def build_router(*, config: Any, auth, store: Any | None) -> APIRouter:
                 "type": type,
                 "type_counts": {},
             }
-        return await maybe_await(
-            store.list_stickers(limit=limit, offset=offset, query=q, segment_type=type)
-        )
+        return await maybe_await(store.list_stickers(limit=limit, offset=offset, query=q, segment_type=type))
 
     @router.get("/events")
     async def sticker_events(limit: int = 100, offset: int = 0) -> dict[str, Any]:
