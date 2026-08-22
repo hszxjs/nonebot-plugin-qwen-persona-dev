@@ -16,7 +16,7 @@ from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
-from .admin_server import AdminServer
+from .api.server import AdminServer
 from .anime_captioner import AnimeCaptioner
 from .bot_env import BotEnvironment
 from .chat_service import ChatService
