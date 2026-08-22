@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .filters import normalize_text
@@ -15,6 +15,10 @@ class MessageContextEnvelope:
     sticker_keys: list[str]
     forced_by_at: bool
     context_sources: list[str]
+    # 主语指代：当前发言者、被@的人、被引用消息发送者
+    sender_name: str = ""
+    at_targets: list[dict[str, str]] = field(default_factory=list)
+    reply_sender: dict[str, str] | None = None
 
 
 def build_message_context(
@@ -25,9 +29,15 @@ def build_message_context(
     media_parts: list[dict[str, Any]],
     sticker_keys: list[str],
     forced_by_at: bool,
+    at_nicknames: dict[str, str | None] | None = None,
+    reply_nickname: str | None = None,
+    sender_name: str = "",
 ) -> MessageContextEnvelope:
     quoted_texts = _texts_from_reply(event)
     forwarded_texts = _texts_from_forwarded_nodes(message)
+    at_targets = _at_targets_from_message(message, at_nicknames or {})
+    reply_sender = _reply_sender_from_event(event, reply_nickname)
+    resolved_sender = sender_name or _sender_name_from_event(event)
     sources: list[str] = []
     if normalize_text(current_text):
         sources.append("current")
@@ -41,6 +51,10 @@ def build_message_context(
         sources.append("sticker")
     if forced_by_at:
         sources.append("force_reply")
+    if at_targets:
+        sources.append("at")
+    if reply_sender:
+        sources.append("reply_to")
 
     return MessageContextEnvelope(
         current_text=normalize_text(current_text),
@@ -50,6 +64,9 @@ def build_message_context(
         sticker_keys=[str(key) for key in sticker_keys if str(key).strip()],
         forced_by_at=bool(forced_by_at),
         context_sources=sources,
+        sender_name=resolved_sender,
+        at_targets=at_targets,
+        reply_sender=reply_sender,
     )
 
 
@@ -59,6 +76,63 @@ def _texts_from_reply(event: Any) -> list[str]:
         return []
     message = _get_field(reply, "message", None)
     return _texts_from_message(message)
+
+
+def _at_targets_from_message(
+    message: Any,
+    nicknames: dict[str, str | None],
+) -> list[dict[str, str]]:
+    """提取消息里所有 @ 的目标。返回 [{"qq": "12345", "name": "小明"}]。"""
+    targets: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for segment in _iter_segments(message):
+        if str(_get_field(segment, "type", "")).lower() != "at":
+            continue
+        data = _get_field(segment, "data", {}) or {}
+        if not isinstance(data, dict):
+            continue
+        qq = str(data.get("qq") or "").strip()
+        if not qq or qq in seen:
+            continue
+        seen.add(qq)
+        # 优先用预解析的昵称，其次用 OneBot 段里的 name 字段，最后留空（显示 qq）
+        name = nicknames.get(qq) or str(data.get("name") or "").strip()
+        targets.append({"qq": qq, "name": name or qq})
+    return targets
+
+
+def _reply_sender_from_event(
+    event: Any,
+    nickname: str | None,
+) -> dict[str, str] | None:
+    """提取被引用消息的发送者。"""
+    reply = _get_field(event, "reply", None)
+    if reply is None:
+        return None
+    sender = _get_field(reply, "sender", None)
+    user_id = ""
+    nick = ""
+    if isinstance(sender, dict):
+        user_id = str(sender.get("user_id") or sender.get("qq") or "").strip()
+        nick = str(sender.get("card") or sender.get("nickname") or "").strip()
+    elif sender is not None:
+        user_id = str(_get_field(sender, "user_id", "") or _get_field(sender, "qq", "") or "").strip()
+        nick = str(_get_field(sender, "card", "") or _get_field(sender, "nickname", "") or "").strip()
+    if not user_id and not nick:
+        return None
+    # 预解析的昵称优先
+    final_nick = nickname or nick
+    return {"user_id": user_id, "nickname": final_nick}
+
+
+def _sender_name_from_event(event: Any) -> str:
+    """提取当前消息发送者的昵称（群名片优先）。"""
+    sender = _get_field(event, "sender", None)
+    if isinstance(sender, dict):
+        return str(sender.get("card") or sender.get("nickname") or "").strip()
+    if sender is not None:
+        return str(_get_field(sender, "card", "") or _get_field(sender, "nickname", "") or "").strip()
+    return ""
 
 
 def _texts_from_forwarded_nodes(message: Any) -> list[str]:

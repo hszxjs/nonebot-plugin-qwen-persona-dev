@@ -47,7 +47,10 @@ import {
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { runRuntimeAction, runTrainingAction, usePluginLogs, useRuntimeLogs, useTrainingLogs } from "@/lib/api"
+import { saveSettingField } from "@/lib/api"
+import { mutate } from "swr"
 import type { InferenceEvent, LogEntry, OperationsOverview, RuntimeAction, RuntimeOperation } from "@/lib/types"
 
 function numberText(value: number | undefined) {
@@ -231,6 +234,23 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
   const [pendingAction, setPendingAction] = useState<RuntimeAction | null>(null)
   const [confirmAction, setConfirmAction] = useState<RuntimeAction | null>(null)
   const [actionMessage, setActionMessage] = useState("")
+  const isGlm = runtime.runtime === "glm_online"
+  const [switchingBackend, setSwitchingBackend] = useState(false)
+
+  async function switchBackend(value: string) {
+    if (!value) return
+    setSwitchingBackend(true)
+    try {
+      await saveSettingField("qwen_persona_inference_backend", value)
+      await mutate("operations/overview")
+      toast.success(value === "glm" ? "已切换到 GLM 在线推理" : "已切换到本地 Qwen MLX")
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error)
+      toast.error(`切换后端失败：${text}`)
+    } finally {
+      setSwitchingBackend(false)
+    }
+  }
 
   async function executeAction(action: RuntimeAction, confirmed = false) {
     setPendingAction(action)
@@ -256,11 +276,23 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
     <Card data-testid="runtime-card">
       <CardHeader>
         <CardTitle>模型运行</CardTitle>
-        <CardDescription>{runtime.model || "未配置模型"}</CardDescription>
-        <CardAction>
-          <Badge variant={runtime.healthy ? "default" : "destructive"}>
+        <CardDescription>
+          <Badge variant={runtime.healthy ? "default" : "destructive"} className="mr-2">
             {runtime.state}
           </Badge>
+          {runtime.model || "未配置模型"}
+        </CardDescription>
+        <CardAction>
+          <ToggleGroup
+            type="single"
+            value={isGlm ? "glm" : "mlx"}
+            onValueChange={(value) => switchBackend(value)}
+            disabled={switchingBackend}
+            spacing={1}
+          >
+            <ToggleGroupItem value="mlx">本地 Qwen</ToggleGroupItem>
+            <ToggleGroupItem value="glm">GLM 在线</ToggleGroupItem>
+          </ToggleGroup>
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -298,37 +330,41 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
             </ItemContent>
           </Item>
         </ItemGroup>
-        <ButtonGroup>
-          <Button
-            disabled={!runtime.control.can_load || Boolean(pendingAction)}
-            onClick={() => executeAction("load")}
-          >
-            <IconPlayerPlay data-icon="inline-start" />
-            {pendingAction === "load" ? "加载中" : "加载/检查"}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!runtime.control.can_reload || Boolean(pendingAction)}
-            onClick={() => setConfirmAction("reload")}
-          >
-            {pendingAction === "reload" ? "重载中" : "重载"}
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={!runtime.control.can_unload || Boolean(pendingAction)}
-            onClick={() => setConfirmAction("unload")}
-          >
-            {pendingAction === "unload" ? "卸载中" : "卸载"}
-          </Button>
-        </ButtonGroup>
-        <Collapsible defaultOpen>
-          <CollapsibleTrigger asChild>
-            <Button variant="ghost">MLX Runtime Log</Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <RuntimeLogPanel />
-          </CollapsibleContent>
-        </Collapsible>
+        {!isGlm ? (
+          <>
+            <ButtonGroup>
+              <Button
+                disabled={!runtime.control.can_load || Boolean(pendingAction)}
+                onClick={() => executeAction("load")}
+              >
+                <IconPlayerPlay data-icon="inline-start" />
+                {pendingAction === "load" ? "加载中" : "加载/检查"}
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!runtime.control.can_reload || Boolean(pendingAction)}
+                onClick={() => setConfirmAction("reload")}
+              >
+                {pendingAction === "reload" ? "重载中" : "重载"}
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={!runtime.control.can_unload || Boolean(pendingAction)}
+                onClick={() => setConfirmAction("unload")}
+              >
+                {pendingAction === "unload" ? "卸载中" : "卸载"}
+              </Button>
+            </ButtonGroup>
+            <Collapsible defaultOpen>
+              <CollapsibleTrigger asChild>
+                <Button variant="ghost">MLX Runtime Log</Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <RuntimeLogPanel />
+              </CollapsibleContent>
+            </Collapsible>
+          </>
+        ) : null}
         <Collapsible>
           <CollapsibleTrigger asChild>
             <Button variant="ghost">Plugin Runtime Log</Button>

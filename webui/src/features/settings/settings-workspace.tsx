@@ -36,12 +36,19 @@ import {
   InputGroupInput,
 } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { saveSettingField, useSettings } from "@/lib/api"
+import { saveSettingField, useModels, useSettings } from "@/lib/api"
 import type { ConfigValue, SettingsPayload } from "@/lib/types"
 import {
   bindSettingsSections,
@@ -155,6 +162,38 @@ function CheckboxGroupControl({
   )
 }
 
+function SelectControl({
+  field,
+  onChange,
+}: {
+  field: BoundField
+  onChange: (field: BoundField, value: ConfigValue) => void
+}) {
+  const { data } = useModels()
+  const models = data?.models ?? []
+  const currentValue = String(field.value ?? "")
+  return (
+    <Select value={currentValue} onValueChange={(value) => onChange(field, value)}>
+      <SelectTrigger id={field.name} aria-label={field.name}>
+        <SelectValue placeholder="选择模型" />
+      </SelectTrigger>
+      <SelectContent>
+        {models.length === 0 ? (
+          <SelectItem value={currentValue || "glm-5.2"}>
+            {currentValue || "glm-5.2"}
+          </SelectItem>
+        ) : (
+          models.map((model) => (
+            <SelectItem key={model} value={model}>
+              {model}
+            </SelectItem>
+          ))
+        )}
+      </SelectContent>
+    </Select>
+  )
+}
+
 function SettingControl({
   field,
   onChange,
@@ -188,6 +227,10 @@ function SettingControl({
         ))}
       </ToggleGroup>
     )
+  }
+
+  if (field.control === "select") {
+    return <SelectControl field={field} onChange={onChange} />
   }
 
   if (field.control === "checkboxes") {

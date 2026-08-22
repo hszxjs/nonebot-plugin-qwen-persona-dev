@@ -75,6 +75,45 @@ class ReplyPlannerContextTests(unittest.TestCase):
         self.assertNotIn("最近群聊样本", user_content)
         self.assertNotIn("自然接一句", user_content)
 
+    def test_prompt_declares_intent_and_requires_meme_gate(self) -> None:
+        from nonebot_plugin_qwen_persona.reply_planner import build_reply_plan
+
+        gated = build_reply_plan(
+            system_prompt="system",
+            conversation_lines=["相关历史：影之诗这游戏有2000张卡"],
+            style_memory_lines=[],
+            current_text="影之诗卡多吗？",
+            media_parts=[],
+            sticker_reply_allowed=False,
+            incoming_has_sticker=False,
+            active_memes=[
+                {
+                    "label": "2000张卡",
+                    "hint": "只有在聊影之诗卡牌数量时才顺手使用",
+                    "recent_count": 6,
+                }
+            ],
+        )
+        ungated = build_reply_plan(
+            system_prompt="system",
+            conversation_lines=[],
+            style_memory_lines=[],
+            current_text="兰州拉面怎么做？",
+            media_parts=[],
+            sticker_reply_allowed=False,
+            incoming_has_sticker=False,
+            active_memes=[],
+        )
+
+        gated_content = gated.messages[1]["content"]
+        ungated_content = ungated.messages[1]["content"]
+        self.assertIn("回复意图：question_answer", gated_content)
+        self.assertIn("可用梗", gated_content)
+        self.assertIn("2000张卡", gated_content)
+        self.assertIn("只有在聊影之诗卡牌数量时才顺手使用", gated_content)
+        self.assertNotIn("可用梗", ungated_content)
+        self.assertNotIn("口头禅", ungated_content)
+
     def test_style_memory_is_marked_as_non_factual_reference(self) -> None:
         from nonebot_plugin_qwen_persona.reply_planner import build_reply_plan
 
@@ -319,6 +358,8 @@ class PromptConfigTests(unittest.TestCase):
 
         self.assertIn("优先理解上下文", prompt)
         self.assertIn("回答问题", prompt)
+        self.assertNotIn("梗", prompt)
+        self.assertNotIn("口头禅", prompt)
         self.assertNotIn("扮演", prompt)
         self.assertNotIn("模仿", prompt)
         self.assertNotIn("学习群友说话习惯", prompt)

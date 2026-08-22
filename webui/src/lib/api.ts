@@ -5,6 +5,7 @@ import type {
   ConfigValue,
   DiagnosticsPayload,
   LogsPayload,
+  ModelsPayload,
   OperationsOverview,
   RuntimeAction,
   RuntimeActionResult,
@@ -71,6 +72,13 @@ export function deleteStickers(keys: string[]) {
 
 export function useSettings() {
   return useSWR<SettingsPayload>("settings", fetchJson)
+}
+
+export function useModels() {
+  return useSWR<ModelsPayload>("models", fetchJson, {
+    revalidateOnFocus: false,
+    dedupingInterval: 60_000,
+  })
 }
 
 export function saveSettingField(

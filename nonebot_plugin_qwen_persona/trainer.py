@@ -5,6 +5,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -18,6 +19,12 @@ from .config import QwenPersonaConfig, effective_chat_model, normalized_lora_mod
 from .storage import PersonaStore
 
 logger = logging.getLogger(__name__)
+
+# 匹配 GLM 等模型常用 ```json ... ``` 代码块围栏，用于容错解析辅助清洗结果。
+_JSON_FENCE_RE = re.compile(
+    r"```(?:json|JSON)?\s*(?P<body>.*?)\s*```",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -200,6 +207,7 @@ class PersonaTrainer:
             include_multimodal_assets=bool(
                 self.config.qwen_persona_multimodal_training_enabled
             ),
+            excluded_user_ids=self.config.qwen_persona_dataset_excluded_user_ids,
         )
         self._set_progress(stage="dataset_exported", sample_count=sample_count)
 
@@ -316,6 +324,7 @@ class PersonaTrainer:
         processed = 0
         fallback = 0
         total = 0
+        skipped = 0
         last_logged_attempt = 0
         assisted_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -326,7 +335,18 @@ class PersonaTrainer:
                 if not line.strip():
                     continue
                 total += 1
-                record = json.loads(line)
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    # 外部语料可能含非 UTF-8 字节（如贴吧 GBK 中文）导致单行损坏。
+                    # 跳过坏行并记日志，不让整个训练崩溃。
+                    skipped += 1
+                    if skipped <= 3:
+                        logger.warning(
+                            "lora_helper: skip malformed dataset line %d: %r",
+                            total, str(exc),
+                        )
+                    continue
                 if limit > 0 and attempted >= limit:
                     target.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
                     if total % 10000 == 0:
@@ -370,7 +390,7 @@ class PersonaTrainer:
             f"model={self.config.qwen_persona_lora_helper_model}\n"
             f"raw_dataset={raw_dataset_path}\n"
             f"assisted_dataset={assisted_path}\n"
-            f"total={total} attempted={attempted} processed={processed} fallback={fallback}"
+            f"total={total} attempted={attempted} processed={processed} fallback={fallback} skipped={skipped}"
         )
         return assisted_path, log
 
@@ -429,6 +449,10 @@ class PersonaTrainer:
                 f"Bearer {self.config.qwen_persona_lora_helper_api_key.strip()}"
             )
 
+        extra_body = dict(self.config.qwen_persona_lora_helper_extra_body)
+        # response_format 对 GLM 系列（含 glm-5.2）的 OpenAI 兼容端点是可选的，
+        # 部分中转/官方网关对 json_object 支持不稳定。默认开启，用户可在
+        # extra_body 里用 _disable_response_format=true 关闭，或直接覆盖 response_format。
         payload: dict[str, Any] = {
             "model": self.config.qwen_persona_lora_helper_model,
             "messages": [
@@ -442,20 +466,111 @@ class PersonaTrainer:
                 },
             ],
             "temperature": 0.2,
-            "response_format": {"type": "json_object"},
-            **self.config.qwen_persona_lora_helper_extra_body,
         }
-        async with httpx.AsyncClient(timeout=self.config.qwen_persona_lora_helper_timeout) as client:
-            response = await client.post(api_url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
-        content = data["choices"][0]["message"]["content"]
-        assisted = json.loads(content)
+        disable_rf = bool(extra_body.pop("_disable_response_format", False))
+        if not disable_rf and "response_format" not in extra_body:
+            payload["response_format"] = {"type": "json_object"}
+        # 用户自定义字段最后合并，可覆盖任何上述默认值。
+        payload.update(extra_body)
+
+        timeout = float(self.config.qwen_persona_lora_helper_timeout)
+        # 仅对限流和网关错误退避重试；4xx（鉴权/参数错误等）直接抛出走 fallback。
+        retryable_status = {429, 500, 502, 503, 504}
+        max_retries = 3
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            data: dict[str, Any] | None = None
+            last_exc: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    response = await client.post(api_url, headers=headers, json=payload)
+                    if response.status_code in retryable_status:
+                        raise httpx.HTTPStatusError(
+                            f"helper status {response.status_code}",
+                            request=response.request,
+                            response=response,
+                        )
+                    response.raise_for_status()
+                    data = response.json()
+                    break
+                except httpx.HTTPStatusError as exc:
+                    # 4xx 等不可重试错误：立刻向上抛，交由 _maybe_build_assisted_dataset 走 fallback。
+                    if exc.response is None or exc.response.status_code not in retryable_status:
+                        raise
+                    last_exc = exc
+                    if attempt >= max_retries:
+                        raise
+                    await asyncio.sleep(min(8.0, 0.5 * (2 ** attempt)))
+                except httpx.TransportError as exc:
+                    # 网络层错误（连接/超时/读中断）通常可重试。
+                    last_exc = exc
+                    if attempt >= max_retries:
+                        raise
+                    await asyncio.sleep(min(8.0, 0.5 * (2 ** attempt)))
+            else:
+                # 理论上不会到达，保险起见。
+                raise last_exc  # type: ignore[misc]
+            if data is None:  # type: ignore[unreachable]
+                raise last_exc  # type: ignore[misc]
+
+        content = self._extract_helper_content(data)
+        assisted = self._parse_helper_json(content)
         if not isinstance(assisted, dict) or not isinstance(assisted.get("messages"), list):
             raise ValueError("assistant response must be a JSON object with messages")
         if "metadata" not in assisted and "metadata" in record:
             assisted["metadata"] = record["metadata"]
         return assisted
+
+    @staticmethod
+    def _extract_helper_content(data: dict[str, Any]) -> str:
+        """兼容 OpenAI 标准与部分 GLM 中转的字段差异，提取回复文本。"""
+        try:
+            choices = data.get("choices") or []
+            if not choices:
+                raise ValueError("empty choices in helper response")
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, list):
+                # 部分接口把 content 拆成多段 dict（{"type":"text","text":...}）。
+                parts: list[str] = []
+                for seg in content:
+                    if isinstance(seg, dict):
+                        parts.append(str(seg.get("text") or seg.get("content") or ""))
+                    else:
+                        parts.append(str(seg))
+                content = "".join(parts)
+            if not content:
+                raise ValueError("empty content in helper response")
+            return str(content)
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(f"unrecognized helper response shape: {exc!r}") from exc
+
+    @staticmethod
+    def _parse_helper_json(content: str) -> dict[str, Any]:
+        """从 GLM 回复中解析 JSON，容忍前后说明文字与 ```json 代码块。"""
+        text = content.strip()
+        # 1) 直接解析（最理想：纯 JSON）。
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        # 2) 去掉 ```json ... ``` / ``` ... ``` 代码块围栏。
+        fence_match = _JSON_FENCE_RE.search(text)
+        if fence_match:
+            inner = fence_match.group("body").strip()
+            try:
+                return json.loads(inner)
+            except json.JSONDecodeError:
+                pass
+        # 3) 抓取第一个 { 到最后一个 } 之间的子串。
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            snippet = text[start : end + 1]
+            try:
+                return json.loads(snippet)
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(f"failed to parse JSON from helper response: {text[:200]!r}")
 
     async def _run_mlx_lora(
         self,

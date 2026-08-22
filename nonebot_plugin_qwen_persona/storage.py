@@ -24,6 +24,7 @@ from .sticker import (
 from .sticker_classifier import classify_sticker_record, is_sendable_sticker_record
 
 MEDIA_ASSET_SOURCES = {"sticker", "admin_approved", "explicit_command"}
+CHAT_LOG_PREFIX_RE = re.compile(r"^\s*\d{5,12}\s*[:：]\s*")
 
 
 class PersonaStore:
@@ -2001,6 +2002,8 @@ class PersonaStore:
         command_regexes: Iterable[str] = (),
         external_limit: int = 0,
         include_multimodal_assets: bool = False,
+        excluded_user_ids: Iterable[str] = (),
+        excluded_message_ids: Iterable[str] = (),
     ) -> int:
         return await asyncio.to_thread(
             self._export_sft_dataset_sync,
@@ -2012,6 +2015,8 @@ class PersonaStore:
             command_regexes,
             external_limit,
             include_multimodal_assets,
+            excluded_user_ids,
+            excluded_message_ids,
         )
 
     def _export_sft_dataset_sync(
@@ -2024,16 +2029,20 @@ class PersonaStore:
         command_regexes: Iterable[str] = (),
         external_limit: int = 0,
         include_multimodal_assets: bool = False,
+        excluded_user_ids: Iterable[str] = (),
+        excluded_message_ids: Iterable[str] = (),
     ) -> int:
         self._init_sync()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         dataset_limit = max(int(limit or 0), 0)
         unlimited_dataset = dataset_limit <= 0
+        excluded_users = {str(item) for item in excluded_user_ids if str(item).strip()}
+        excluded_messages = {str(item) for item in excluded_message_ids if str(item).strip()}
         with self._connection() as conn:
             if unlimited_dataset:
                 rows = conn.execute(
                     """
-                    SELECT id, user_id, group_id, plain_text, training_text, sticker_keys, created_at
+                    SELECT id, user_id, group_id, message_id, plain_text, training_text, sticker_keys, created_at
                     FROM chat_samples
                     WHERE training_text != ''
                     ORDER BY created_at DESC
@@ -2043,7 +2052,7 @@ class PersonaStore:
                 fetch_limit = max(dataset_limit + history_window + 32, dataset_limit)
                 rows = conn.execute(
                     """
-                    SELECT id, user_id, group_id, plain_text, training_text, sticker_keys, created_at
+                    SELECT id, user_id, group_id, message_id, plain_text, training_text, sticker_keys, created_at
                     FROM chat_samples
                     WHERE training_text != ''
                     ORDER BY created_at DESC
@@ -2061,20 +2070,42 @@ class PersonaStore:
                 history = ordered[max(0, idx - history_window) : idx]
                 history_lines = []
                 for item in history:
+                    if self._is_excluded_dataset_row(
+                        item,
+                        excluded_user_ids=excluded_users,
+                        excluded_message_ids=excluded_messages,
+                    ):
+                        continue
                     context_text = context_text_from_sample(item)
+                    if self._is_excluded_dataset_row(
+                        item,
+                        excluded_user_ids=excluded_users,
+                        excluded_message_ids=excluded_messages,
+                        assistant_text=context_text,
+                    ):
+                        continue
+                    context_text = self._strip_chat_log_prefix(context_text)
                     if context_text and not self._is_training_noise_text(
                         context_text,
                         command_prefixes=command_prefixes,
                         command_regexes=command_regexes,
                     ):
-                        history_lines.append(f"{item.get('user_id') or 'someone'}: {context_text}")
-                prompt = "\n".join(history_lines) or "群聊刚开始，请自然接一句。"
+                        history_lines.append(f"上一句：{context_text}")
+                prompt = "\n".join(history_lines) or "群聊刚开始，请直接接住当前话题。"
                 assistant_text = context_text_from_sample(row)
+                if self._is_excluded_dataset_row(
+                    row,
+                    excluded_user_ids=excluded_users,
+                    excluded_message_ids=excluded_messages,
+                    assistant_text=assistant_text,
+                ):
+                    continue
+                assistant_text = self._strip_chat_log_prefix(assistant_text)
                 if not assistant_text or self._is_training_noise_text(
                     assistant_text,
                     command_prefixes=command_prefixes,
                     command_regexes=command_regexes,
-                ):
+                ) or is_low_quality_generated_text(assistant_text):
                     continue
                 record = {
                     "images": [],
@@ -2082,7 +2113,7 @@ class PersonaStore:
                         {"role": "system", "content": system_prompt},
                         {
                             "role": "user",
-                            "content": "下面是群聊上下文，请按这个群的风格自然接话：\n" + prompt,
+                            "content": "下面是群聊上下文。请优先理解当前语境，按自然群聊方式回复：\n" + prompt,
                         },
                         {"role": "assistant", "content": assistant_text},
                     ],
@@ -2105,14 +2136,25 @@ class PersonaStore:
                 else:
                     row_limit = 0 if unlimited_dataset else max(dataset_limit - exported, 0)
                 for row in self._external_corpus_rows(limit=row_limit):
-                    text = normalize_text(str(row.get("text") or ""))
-                    if not text or self._is_training_noise_text(
-                        text,
-                        command_prefixes=command_prefixes,
-                        command_regexes=command_regexes,
+                    raw_text = normalize_text(str(row.get("text") or ""))
+                    if (
+                        not raw_text
+                        or self._has_chat_log_prefix(raw_text)
+                        or self._is_training_noise_text(
+                            raw_text,
+                            command_prefixes=command_prefixes,
+                            command_regexes=command_regexes,
+                        )
+                        or is_low_quality_generated_text(raw_text)
                     ):
                         continue
-                    metadata = self._json_object(row.get("metadata_json"))
+                    text = self._strip_chat_log_prefix(raw_text)
+                    if not text:
+                        text,
+                        continue
+                    metadata = self._sanitize_metadata_chat_log_prefixes(
+                        self._json_object(row.get("metadata_json"))
+                    )
                     user_prompt = normalize_text(str(metadata.get("user_prompt") or ""))
                     user_content = (
                         "下面是外部公开社区语境，请按这种口吻自然接话：\n" + user_prompt
@@ -2147,11 +2189,21 @@ class PersonaStore:
                     media_limit = max(dataset_limit - exported, 0)
                 for row in self._media_asset_rows(limit=media_limit):
                     uri = str(row.get("uri") or "").strip()
-                    answer = normalize_text(str(row.get("answer") or ""))
-                    if not uri or not answer or is_low_quality_generated_text(answer):
+                    raw_answer = normalize_text(str(row.get("answer") or ""))
+                    if (
+                        not uri
+                        or not raw_answer
+                        or self._has_chat_log_prefix(raw_answer)
+                        or is_low_quality_generated_text(raw_answer)
+                    ):
                         continue
-                    prompt = normalize_text(str(row.get("prompt") or ""))
-                    metadata = self._json_object(row.get("metadata_json"))
+                    answer = self._strip_chat_log_prefix(raw_answer)
+                    prompt = self._strip_chat_log_prefix(
+                        normalize_text(str(row.get("prompt") or ""))
+                    )
+                    metadata = self._sanitize_metadata_chat_log_prefixes(
+                        self._json_object(row.get("metadata_json"))
+                    )
                     record = {
                         "images": [uri],
                         "messages": [
@@ -2182,6 +2234,45 @@ class PersonaStore:
                     if not unlimited_dataset and exported >= dataset_limit:
                         break
         return exported
+
+    @staticmethod
+    def _is_excluded_dataset_row(
+        row: dict[str, Any],
+        *,
+        excluded_user_ids: set[str],
+        excluded_message_ids: set[str],
+        assistant_text: str | None = None,
+    ) -> bool:
+        user_id = str(row.get("user_id") or "")
+        message_id = str(row.get("message_id") or "")
+        if user_id and user_id in excluded_user_ids:
+            return True
+        if message_id and message_id in excluded_message_ids:
+            return True
+        if assistant_text is not None and CHAT_LOG_PREFIX_RE.match(str(assistant_text or "")):
+            return True
+        return False
+
+    @staticmethod
+    def _strip_chat_log_prefix(text: str) -> str:
+        return CHAT_LOG_PREFIX_RE.sub("", str(text or "")).strip()
+
+    @staticmethod
+    def _has_chat_log_prefix(text: str) -> bool:
+        return bool(CHAT_LOG_PREFIX_RE.match(str(text or "")))
+
+    @classmethod
+    def _sanitize_metadata_chat_log_prefixes(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                str(key): cls._sanitize_metadata_chat_log_prefixes(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [cls._sanitize_metadata_chat_log_prefixes(item) for item in value]
+        if isinstance(value, str):
+            return cls._strip_chat_log_prefix(value)
+        return value
 
     def _external_corpus_rows(self, *, limit: int) -> list[dict[str, Any]]:
         if limit < 0:

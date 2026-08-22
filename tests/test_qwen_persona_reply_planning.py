@@ -53,7 +53,8 @@ class ReplyPlanningTests(unittest.TestCase):
 
         self.assertEqual(plan.intent, ReplyIntent.PERSONA_TEXT)
         self.assertFalse(plan.allow_sticker)
-        self.assertIn("自然接一句", plan.messages[1]["content"])
+        self.assertIn("先判断当前上下文意图", plan.messages[1]["content"])
+        self.assertNotIn("请自然接一句", plan.messages[1]["content"])
 
     def test_explicit_sticker_request_routes_to_sticker_request(self) -> None:
         from nonebot_plugin_qwen_persona.reply_planner import (

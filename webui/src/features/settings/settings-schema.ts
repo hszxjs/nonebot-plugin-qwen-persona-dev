@@ -9,6 +9,7 @@ export type FieldControl =
   | "toggle"
   | "checkboxes"
   | "tokens"
+  | "select"
 
 export type SettingsSectionKey =
   | "model"
@@ -16,6 +17,8 @@ export type SettingsSectionKey =
   | "training"
   | "stickers"
   | "system"
+  | "online"
+  | "anime"
 
 export type FieldOption = {
   value: string
@@ -43,6 +46,8 @@ export type BoundField = FieldSchema & {
 
 export const SETTINGS_SECTIONS: { key: SettingsSectionKey; title: string }[] = [
   { key: "model", title: "模型与推理" },
+  { key: "online", title: "GLM 在线推理" },
+  { key: "anime", title: "动漫图片识别" },
   { key: "learning", title: "学习与回复" },
   { key: "training", title: "训练策略" },
   { key: "stickers", title: "表情行为" },
@@ -78,6 +83,11 @@ const contextScopeOptions = [
   { value: "mixed", label: "mixed" },
 ]
 
+const inferenceBackendOptions = [
+  { value: "mlx", label: "本地 Qwen MLX", description: "使用本地加载的 MLX 模型推理。" },
+  { value: "glm", label: "GLM 在线", description: "使用 GLM 在线 API 推理（OpenAI 兼容）。" },
+]
+
 const loraModuleOptions = [
   { value: "language", label: "language", description: "语言层 LoRA" },
   { value: "projection", label: "projection", description: "多模态投影层" },
@@ -102,6 +112,26 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   { name: "qwen_persona_top_p", label: "Top P", section: "model", control: "number", min: 0, max: 1, step: 0.01 },
   { name: "qwen_persona_max_tokens", label: "最大回复 tokens", section: "model", control: "number", min: 1, max: 4096, step: 1 },
   { name: "qwen_persona_request_timeout", label: "请求超时", section: "model", control: "number", min: 1, max: 600, step: 1 },
+
+  { name: "qwen_persona_inference_backend", label: "推理后端", description: "选择对话推理走本地 MLX 还是 GLM 在线。切换即时生效，无需重启。", section: "online", control: "toggle", options: inferenceBackendOptions },
+  { name: "qwen_persona_online_api_url", label: "在线 API URL", description: "OpenAI 兼容 chat/completions 地址。", section: "online", control: "text" },
+  { name: "qwen_persona_online_api_key", label: "在线 API Key", section: "online", control: "password" },
+  { name: "qwen_persona_online_model", label: "在线模型", description: "从 model list 拉取，失败时显示兜底列表。", section: "online", control: "select" },
+  { name: "qwen_persona_online_timeout", label: "在线超时(秒)", section: "online", control: "number", min: 5, max: 600, step: 5 },
+  { name: "qwen_persona_online_multimodal", label: "多模态", description: "开启后图片转 base64 发送。Coding 订阅端点不支持，默认关闭（图片丢弃仅发文字）。", section: "online", control: "switch" },
+
+  { name: "qwen_persona_anime_caption_enabled", label: "动漫图片识别", description: "开启后图片会走多路识别（AI视觉 + SauceNAO + iqdb），结果进 prompt。", section: "anime", control: "switch" },
+  { name: "qwen_persona_anime_vision_enabled", label: "AI 视觉识图", description: "用 GLM-4.6V-Flash(免费)理解任意图：角色/场景/动作。弥补以图搜源对冷门图命中率低。", section: "anime", control: "switch" },
+  { name: "qwen_persona_anime_vision_model", label: "视觉模型", description: "glm-4.6v-flash 免费。glm-4.5v 需付费资源包。", section: "anime", control: "text" },
+  { name: "qwen_persona_anime_vision_api_url", label: "视觉 API URL", section: "anime", control: "text" },
+  { name: "qwen_persona_anime_vision_api_key", label: "视觉 API Key", description: "空则复用 GLM 在线推理 key。", section: "anime", control: "password" },
+  { name: "qwen_persona_saucenao_api_key", label: "SauceNAO API Key", description: "saucenao.com 免费注册获取。留空则跳过 SauceNAO。", section: "anime", control: "password" },
+  { name: "qwen_persona_saucenao_dbmask", label: "SauceNAO 库掩码", description: "999=动漫库默认全开。", section: "anime", control: "number", min: 1, max: 999999, step: 1 },
+  { name: "qwen_persona_anime_min_similarity", label: "SauceNAO 命中阈值", description: "低于此值视为未识别。视觉识图不受此限制。", section: "anime", control: "number", min: 0, max: 100, step: 1 },
+  { name: "qwen_persona_forward_max_messages", label: "转发最多展开条数", description: "合并转发消息展开的上限，防止爆 token。", section: "anime", control: "number", min: 1, max: 100, step: 1 },
+  { name: "qwen_persona_forward_max_chars", label: "转发文字最大字符", section: "anime", control: "number", min: 100, max: 8000, step: 100 },
+  { name: "qwen_persona_media_image_limit", label: "图片识别上限", description: "单条消息图片超过此数则跳过识别，只处理文字。", section: "anime", control: "number", min: 1, max: 30, step: 1 },
+  { name: "qwen_persona_media_relevance_check", label: "图文相关性判断", description: "识别图片后判断是否与文字相关，无关则丢弃图片描述。多一次轻量 API 调用。", section: "anime", control: "switch" },
 
   { name: "qwen_persona_enabled_groups", label: "启用群组", description: "留空表示不限制群组。", section: "learning", control: "tokens" },
   { name: "qwen_persona_enable_learning", label: "学习开关", section: "learning", control: "switch" },

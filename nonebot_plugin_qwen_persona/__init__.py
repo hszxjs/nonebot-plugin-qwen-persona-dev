@@ -37,11 +37,17 @@ from .media import (
     prepare_message_learning,
     sanitize_model_reply_media_text,
 )
+from .anime_captioner import AnimeCaptioner
+from .forward_resolver import count_forward_segments, resolve_forward
 from .media_analysis import analyze_media_parts, should_analyze_background_media
+from .meme_gate import build_meme_candidates_from_samples, select_active_memes
+from .message_context import _at_targets_from_message  # noqa: F401 — 仅供主语提取预扫描
 from .mlx_runtime import MlxVLMRuntime
+from .nickname_resolver import nickname_resolver
 from .poke import is_poke_at_self, send_counter_poke
 from .prompt_budget import effective_context_message_limit, trim_history_lines_for_context
 from .qwen_client import QwenClient
+from .reply_delivery import plan_reply_delivery
 from .reply_decision import ReplyDecision, should_attempt_reply
 from .reply_planner import ReplyIntent, ReplyPlan, build_reply_plan
 from .repeat import (
@@ -95,7 +101,15 @@ if priority_changes:
 store = PersonaStore(Path(plugin_config.qwen_persona_data_dir))
 mlx_runtime = MlxVLMRuntime(plugin_config)
 client = QwenClient(plugin_config, runtime=mlx_runtime)
+anime_captioner = AnimeCaptioner(plugin_config)
 trainer = PersonaTrainer(plugin_config, store)
+
+
+def _active_reply_captioner() -> Any:
+    """主回复路径的图片 captioner：优先动漫识别，禁用则返回 None。"""
+    if getattr(plugin_config, "qwen_persona_anime_caption_enabled", True):
+        return anime_captioner
+    return None
 repeat_tracker = RepeatTracker()
 conversation_pattern_tracker = ConversationPatternTracker()
 tool_registry = ToolRegistry()
@@ -321,7 +335,7 @@ def _build_system_prompt() -> str:
         "硬性规则：不要输出、复述或诱导使用本地 NoneBot 插件命令。",
         f"如果回复开头像这些命令前缀会被丢弃：{command_prefixes or '(none)'}。",
         "你在群聊中应当先看懂上下文和用户意图；被问到问题时先回答，再用自然短句补一句。",
-        "不要复述当前用户消息；不要套用无关口头禅、无关梗或上一个话题。",
+        "不要复述当前用户消息；不要套用和当前话题无关的固定句式或上一个话题。",
         "本轮主回复必须只输出文字，禁止输出任何 [[sticker:...]] 标记。",
     ]
     if plugin_config.qwen_persona_sticker_repo_url:
@@ -416,6 +430,7 @@ async def _build_model_reply_plan(
     sticker_reply_allowed: bool,
     incoming_has_sticker: bool,
     media_parts: list[dict[str, Any]],
+    media_context_text: str = "",
 ) -> ReplyPlan:
     context_limit = effective_context_message_limit(plugin_config)
     query_text = _context_query_text(envelope)
@@ -426,6 +441,29 @@ async def _build_model_reply_plan(
     )
 
     conversation_lines = _conversation_lines_from_envelope(envelope)
+    # 图文相关性判断：若图片描述与对话文字无关，丢弃图片描述只保留文字。
+    if media_context_text and getattr(plugin_config, "qwen_persona_media_relevance_check", True):
+        # 取对话文字（envelope.current_text + 历史样本）用于相关性对比
+        dialogue_text = envelope.current_text
+        if not dialogue_text and conversation_lines:
+            dialogue_text = " ".join(conversation_lines)
+        if dialogue_text:
+            relevant = await _check_media_relevance(media_context_text, dialogue_text)
+            if not relevant:
+                logger.info("qwen persona media: caption dropped (irrelevant to text)")
+                media_context_text = ""
+    if media_context_text:
+        conversation_lines.append(media_context_text)
+    # 诊断：记录 caption 是否进了 conversation_lines
+    try:
+        from pathlib import Path as _P
+        _p = _P("data/qwen_persona/caption_debug.log")
+        _p.parent.mkdir(parents=True, exist_ok=True)
+        import time as _t
+        with _p.open("a", encoding="utf-8") as _f:
+            _f.write(_t.strftime("%Y-%m-%d %H:%M:%S ") + f"PROMPT media_context_text={media_context_text!r} conversation_lines_count={len(conversation_lines)}\n")
+    except OSError:
+        pass
     for item in relevant_samples:
         context_text = context_text_from_sample(item)
         context_text, _sticker_keys = parse_sticker_tokens(context_text)
@@ -451,11 +489,21 @@ async def _build_model_reply_plan(
             style_memory_lines.append(context_text)
     conversation_lines = trim_history_lines_for_context(conversation_lines, plugin_config)
     style_memory_lines = trim_history_lines_for_context(style_memory_lines, plugin_config)
+    active_memes = select_active_memes(
+        build_meme_candidates_from_samples(
+            samples=[*history, *relevant_samples],
+            media_assets=relevant_media_assets,
+        ),
+        context_text=query_text,
+        min_recent_count=plugin_config.qwen_persona_min_meme_recent_count,
+        max_items=3,
+    )
 
     return build_reply_plan(
         system_prompt=_build_system_prompt(),
         conversation_lines=conversation_lines,
         style_memory_lines=style_memory_lines,
+        active_memes=active_memes,
         current_text=envelope.current_text,
         media_parts=media_parts,
         sticker_reply_allowed=sticker_reply_allowed,
@@ -512,8 +560,21 @@ async def _search_relevant_media_assets(
 
 def _conversation_lines_from_envelope(envelope: MessageContextEnvelope) -> list[str]:
     lines: list[str] = []
-    for text in envelope.quoted_texts:
-        lines.append(f"引用消息：{text}")
+    # 主语：让 bot 知道是谁在说话、@ 了谁、回复了谁
+    if envelope.sender_name:
+        lines.append(f"说话人：{envelope.sender_name}")
+    if envelope.reply_sender:
+        reply_name = envelope.reply_sender.get("nickname") or envelope.reply_sender.get("user_id") or "某人"
+        for text in envelope.quoted_texts:
+            lines.append(f"回复{reply_name}的消息：{text}")
+        if not envelope.quoted_texts:
+            lines.append(f"当前消息回复了{reply_name}。")
+    else:
+        for text in envelope.quoted_texts:
+            lines.append(f"引用消息：{text}")
+    if envelope.at_targets:
+        names = "、".join(t.get("name") or t.get("qq") or "?" for t in envelope.at_targets)
+        lines.append(f"当前消息@了：{names}")
     for text in envelope.forwarded_texts:
         lines.append(f"合并转发：{text}")
     if envelope.sticker_keys:
@@ -523,28 +584,83 @@ def _conversation_lines_from_envelope(envelope: MessageContextEnvelope) -> list[
     return lines
 
 
+async def _check_media_relevance(media_context_text: str, conversation_text: str) -> bool:
+    """判断图片描述与文字内容是否相关。返回 True=相关保留，False=无关丢弃。
+
+    用 glm-4.5-flash 做轻量判断（免费/便宜），max_tokens=20 只回是/否。
+    纯图消息（无文字）跳过判断直接返回 True。
+    """
+    if not media_context_text or not conversation_text:
+        return True  # 无文字可对比，保留图片描述
+    try:
+        import httpx
+        # 复用在线推理配置，但强制用便宜的 flash 模型做判断
+        url = (plugin_config.qwen_persona_online_api_url or "").strip()
+        # 视觉模型走 paas/v4，文本判断也走同平台；用 coding 端点的 glm-5.2 也行
+        # 优先用 online 端点（用户已配的 GLM 推理），降级用 lora_helper
+        if not url:
+            url = (plugin_config.qwen_persona_lora_helper_api_url or "").strip()
+        key = (plugin_config.qwen_persona_online_api_key or "").strip()
+        if not key:
+            key = (plugin_config.qwen_persona_lora_helper_api_key or "").strip()
+        if not url or not key:
+            return True  # 没配置无法判断，保守保留
+        # 判断模型：online 模型通常是 glm-5.2（贵），判断用 flash 更省
+        judge_model = "glm-4.5-flash"
+        prompt = (
+            "判断下面【图片描述】和【对话文字】是否讨论同一话题/角色/场景。\n"
+            f"【图片描述】{media_context_text[:200]}\n"
+            f"【对话文字】{conversation_text[:300]}\n"
+            "只回复一个字：相关 或 无关"
+        )
+        timeout = httpx.Timeout(10.0)
+        async with httpx.AsyncClient(timeout=timeout) as c:
+            r = await c.post(
+                url,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": judge_model, "messages": [{"role": "user", "content": prompt}], "max_tokens": 512, "temperature": 0},
+            )
+        if r.status_code != 200:
+            return True  # 判断失败保守保留
+        content = str((r.json().get("choices") or [{}])[0].get("message", {}).get("content", "")).strip()
+        relevant = "无关" not in content  # 含"无关"判为不相关，其余视为相关
+        logger.info("qwen persona media relevance: judge=%r relevant=%s", content[:20], relevant)
+        return relevant
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("media relevance check skipped: %r", exc)
+        return True  # 出错保守保留
+
+
 async def _build_reply_input_text(
     message: Any,
     plain_text: str,
-) -> tuple[str, list[str], list[dict[str, Any]]]:
+) -> tuple[str, list[str], list[dict[str, Any]], str]:
+    active_captioner = _active_reply_captioner()
+    logger.info(
+        "qwen persona reply media: captioner=%s, anime_enabled=%s, media_segments=%d",
+        type(active_captioner).__name__ if active_captioner else "None",
+        getattr(plugin_config, "qwen_persona_anime_caption_enabled", True),
+        sum(1 for p in message_to_parts(message) if str(p.get("type") or "") in {"image", "mface", "emoji", "sticker"}),
+    )
     try:
         learning = await prepare_message_learning(
             message,
             sticker_segment_types=plugin_config.qwen_persona_sticker_segment_types,
-            captioner=None,
+            captioner=active_captioner,
             image_fallback_text="",
             sticker_fallback_text="",
         )
     except Exception as exc:
         logger.debug(f"qwen persona reply media context skipped: {exc!r}")
-        return plain_text, [], [part for part in message_to_parts(message) if part.get("type") != "text"]
+        return plain_text, [], [part for part in message_to_parts(message) if part.get("type") != "text"], ""
 
     sticker_keys = [
         str(item.get("key") or "").strip()
         for item in learning.get("stickers") or []
         if str(item.get("key") or "").strip()
     ]
-    return plain_text, sticker_keys, list(learning.get("media_parts") or [])
+    media_context_text = str(learning.get("media_context_text") or "")
+    return plain_text, sticker_keys, list(learning.get("media_parts") or []), media_context_text
 
 
 def _schedule_background_media_analysis(
@@ -634,7 +750,12 @@ async def _wait_for_generation_idle(*, timeout_seconds: float) -> bool:
         await asyncio.sleep(1.0)
 
 
-async def _send_repeat_if_needed(event: Event, ids: dict[str, str | None], message: Any) -> bool:
+async def _send_repeat_if_needed(
+    bot: Bot,
+    event: Event,
+    ids: dict[str, str | None],
+    message: Any,
+) -> bool:
     if not plugin_config.qwen_persona_enable_repeat:
         return False
     candidate = repeat_tracker.observe(
@@ -655,9 +776,12 @@ async def _send_repeat_if_needed(event: Event, ids: dict[str, str | None], messa
     reply_text = _remove_blacklisted_reply_lines(candidate.plain_text)
     if not reply_text and not candidate.sticker_keys:
         return False
-    reply = await _build_adapter_reply(event, reply_text, candidate.sticker_keys)
-    await persona_chat.send(reply)
-    return True
+    return await _send_adapter_reply(
+        bot=bot,
+        event=event,
+        text=reply_text,
+        sticker_keys=candidate.sticker_keys,
+    )
 
 
 async def _send_pattern_reply_if_known(
@@ -710,12 +834,106 @@ async def _send_pattern_reply_if_known(
     if not reply_text and not sticker_keys:
         return False
 
-    reply = await _build_adapter_reply(event, reply_text, sticker_keys)
+    if not await _send_adapter_reply(
+        bot=bot,
+        event=event,
+        text=reply_text,
+        sticker_keys=sticker_keys,
+    ):
+        return False
+    conversation_pattern_tracker.reset(ids["group_id"])
+    return True
+
+
+async def _send_adapter_reply(
+    *,
+    bot: Bot | None,
+    event: Event,
+    text: str,
+    sticker_keys: list[str],
+) -> bool:
+    delivery = plan_reply_delivery(text, sticker_keys)
+    if delivery.use_forward and bot is not None:
+        if await _send_onebot_v11_forward_reply(bot, event, delivery.forward_chunks):
+            if delivery.trailing_sticker_keys:
+                sticker_reply = await _build_adapter_reply(
+                    event,
+                    "",
+                    delivery.trailing_sticker_keys,
+                )
+                if not (isinstance(sticker_reply, str) and not sticker_reply.strip()):
+                    await persona_chat.send(sticker_reply)
+            return True
+
+    reply = await _build_adapter_reply(event, text, sticker_keys)
     if isinstance(reply, str) and not reply.strip():
         return False
     await persona_chat.send(reply)
-    conversation_pattern_tracker.reset(ids["group_id"])
     return True
+
+
+async def _send_onebot_v11_forward_reply(
+    bot: Bot,
+    event: Event,
+    chunks: list[str],
+) -> bool:
+    if "onebot.v11" not in event.__class__.__module__:
+        return False
+    if not chunks or not hasattr(bot, "call_api"):
+        return False
+    try:
+        from nonebot.adapters.onebot.v11 import Message, MessageSegment
+    except Exception:
+        return False
+
+    try:
+        node_user_id = _onebot_numeric_id(_bot_self_id(bot) or "0")
+        nickname = str(getattr(bot, "nickname", "") or _bot_self_id(bot) or "bot")
+        nodes = []
+        for chunk in chunks:
+            content = Message()
+            content += MessageSegment.text(chunk)
+            nodes.append(
+                MessageSegment.node_custom(
+                    user_id=node_user_id,
+                    nickname=nickname,
+                    content=content,
+                )
+            )
+
+        group_id = getattr(event, "group_id", None)
+        if group_id is not None:
+            await bot.call_api(
+                "send_group_forward_msg",
+                group_id=_onebot_numeric_id(group_id),
+                messages=nodes,
+            )
+            return True
+        try:
+            user_id = event.get_user_id()
+        except Exception:
+            user_id = getattr(event, "user_id", None)
+        if user_id is None:
+            return False
+        await bot.call_api(
+            "send_private_forward_msg",
+            user_id=_onebot_numeric_id(user_id),
+            messages=nodes,
+        )
+        return True
+    except Exception as exc:
+        logger.warning(f"qwen persona merged reply send failed: {exc!r}")
+        return False
+
+
+def _onebot_numeric_id(value: Any) -> Any:
+    text = str(value or "").strip()
+    if text.isdigit():
+        try:
+            return int(text)
+        except ValueError:
+            return text
+    return value
 
 
 async def _build_adapter_reply(event: Event, text: str, sticker_keys: list[str]) -> Any:
@@ -1118,10 +1336,33 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         conversation_pattern_tracker.reset(ids["group_id"])
         return
     plain_text = extract_plain_text(message)
-    reply_input_text, incoming_sticker_keys, media_parts = await _build_reply_input_text(message, plain_text)
+    # 合并转发：展开 forward 段，提取文字拼进 plain_text，图片段单独收集。
+    forward_texts_extra: list[str] = []
+    if count_forward_segments(message) > 0:
+        try:
+            f_texts, f_media = await resolve_forward(
+                bot,
+                message,
+                max_messages=int(plugin_config.qwen_persona_forward_max_messages),
+                max_chars=int(plugin_config.qwen_persona_forward_max_chars),
+            )
+            if f_texts:
+                forward_texts_extra = f_texts
+                forward_block = "【合并转发】\n" + "\n".join(f_texts)
+                plain_text = (plain_text + "\n" + forward_block).strip() if plain_text else forward_block
+                logger.info("qwen persona forward expanded: texts=%d media=%d", len(f_texts), len(f_media))
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("forward expand skipped: %r", exc)
+    reply_input_text, incoming_sticker_keys, media_parts, media_context_text = await _build_reply_input_text(message, plain_text)
+    # 图片智能控制：图片超过阈值则丢弃图片识别（media_context_text 清空），只保留文字。
+    image_count = sum(1 for p in media_parts if str(p.get("type") or "") in {"image", "mface", "emoji", "sticker"})
+    image_limit = int(plugin_config.qwen_persona_media_image_limit)
+    if image_count > image_limit and media_context_text:
+        logger.info("qwen persona media: %d images > limit %d, dropping captions", image_count, image_limit)
+        media_context_text = ""
     if _should_schedule_background_media_analysis(bot, event, plain_text, ids, media_parts):
         _schedule_background_media_analysis(ids, media_parts)
-    if await _send_repeat_if_needed(event, ids, message):
+    if await _send_repeat_if_needed(bot, event, ids, message):
         conversation_pattern_tracker.reset(ids["group_id"])
         matcher.stop_propagation()
         return
@@ -1132,6 +1373,27 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     if not reply_decision.allowed:
         return
 
+    # 主语指代：预解析 @ 目标和被引用消息发送者的昵称，让 bot 知道谁在对谁说话。
+    at_nicknames: dict[str, str | None] = {}
+    reply_nickname: str | None = None
+    group_id = ids.get("group_id")
+    try:
+        at_qqs = [t["qq"] for t in _at_targets_from_message(message, {}) if t.get("qq")]
+        if at_qqs and group_id:
+            at_nicknames = await nickname_resolver.resolve_many(bot, group_id, at_qqs)
+        reply_obj = getattr(event, "reply", None)
+        reply_sender_id = ""
+        if reply_obj is not None:
+            reply_sender_obj = getattr(reply_obj, "sender", None)
+            if isinstance(reply_sender_obj, dict):
+                reply_sender_id = str(reply_sender_obj.get("user_id") or reply_sender_obj.get("qq") or "")
+            elif reply_sender_obj is not None:
+                reply_sender_id = str(getattr(reply_sender_obj, "user_id", "") or getattr(reply_sender_obj, "qq", ""))
+        if reply_sender_id and group_id:
+            reply_nickname = await nickname_resolver.resolve(bot, group_id, reply_sender_id)
+    except Exception as exc:  # noqa: BLE001 — 昵称解析失败不阻塞回复
+        logger.debug("nickname pre-resolve skipped: %r", exc)
+
     envelope = build_message_context(
         message=message,
         event=event,
@@ -1139,6 +1401,8 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         media_parts=media_parts,
         sticker_keys=incoming_sticker_keys,
         forced_by_at=reply_decision.reason == "force_reply",
+        at_nicknames=at_nicknames,
+        reply_nickname=reply_nickname,
     )
     sticker_reply_allowed = should_use_sticker_reply(
         incoming_has_sticker=bool(incoming_sticker_keys),
@@ -1152,6 +1416,7 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
         sticker_reply_allowed=sticker_reply_allowed,
         incoming_has_sticker=bool(incoming_sticker_keys),
         media_parts=media_parts,
+        media_context_text=media_context_text,
     )
     inference_started = time.perf_counter()
     raw_reply = ""
@@ -1184,8 +1449,8 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
             store=store,
             ids=ids,
             trigger_reason="auto_reply",
-            model=plugin_config.qwen_persona_mlx_model,
-            adapter=plugin_config.qwen_persona_mlx_adapter_path,
+            model=client.active_model_name() if hasattr(client, "active_model_name") else plugin_config.qwen_persona_mlx_model,
+            adapter=plugin_config.qwen_persona_mlx_adapter_path if client.active_backend() == "mlx" else "",
             started_at=inference_started,
             finished_at=time.perf_counter(),
             input_text=reply_input_text,
@@ -1228,10 +1493,8 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     if not clean_text and not sticker_keys:
         return
 
-    reply = await _build_adapter_reply(event, clean_text, sticker_keys)
-    if isinstance(reply, str) and not reply.strip():
+    if not await _send_adapter_reply(bot=bot, event=event, text=clean_text, sticker_keys=sticker_keys):
         return
-    await persona_chat.send(reply)
     conversation_pattern_tracker.reset(ids["group_id"])
     matcher.stop_propagation()
 

@@ -58,6 +58,7 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_pattern_reply_threshold: int = 3
     qwen_persona_context_scope: Literal["group", "global", "mixed"] = "mixed"
     qwen_persona_context_messages: int = 16
+    qwen_persona_min_meme_recent_count: int = 2
 
     qwen_persona_min_sample_chars: int = 2
     qwen_persona_max_sample_chars: int = 600
@@ -117,6 +118,7 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_train_timeout_seconds: int = 0
     qwen_persona_dataset_limit: int = 4000
     qwen_persona_dataset_history_window: int = 4
+    qwen_persona_dataset_excluded_user_ids: set[str] = Field(default_factory=set)
     qwen_persona_external_corpus_enabled: bool = True
     qwen_persona_external_corpus_limit: int = 0
     qwen_persona_min_train_samples: int = 20
@@ -139,7 +141,7 @@ class QwenPersonaConfig(BaseModel):
     qwen_persona_mlx_lora_steps_per_report: int = 10
     qwen_persona_lora_helper_api_url: str = ""
     qwen_persona_lora_helper_api_key: str = ""
-    qwen_persona_lora_helper_model: str = "gpt-5.4-fast"
+    qwen_persona_lora_helper_model: str = "glm-5.2"
     qwen_persona_lora_helper_timeout: float = 120.0
     qwen_persona_lora_helper_sample_limit: int = 0
     qwen_persona_lora_helper_extra_body: dict[str, Any] = Field(default_factory=dict)
@@ -148,6 +150,44 @@ class QwenPersonaConfig(BaseModel):
         "去掉命令、隐私、广告和重复噪声。只返回一个 JSON 对象，结构保持 {\"messages\": [...], \"metadata\": {...}}。"
     )
 
+    # 对话推理后端切换：mlx = 本地 Qwen MLX，glm = GLM 在线 API（OpenAI 兼容）。
+    qwen_persona_inference_backend: Literal["mlx", "glm"] = "mlx"
+    # GLM 在线推理独立配置（与 lora_helper 辅助训练解耦，可用不同模型）。
+    qwen_persona_online_api_url: str = ""
+    qwen_persona_online_api_key: str = ""
+    qwen_persona_online_model: str = "glm-5.2"
+    qwen_persona_online_timeout: float = 90.0
+    # GLM 端点是否支持多模态。Coding 订阅端点只支持纯文本，默认 False：
+    # 遇到图片时丢弃图片仅发文字。普通 paas/v4 + API 资源包可设 True。
+    qwen_persona_online_multimodal: bool = False
+
+    # 动漫图片识别：用 SauceNAO + iqdb 双路搜索角色/作品/画师，转文字描述进 prompt。
+    # 开启后主回复路径的图片会走动漫识别（不依赖本地 Qwen-VL，二次元识别更准）。
+    qwen_persona_anime_caption_enabled: bool = True
+    # SauceNAO API key（saucenao.com 免费注册）。空则只用 iqdb 单路。
+    qwen_persona_saucenao_api_key: str = ""
+    # SauceNAO 数据库掩码：999 = 默认动漫相关库全开。
+    qwen_persona_saucenao_dbmask: int = 999
+    # 命中阈值：相似度低于此值视为未识别，返回空（降级为文字标记）。
+    qwen_persona_anime_min_similarity: float = 80.0
+    # AI 视觉识图：用 GLM-4.6V-Flash（免费）理解任意图的内容（角色/场景/动作），
+    # 对插画/截图/同人都能识别，弥补 SauceNAO/iqdb 对冷门图命中率低的问题。
+    qwen_persona_anime_vision_enabled: bool = True
+    # 视觉模型名（z.ai 免费视觉模型）。glm-4.6v-flash 免费，glm-4.5v 需付费资源包。
+    qwen_persona_anime_vision_model: str = "glm-4.6v-flash"
+    # 视觉模型 API（复用 z.ai key）。空则用 online_api_url/key 的同平台凭证。
+    qwen_persona_anime_vision_api_url: str = "https://api.z.ai/api/paas/v4/chat/completions"
+    qwen_persona_anime_vision_api_key: str = ""
+
+    # 合并转发消息：调 get_forward_msg API 展开内容，提取文字+图片。
+    qwen_persona_forward_max_messages: int = 20  # 最多展开的转发条数（防爆 token）
+    qwen_persona_forward_max_chars: int = 1500   # 转发文字合并后的最大字符
+    # 图片智能控制：消息里图片超过此数则跳过识别，只处理文字（省成本/延迟）。
+    qwen_persona_media_image_limit: int = 5
+    # 图文相关性判断：识别图片后，若与文字无关则丢弃图片描述只保留文字。
+    # 需多一次轻量 API 调用（~1s），可关闭。
+    qwen_persona_media_relevance_check: bool = True
+
     qwen_persona_blacklist_words: list[str] = Field(default_factory=list)
     qwen_persona_blacklist_regexes: list[str] = Field(default_factory=list)
     qwen_persona_blacklist_user_ids: set[str] = Field(default_factory=set)
@@ -155,7 +195,7 @@ class QwenPersonaConfig(BaseModel):
 
     qwen_persona_system_prompt: str = (
         "你是在群聊中参与对话的普通成员。优先理解上下文、直接回答问题并接住当前话题；"
-        "语气可以自然短句、有梗，但不要为了套用群友口头禅而忽略问题，"
+        "语气可以自然短句，但不要为了套用固定句式而忽略问题，"
         "不要输出用户 id 或聊天记录格式。不会泄露隐私、不会复述本地插件命令、"
         "不会假装拥有管理员权限。"
     )
@@ -171,6 +211,8 @@ def effective_mlx_model(config: QwenPersonaConfig) -> str:
 
 
 def effective_chat_model(config: QwenPersonaConfig) -> str:
+    if config.qwen_persona_inference_backend == "glm":
+        return (config.qwen_persona_online_model or "glm-5.2").strip() or "glm-5.2"
     return effective_mlx_model(config)
 
 

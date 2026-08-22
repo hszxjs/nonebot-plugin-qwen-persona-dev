@@ -203,9 +203,13 @@ def create_admin_app(
     ) -> dict[str, Any]:
         authorize(token, x_admin_token)
         runtime_status = (
-            await _maybe_await(mlx_runtime.status_snapshot())
-            if mlx_runtime and hasattr(mlx_runtime, "status_snapshot")
-            else {"state": "mlx_runtime_unavailable", "healthy": False}
+            await _maybe_await(qwen_client.status_snapshot())
+            if qwen_client and hasattr(qwen_client, "status_snapshot")
+            else (
+                await _maybe_await(mlx_runtime.status_snapshot())
+                if mlx_runtime and hasattr(mlx_runtime, "status_snapshot")
+                else {"state": "mlx_runtime_unavailable", "healthy": False}
+            )
         )
         dashboard = (
             await _maybe_await(store.dashboard_stats())
@@ -245,9 +249,13 @@ def create_admin_app(
     ) -> dict[str, Any]:
         authorize(token, x_admin_token)
         status = (
-            await _maybe_await(mlx_runtime.status_snapshot())
-            if mlx_runtime and hasattr(mlx_runtime, "status_snapshot")
-            else {"state": "mlx_runtime_unavailable", "healthy": False}
+            await _maybe_await(qwen_client.status_snapshot())
+            if qwen_client and hasattr(qwen_client, "status_snapshot")
+            else (
+                await _maybe_await(mlx_runtime.status_snapshot())
+                if mlx_runtime and hasattr(mlx_runtime, "status_snapshot")
+                else {"state": "mlx_runtime_unavailable", "healthy": False}
+            )
         )
         return _runtime_summary(dict(status))
 
@@ -554,6 +562,29 @@ def create_admin_app(
                 "admin_server": "fastapi-vite",
             },
         }
+
+    @app.get("/api/models")
+    async def list_models(
+        token: str | None = Query(default=None),
+        x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    ) -> dict[str, Any]:
+        authorize(token, x_admin_token)
+        # 从在线推理配置派生 models 端点；未配置则回退到辅助训练配置。
+        chat_url = (config.qwen_persona_online_api_url or "").strip()
+        api_key = (config.qwen_persona_online_api_key or "").strip()
+        if not chat_url:
+            chat_url = (config.qwen_persona_lora_helper_api_url or "").strip()
+            api_key = (config.qwen_persona_lora_helper_api_key or "").strip()
+        try:
+            from .glm_backend import fetch_online_models
+
+            models, source = await fetch_online_models(chat_url, api_key, timeout=8.0)
+        except Exception as exc:  # noqa: BLE001 — 任何异常都走兜底，不阻塞前端
+            models, source = [
+                "glm-5.2", "glm-4.5-flash", "glm-4.6", "glm-4.5",
+            ], "fallback"
+            logger.warning("list_models fallback after error: %r", exc)
+        return {"models": models, "source": source}
 
     @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def static_or_fallback(path: str, request: Request) -> Response:

@@ -106,6 +106,8 @@ async def prepare_message_learning(
                 if caption:
                     training_chunks.append(f"表情：{caption}")
                     record["summary"] = caption
+                    # 表情/图片也进回复上下文，让 bot 这次回复就能"看到"图的内容。
+                    media_context_chunks.append(f"图片/表情：{caption}")
                 stickers.append(record)
                 sticker_keys.append(record["key"])
                 sticker_events.append(

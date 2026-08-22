@@ -21,6 +21,39 @@ class FailingHelperTrainerMixin:
 
 
 class TrainerProgressTests(unittest.TestCase):
+    def test_trainer_passes_dataset_excluded_user_ids_to_export(self) -> None:
+        import asyncio
+
+        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_qwen_persona.trainer import PersonaTrainer
+
+        class Store:
+            def __init__(self) -> None:
+                self.export_kwargs: dict[str, object] = {}
+
+            async def export_sft_dataset(self, **kwargs: object) -> int:
+                self.export_kwargs = kwargs
+                return 0
+
+            async def begin_training_run(self, **_kwargs: object) -> None:
+                return None
+
+            async def finish_training_run(self, **_kwargs: object) -> None:
+                return None
+
+        store = Store()
+        trainer = PersonaTrainer(
+            QwenPersonaConfig(
+                qwen_persona_data_dir=tempfile.mkdtemp(),
+                qwen_persona_dataset_excluded_user_ids={"bot-self"},
+            ),
+            store=store,  # type: ignore[arg-type]
+        )
+
+        asyncio.run(trainer.run_training(reason="unit", include_external_corpus=False))
+
+        self.assertEqual(store.export_kwargs["excluded_user_ids"], {"bot-self"})
+
     def test_progress_log_records_stage_changes_without_waiting_for_final_log(self) -> None:
         from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
         from nonebot_plugin_qwen_persona.trainer import PersonaTrainer

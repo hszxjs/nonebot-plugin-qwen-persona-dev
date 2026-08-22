@@ -59,6 +59,7 @@ def build_reply_plan(
     history_lines: list[str] | None = None,
     conversation_lines: list[str] | None = None,
     style_memory_lines: list[str] | None = None,
+    active_memes: list[dict[str, Any]] | None = None,
     current_text: str,
     media_parts: list[dict[str, Any]],
     sticker_reply_allowed: bool,
@@ -75,6 +76,7 @@ def build_reply_plan(
         style_memory = _clean_lines(history_lines)
 
     user_parts: list[str] = []
+    user_parts.append(f"回复意图：{intent.value}")
     if conversation_context:
         user_parts.append("当前对话上下文：\n" + "\n".join(conversation_context))
     if style_memory:
@@ -85,7 +87,18 @@ def build_reply_plan(
         )
     else:
         user_parts.append("语气参考：无。不要输出用户 id。")
-    user_parts.append(f"当前消息：{normalize_text(current_text) or '[有人在叫你]'}")
+    meme_section = _meme_prompt_section(active_memes)
+    if meme_section:
+        user_parts.append(meme_section)
+    # 当前消息文案：有文字用文字；纯图/表情用媒体占位；都没有才视为"被叫"。
+    _normalized_current = normalize_text(current_text)
+    if _normalized_current:
+        _current_label = _normalized_current
+    elif media_parts:
+        _current_label = "[图片/表情消息，请参考上下文里的图片描述]"
+    else:
+        _current_label = "[有人在叫你]"
+    user_parts.append(f"当前消息：{_current_label}")
     if intent == ReplyIntent.IMAGE_EXPLAIN:
         user_parts.append(
             "回答用户对图片或表情的疑问。可以解释可见内容并顺势接一句群聊口吻，"
@@ -101,7 +114,10 @@ def build_reply_plan(
             "可以保留群聊口吻，但不要为了模仿人而绕开问题。"
         )
     else:
-        user_parts.append("请自然接一句，只输出文字，不要输出命令、JSON 或表情 token。")
+        user_parts.append(
+            "先判断当前上下文意图；如果没有具体问题，就用自然短句接住当前话题。"
+            "只输出文字，不要输出命令、JSON 或表情 token。"
+        )
     user_parts.append("只输出最终要发到群里的内容，不要写思考过程。")
 
     return ReplyPlan(
@@ -131,3 +147,26 @@ def _clean_lines(lines: list[str] | None) -> list[str]:
         seen.add(cleaned)
         result.append(cleaned)
     return result
+
+
+def _meme_prompt_section(active_memes: list[dict[str, Any]] | None) -> str:
+    memes = list(active_memes or [])[:3]
+    if not memes:
+        return ""
+
+    lines = ["可用梗（只有和当前上下文直接相关时才可以顺手使用；不相关就忽略）："]
+    for item in memes:
+        label = normalize_text(str(item.get("label") or item.get("summary") or ""))
+        if not label:
+            continue
+        hint = normalize_text(str(item.get("hint") or ""))
+        recent_count = item.get("recent_count") or item.get("count")
+        suffix = ""
+        if hint:
+            suffix += f"：{hint}"
+        if recent_count:
+            suffix += f"（热度 {recent_count}）"
+        lines.append(f"- {label}{suffix}")
+    if len(lines) == 1:
+        return ""
+    return "\n".join(lines)

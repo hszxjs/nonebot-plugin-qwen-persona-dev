@@ -227,3 +227,8 @@ export type TrainingActionResult = {
   training: TrainingSummary["operation"]
   error?: string
 }
+
+export type ModelsPayload = {
+  models: string[]
+  source: "api" | "fallback"
+}
