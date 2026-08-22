@@ -22,6 +22,8 @@ import httpx
 
 from ..config import QwenPersonaConfig
 from ..contracts import InferenceMetric, utc_timestamp
+from .base import ProviderCapabilities
+from .registry import register
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +184,12 @@ def _build_openai_messages(
     return out
 
 
+@register(
+    "glm",
+    provider_type="remote",
+    display_name="GLM 在线 API",
+    docs_url="https://open.bigmodel.cn/dev/api",
+)
 class GlmBackend:
     """GLM 在线推理 backend。无本地状态，可并发，无 load/unload 概念。
 
@@ -190,6 +198,8 @@ class GlmBackend:
     仅发送文字部分（并记日志）。若你的端点支持多模态（如普通 paas/v4
     + API 资源包），可在 online 配置里设 multimodal=true 开启图片转 base64。
     """
+
+    provider_name = "glm"
 
     def __init__(self, config: QwenPersonaConfig) -> None:
         self.config = config
@@ -350,6 +360,24 @@ class GlmBackend:
     def metrics_snapshot(self) -> dict[str, Any]:
         history = [asdict(item) for item in self._metrics]
         return {"last": history[-1] if history else None, "history": history}
+
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(
+            vision=bool(getattr(self.config, "qwen_persona_online_multimodal", False)),
+            function_calling=False,
+            streaming=False,
+            lora_hotload=False,
+        )
+
+    def default_models(self) -> list[dict[str, str]]:
+        return [
+            {"value": name, "label": name, "description": "GLM 在线 API 模型"}
+            for name in _FALLBACK_MODELS
+        ]
+
+    async def health_check(self) -> bool:
+        # 无独立探活端点：以最近一次调用的健康状态为准（进程启动后默认健康）。
+        return bool(self.status_snapshot().get("healthy"))
 
     def status_snapshot(self) -> dict[str, Any]:
         configured = bool(self._api_url)

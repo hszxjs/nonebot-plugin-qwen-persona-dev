@@ -13,17 +13,27 @@ from pathlib import Path
 from typing import Any
 
 from ..config import QwenPersonaConfig, effective_mlx_model
+from ..model_manager.download import HFDownloadManager, PreparedModel, is_existing_local_model, is_hf_repo_ref
+from ..model_manager.presets import MLX_MODEL_PRESETS
+from .base import ProviderCapabilities
 from .generation_profiles import GenerationProfile, GenerationPurpose, profile_for_purpose
 from .generation_safety import trim_repetitive_tail
 from .mlx_backend import DefaultMlxBackend, MlxBackend
-from ..model_manager.download import HFDownloadManager, PreparedModel, is_existing_local_model, is_hf_repo_ref
+from .registry import register
 from ..contracts import InferenceMetric, MlxRuntimeLog, OperationProgress, RuntimeOperation, utc_timestamp
 
 
 REPLACEMENT_CHAR = "\ufffd"
 
 
+@register(
+    "mlx",
+    provider_type="local",
+    display_name="本地 MLX-VLM",
+    docs_url="https://github.com/Blaizzy/mlx-vlm",
+)
 class MlxVLMRuntime:
+    provider_name = "mlx"
     def __init__(
         self,
         config: QwenPersonaConfig,
@@ -173,6 +183,16 @@ class MlxVLMRuntime:
         payload["metrics"] = self.metrics_snapshot()
         payload["generation"] = self._generation_snapshot()
         return payload
+
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(vision=True, function_calling=False, streaming=True, lora_hotload=True)
+
+    def default_models(self) -> list[dict[str, str]]:
+        return list(MLX_MODEL_PRESETS)
+
+    async def health_check(self) -> bool:
+        snapshot = self.status_snapshot()
+        return bool(snapshot.get("healthy"))
 
     def logs(self, *, tail: int = 200) -> list[dict[str, Any]]:
         tail = max(0, min(int(tail), 1000))

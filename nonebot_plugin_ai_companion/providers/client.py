@@ -4,17 +4,18 @@ import logging
 from typing import Any
 
 from ..config import QwenPersonaConfig, effective_chat_model
-from .glm_backend import GlmBackend
+from .base import BaseProvider, ProviderCapabilities
 from .mlx_runtime import MlxVLMRuntime
+from .registry import create_provider, get_provider_spec
 
 logger = logging.getLogger(__name__)
 
 
 class QwenClient:
-    """推理后端分发器：按 config 选择本地 MLX 或 GLM 在线。
+    """推理后端分发器：按 config 经注册表选择本地 MLX 或在线 GLM。
 
     chat / metrics_snapshot / status_snapshot 全部转发到当前激活的 backend，
-    上层（reply_planner、admin_server、inference_events）无需感知后端差异。
+    上层（chat 服务、admin_server、observability）无需感知后端差异。
     """
 
     def __init__(
@@ -22,11 +23,12 @@ class QwenClient:
         config: QwenPersonaConfig,
         *,
         runtime: MlxVLMRuntime | None = None,
-        glm_backend: GlmBackend | None = None,
+        glm_backend: Any | None = None,
     ) -> None:
         self.config = config
-        self.mlx_runtime = runtime or MlxVLMRuntime(config)
-        self.glm_backend = glm_backend or GlmBackend(config)
+        # 经注册表构建，保证后端与注册信息一致；允许测试注入替身。
+        self.mlx_runtime = runtime or create_provider("mlx", config)
+        self.glm_backend = glm_backend or create_provider("glm", config)
 
     def reconfigure(self, config: QwenPersonaConfig) -> None:
         prev_backend = self.config.qwen_persona_inference_backend
@@ -40,15 +42,19 @@ class QwenClient:
             )
 
     @property
-    def _active(self) -> Any:
+    def _active(self) -> BaseProvider:
         """当前激活的 backend（mlx_runtime 或 glm_backend）。"""
         if self.config.qwen_persona_inference_backend == "glm":
-            return self.glm_backend
-        return self.mlx_runtime
+            return self.glm_backend  # type: ignore[return-value]
+        return self.mlx_runtime  # type: ignore[return-value]
 
     def active_backend(self) -> str:
         """返回当前后端标识：'mlx' 或 'glm'。"""
         return self.config.qwen_persona_inference_backend
+
+    def active_backend_spec(self) -> dict[str, str]:
+        """当前后端的注册信息（类型/展示名/文档链接，供前端展示）。"""
+        return get_provider_spec(self.active_backend()).to_dict()
 
     def active_model_name(self) -> str:
         """当前后端实际使用的模型名（供 inference_events 记录）。"""
@@ -75,3 +81,12 @@ class QwenClient:
 
     def status_snapshot(self) -> dict[str, Any]:
         return self._active.status_snapshot()
+
+    def capabilities(self) -> ProviderCapabilities:
+        return self._active.capabilities()
+
+    def default_models(self) -> list[dict[str, str]]:
+        return self._active.default_models()
+
+    async def health_check(self) -> bool:
+        return await self._active.health_check()
