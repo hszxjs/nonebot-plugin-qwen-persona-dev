@@ -299,3 +299,124 @@ export type ToolsPayload = {
   items: ToolInfo[]
   total: number
 }
+
+export type ProviderSpec = {
+  name: string
+  provider_type: "local" | "remote" | "unknown" | string
+  display_name?: string
+  docs_url?: string
+}
+
+export type BackendConfig = {
+  id: string
+  backend_type: string
+  display_name: string
+  settings: Record<string, unknown>
+  enabled: boolean
+  priority: number
+  created_at: number
+  updated_at: number
+  spec: ProviderSpec
+}
+
+export type BackendsPayload = {
+  items: BackendConfig[]
+  total: number
+  available_types: ProviderSpec[]
+}
+
+export type BackendPayload = {
+  backend_type: string
+  display_name: string
+  settings: Record<string, unknown>
+  enabled?: boolean
+  priority?: number
+}
+
+export type BackendHealthCheckResult = {
+  id: string
+  healthy: boolean
+  status: {
+    healthy?: boolean
+    model?: string
+    last_error?: string | null
+  } & Record<string, unknown>
+}
+
+export type ProviderRole = "chat" | "vision" | "data_cleaning"
+
+export type RoleBinding = {
+  role: ProviderRole | string
+  provider_id: string
+  model: string
+  fallback_provider_id: string | null
+  updated_at: number
+}
+
+export type ProviderBindingsPayload = {
+  items: RoleBinding[]
+  roles: ProviderRole[]
+}
+
+export type ProviderBindingPayload = {
+  provider_id: string
+  model?: string
+  fallback_provider_id?: string | null
+}
+
+export type LocalModel = {
+  name: string
+  path: string
+  size_bytes: number
+  size_display: string
+}
+
+export type ModelPreset = {
+  value: string
+  label: string
+  description?: string
+}
+
+export type ModelManageOperationState =
+  | "running"
+  | "success"
+  | "failed"
+  | "cancelled"
+  | "idle"
+  | string
+
+export type ModelManageOperation = {
+  type: string
+  phase: string
+  state: ModelManageOperationState
+  message: string
+  percent: number | null
+  downloaded_bytes: number | null
+  total_bytes: number | null
+  error: string
+  target_model?: string
+  local_path?: string
+  started_at: string
+  finished_at: string | null
+}
+
+export type ModelsManagePayload = {
+  local: LocalModel[]
+  presets: ModelPreset[]
+  total_size_bytes: number
+  operation: ModelManageOperation | null
+}
+
+export type ModelDownloadResult = {
+  operation: ModelManageOperation
+}
+
+export type ModelCancelResult = {
+  cancelling: boolean
+}
+
+export type ModelDeleteResult = {
+  deleted: string
+  freed_bytes: number
+  freed_display: string
+}

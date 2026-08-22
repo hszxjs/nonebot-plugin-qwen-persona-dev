@@ -91,12 +91,26 @@ pnpm --dir webui test                           # 前端 11 用例
 - **API/webui**：`/api/role-cards`（CRUD/克隆/绑定/生成/刷新风格）+ `/api/tools`；
   webui 新增"角色卡"页（第 6 个工作区）
 
+## 第三期交付（已完成）
+
+- **Ollama / llama.cpp 适配器**：`providers/openai_compat.py` 共用基类（chat /
+  chat_with_tools / 重试 / 健康检查 / 多模态 base64），`@register` 注册为 local 类型，
+  base_url 自动补 /v1，内置按文档十二.3 梯度整理的默认模型列表
+- **InferenceBackendConfig 持久化**（文档三.3）：`inference_backend_configs` 增量表，
+  同一后端类型可建多实例；`ProviderInstanceManager` 缓存实例（updated_at 失效）
+- **RoleProviderBinding 三角色绑定**（文档三.4）：`role_provider_bindings` 表，
+  chat / vision / data_cleaning 各自绑定实例 + 模型覆盖 + 降级实例；
+  `ProviderResolver` 解析：绑定实例（chat 含降级链与模型覆盖）→ 无绑定回退旧路径
+  （QwenClient / MLX 运行时 / 辅助 LLM），未配置时行为与二期完全一致
+- **一期债务清偿**：表情选择器与后台识图改走 vision 角色解析（默认仍为本地 MLX，
+  绑定实例后可切 Ollama 视觉模型等）；member_mimic 风格分析改走 data_cleaning 角色
+- **模型管理器**（文档十二.2）：后台 HF 下载（tqdm 钩子取消）、RuntimeOperation 进度、
+  磁盘占用统计、删除清理；`/api/models/manage/download/events` SSE 流式推送
+- **webui**：新增「推理后端」页（实例 CRUD/健康徽章/角色绑定/优先级）与
+  「模型管理」页（EventSource 下载进度）
+
 ## 后续分期路线（源自总体架构文档，未实施）
 
-- **第三期：Provider 域扩展**。Ollama / llama.cpp 适配器（`@register` 装饰器即插即用）、
-  `InferenceBackendConfig` 数据库持久化与故障降级链、`RoleProviderBinding`
-  （chat/vision/data_cleaning 三角色绑定，含表情选择/后台识图改走 vision 角色绑定）、
-  模型管理器页面（SSE 流式下载进度）
 - **第四期：observability 增强**。`MessageLog` 记录 trigger/reply 平台消息 ID、
   `/trace` 引用溯源命令、历史（HTTP）+ 实时（SSE）合并时间线、反拟人化黑名单词库页
 - **第五期：finetune 增强 + 长期记忆**。`LoraAdapter` 角色卡+语种绑定与版本回滚、
@@ -107,8 +121,8 @@ pnpm --dir webui test                           # 前端 11 用例
 
 - 表情选择与后台识图固定直连 `mlx_runtime`（GLM 模式下本地视觉仍被使用）——第三期随
   RoleProviderBinding 的 vision 角色绑定一起解决
-- 工具调用回路仅 GLM 后端支持（MLX 无 function calling）；MLX 模式下工具仅作为
-  提示词描述存在，第三期评估本地工具协议
+- 工具调用回路在 GLM 与 OpenAI 兼容实例（Ollama/llama.cpp）上可用；本地 MLX 后端
+  无 function calling，工具仅作为提示词描述存在
 - `sticker/assets.py` 的去重/回填/清理维护例程会跨表重写 chat_samples（同事务、表情域语义，
   已在模块 docstring 标注）；第五期 Alembic 化时收敛
 - prompt 各段（身份/记忆/场景/接话动机/自检）目前是单一 builder 函数，第二期拆分段落注册表

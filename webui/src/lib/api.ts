@@ -2,11 +2,20 @@ import ky, { HTTPError } from "ky"
 import useSWR from "swr"
 
 import type {
+  BackendHealthCheckResult,
+  BackendPayload,
+  BackendsPayload,
   ConfigValue,
   DiagnosticsPayload,
   LogsPayload,
+  ModelCancelResult,
+  ModelDeleteResult,
+  ModelDownloadResult,
+  ModelsManagePayload,
   ModelsPayload,
   OperationsOverview,
+  ProviderBindingPayload,
+  ProviderBindingsPayload,
   RoleCard,
   RoleCardBindResult,
   RoleCardPayload,
@@ -222,4 +231,63 @@ export function refreshMemberMimicStyle(id: string) {
   return api
     .post(`role-cards/${encodeURIComponent(id)}/refresh-style`)
     .json<{ item: RoleCard }>()
+}
+
+export function useBackends() {
+  return useSWR<BackendsPayload>("backends", fetchJson)
+}
+
+export function createBackend(payload: BackendPayload) {
+  return api.post("backends", { json: payload }).json<{ item: BackendsPayload["items"][number] }>()
+}
+
+export function updateBackend(id: string, payload: BackendPayload) {
+  return api
+    .patch(`backends/${encodeURIComponent(id)}`, { json: payload })
+    .json<{ item: BackendsPayload["items"][number] }>()
+}
+
+export function deleteBackend(id: string) {
+  return api.delete(`backends/${encodeURIComponent(id)}`).json<{ deleted: number }>()
+}
+
+export function healthCheckBackend(id: string) {
+  return api
+    .post(`backends/${encodeURIComponent(id)}/health-check`)
+    .json<BackendHealthCheckResult>()
+}
+
+export function useProviderBindings() {
+  return useSWR<ProviderBindingsPayload>("provider-bindings", fetchJson)
+}
+
+export function setProviderBinding(role: string, payload: ProviderBindingPayload) {
+  return api
+    .put(`provider-bindings/${encodeURIComponent(role)}`, { json: payload })
+    .json<{ binding: ProviderBindingsPayload["items"][number] }>()
+}
+
+export function useModelsManage() {
+  return useSWR<ModelsManagePayload>("models/manage", fetchJson)
+}
+
+export function startModelDownload(modelRef: string) {
+  return api
+    .post("models/manage/download", { json: { model_ref: modelRef } })
+    .json<ModelDownloadResult>()
+}
+
+export function cancelModelDownload() {
+  return api.post("models/manage/download/cancel").json<ModelCancelResult>()
+}
+
+export function deleteLocalModel(modelRef: string) {
+  return api
+    .delete("models/manage", { searchParams: { model_ref: modelRef } })
+    .json<ModelDeleteResult>()
+}
+
+export function modelDownloadEventsUrl() {
+  const token = getAdminToken()
+  return `/api/models/manage/download/events${token ? `?token=${encodeURIComponent(token)}` : ""}`
 }
