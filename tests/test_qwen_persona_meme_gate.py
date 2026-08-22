@@ -13,7 +13,7 @@ sys.modules.setdefault("nonebot_plugin_ai_companion", package)
 
 class MemeGateTests(unittest.TestCase):
     def test_candidate_builder_requires_repeated_recent_samples_for_heat(self) -> None:
-        from nonebot_plugin_ai_companion.meme_gate import (
+        from nonebot_plugin_ai_companion.prompt.meme_gate import (
             build_meme_candidates_from_samples,
             select_active_memes,
         )
@@ -51,7 +51,7 @@ class MemeGateTests(unittest.TestCase):
         self.assertEqual([item["label"] for item in selected], ["快变回人形了"])
 
     def test_high_heat_meme_is_rejected_without_context_match(self) -> None:
-        from nonebot_plugin_ai_companion.meme_gate import select_active_memes
+        from nonebot_plugin_ai_companion.prompt.meme_gate import select_active_memes
 
         selected = select_active_memes(
             [
@@ -68,7 +68,7 @@ class MemeGateTests(unittest.TestCase):
         self.assertEqual(selected, [])
 
     def test_context_match_and_recent_heat_enables_limited_memes(self) -> None:
-        from nonebot_plugin_ai_companion.meme_gate import select_active_memes
+        from nonebot_plugin_ai_companion.prompt.meme_gate import select_active_memes
 
         selected = select_active_memes(
             [

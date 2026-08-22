@@ -1,9 +1,18 @@
+"""跨领域契约：Protocol 接口与共享 DTO。
+
+按架构约定（docs/architecture.md），域与域之间只依赖本模块中声明的
+接口与数据传输对象，禁止跨域 import 具体实现类。
+"""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from .providers.generation_profiles import GenerationPurpose
 
 _UNSET = object()
 
@@ -104,3 +113,35 @@ class InferenceMetric:
     source: str
     finish_reason: str = ""
     purpose: str = ""
+
+
+class MediaCaptioner(Protocol):
+    """图片/表情描述器：AnimeCaptioner、MlxVLMRuntime 等实现该接口。"""
+
+    async def caption_media(self, part: dict[str, Any]) -> str:
+        ...
+
+
+class StickerSelectionRuntime(Protocol):
+    """表情选择推理运行时：只需 chat 能力，由 MlxVLMRuntime 实现。"""
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        media_parts: list[dict[str, Any]] | None = None,
+        purpose: GenerationPurpose | str = ...,
+    ) -> str:
+        ...
+
+
+class PromptTool(Protocol):
+    name: str
+
+    def describe_for_prompt(self) -> str:
+        ...
+
+
+class DownloadProgress(Protocol):
+    def update(self, **kwargs: Any) -> None:
+        ...

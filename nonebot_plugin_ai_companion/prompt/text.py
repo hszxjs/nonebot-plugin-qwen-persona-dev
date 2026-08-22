@@ -1,18 +1,20 @@
+"""文本清洗与提示词安全工具：归一化、噪声识别、命令过滤、回复消毒。"""
+
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Iterable
 
-
-@dataclass(frozen=True)
-class FilterDecision:
-    allowed: bool
-    reason: str
+GENERIC_MEDIA_PLACEHOLDER_TEXT_RE = re.compile(r"\[(?:动画消息|动画表情|表情消息)\]")
 
 
 def normalize_text(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def clean_media_text(text: str) -> str:
+    without_placeholders = GENERIC_MEDIA_PLACEHOLDER_TEXT_RE.sub(" ", str(text or ""))
+    return re.sub(r"\s+", " ", without_placeholders).strip()
 
 
 def _compact_text(text: str) -> str:
@@ -118,109 +120,6 @@ def is_command_like(
         except re.error:
             continue
     return False
-
-
-def _get_field(value: Any, name: str, default: Any = None) -> Any:
-    if isinstance(value, dict):
-        return value.get(name, default)
-    return getattr(value, name, default)
-
-
-def is_private_chat(event: Any, ids: dict[str, str | None]) -> bool:
-    message_type = str(_get_field(event, "message_type", "") or "").lower()
-    if message_type:
-        return message_type == "private"
-
-    detail_type = str(_get_field(event, "detail_type", "") or "").lower()
-    if detail_type in {"private", "direct", "direct_message"}:
-        return True
-    if detail_type in {"group", "channel", "guild"}:
-        return False
-
-    return not ids.get("group_id")
-
-
-def message_mentions_bot(message: Any, bot_self_id: str | None) -> bool:
-    if not bot_self_id:
-        return False
-    wanted = str(bot_self_id)
-    try:
-        segments = list(message)
-    except TypeError:
-        return False
-
-    for segment in segments:
-        segment_type = _get_field(segment, "type", "")
-        if str(segment_type).lower() != "at":
-            continue
-        data = _get_field(segment, "data", {}) or {}
-        if not isinstance(data, dict):
-            continue
-        for key in ("qq", "id", "user_id", "uid"):
-            value = data.get(key)
-            if value is not None and str(value) == wanted:
-                return True
-    return False
-
-
-def should_force_reply(
-    event: Any,
-    ids: dict[str, str | None],
-    message: Any,
-    *,
-    bot_self_id: str | None,
-    to_me: bool,
-) -> bool:
-    return bool(to_me) or is_private_chat(event, ids) or message_mentions_bot(message, bot_self_id)
-
-
-def should_use_sticker_reply(
-    *,
-    incoming_has_sticker: bool,
-    text_sticker_probability: float,
-    random_value: float,
-) -> bool:
-    if incoming_has_sticker:
-        return True
-    try:
-        probability = float(text_sticker_probability)
-    except (TypeError, ValueError):
-        return False
-    probability = min(1.0, max(0.0, probability))
-    return probability > 0 and float(random_value) < probability
-
-
-def should_random_reply(text: str, *, probability: float, random_value: float) -> bool:
-    if not normalize_text(text):
-        return False
-    try:
-        probability_value = float(probability)
-    except (TypeError, ValueError):
-        return False
-    probability_value = min(1.0, max(0.0, probability_value))
-    return probability_value > 0 and float(random_value) < probability_value
-
-
-def should_learn_text(
-    text: str,
-    *,
-    min_chars: int,
-    max_chars: int,
-    prefixes: Iterable[str] = (),
-    regexes: Iterable[str] = (),
-) -> FilterDecision:
-    normalized = normalize_text(text)
-    if not normalized:
-        return FilterDecision(False, "empty")
-    if is_command_like(normalized, prefixes=prefixes, regexes=regexes):
-        return FilterDecision(False, "command")
-    if is_training_noise(normalized):
-        return FilterDecision(False, "noise")
-    if len(normalized) < min_chars:
-        return FilterDecision(False, "too_short")
-    if len(normalized) > max_chars:
-        return FilterDecision(False, "too_long")
-    return FilterDecision(True, "accepted")
 
 
 def sanitize_reply(

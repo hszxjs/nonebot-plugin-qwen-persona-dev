@@ -25,7 +25,7 @@ class TrainerProgressTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
         class Store:
             def __init__(self) -> None:
@@ -56,7 +56,7 @@ class TrainerProgressTests(unittest.TestCase):
 
     def test_progress_log_records_stage_changes_without_waiting_for_final_log(self) -> None:
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
         trainer = PersonaTrainer(QwenPersonaConfig(), store=object())  # type: ignore[arg-type]
 
@@ -80,7 +80,7 @@ class TrainerProgressTests(unittest.TestCase):
         import json
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
         class FailingTrainer(FailingHelperTrainerMixin, PersonaTrainer):
             pass
@@ -122,7 +122,7 @@ class TrainerProgressTests(unittest.TestCase):
         import json
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
         class CapturingTrainer(PersonaTrainer):
             def __init__(self, *args: object, **kwargs: object) -> None:
@@ -164,7 +164,7 @@ class TrainerProgressTests(unittest.TestCase):
         import httpx
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
         class HttpFailingTrainer(PersonaTrainer):
             async def _assist_lora_record(self, *, api_url: str, record: dict[str, object]) -> dict[str, object]:

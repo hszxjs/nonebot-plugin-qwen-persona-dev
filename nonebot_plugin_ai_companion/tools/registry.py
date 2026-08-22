@@ -1,14 +1,10 @@
+"""工具注册域：PromptTool 聚合与提示词渲染。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
-
-class PromptTool(Protocol):
-    name: str
-
-    def describe_for_prompt(self) -> str:
-        ...
+from ..contracts import PromptTool
 
 
 @dataclass

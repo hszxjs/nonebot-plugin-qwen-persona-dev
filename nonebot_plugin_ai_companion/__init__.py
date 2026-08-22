@@ -15,72 +15,74 @@ from nonebot.permission import SUPERUSER
 from nonebot.plugin import PluginMetadata
 
 from .admin_server import AdminServer
+from .anime_captioner import AnimeCaptioner
 from .command_discovery import discover_picmenu_command_regexes
 from .config import QwenPersonaConfig, load_plugin_config, normalize_matcher_priorities
-from .filters import (
-    is_echo_reply,
-    is_command_like,
+from .context.envelope import MessageContextEnvelope, build_message_context
+from .context.envelope import _at_targets_from_message  # noqa: F401 — 仅供主语提取预扫描
+from .context.forward import count_forward_segments, resolve_forward
+from .context.media_parts import message_to_parts
+from .context.nicknames import nickname_resolver
+from .decision.gates import (
+    ReplyDecision,
     is_private_chat,
-    is_question_deflection_reply,
-    is_training_noise,
-    sanitize_reply,
+    should_attempt_reply,
     should_force_reply,
     should_learn_text,
     should_use_sticker_reply,
 )
-from .inference_events import record_inference_event
-from .message_context import MessageContextEnvelope, build_message_context
-from .media import (
-    context_text_from_sample,
-    filter_training_text_sticker_tokens,
-    message_to_parts,
-    prepare_message_learning,
-    sanitize_model_reply_media_text,
-)
-from .anime_captioner import AnimeCaptioner
-from .forward_resolver import count_forward_segments, resolve_forward
-from .media_analysis import analyze_media_parts, should_analyze_background_media
-from .meme_gate import build_meme_candidates_from_samples, select_active_memes
-from .message_context import _at_targets_from_message  # noqa: F401 — 仅供主语提取预扫描
-from .mlx_runtime import MlxVLMRuntime
-from .nickname_resolver import nickname_resolver
-from .poke import is_poke_at_self, send_counter_poke
-from .prompt_budget import effective_context_message_limit, trim_history_lines_for_context
-from .qwen_client import QwenClient
-from .reply_delivery import plan_reply_delivery
-from .reply_decision import ReplyDecision, should_attempt_reply
-from .reply_planner import ReplyIntent, ReplyPlan, build_reply_plan
-from .repeat import (
+from .decision.repeat import (
     ConversationPatternTracker,
     RepeatTracker,
     build_conversation_pattern_message,
 )
+from .delivery.onebot_v11 import is_poke_at_self, send_counter_poke
+from .delivery.plan import plan_reply_delivery
+from .finetune.trainer import PersonaTrainer, parse_time_slot
+from .memory.ingest import filter_training_text_sticker_tokens, prepare_message_learning
+from .observability.inference_events import record_inference_event
+from .prompt.budget import effective_context_message_limit, trim_history_lines_for_context
+from .prompt.media_text import (
+    context_text_from_sample,
+    sanitize_model_reply_media_text,
+)
+from .prompt.meme_gate import build_meme_candidates_from_samples, select_active_memes
+from .prompt.planner import ReplyIntent, ReplyPlan, build_reply_plan
+from .prompt.text import (
+    is_command_like,
+    is_echo_reply,
+    is_question_deflection_reply,
+    is_training_noise,
+    sanitize_reply,
+)
+from .providers.client import QwenClient
+from .providers.mlx_runtime import MlxVLMRuntime
 from .runtime_config import (
     apply_config_values,
     config_to_dict,
     load_config_overrides,
     save_config_overrides,
 )
-from .sticker import (
+from .sticker.analysis import analyze_media_parts, should_analyze_background_media
+from .sticker.model import (
     build_onebot_v11_sticker_message,
     extract_plain_text,
     parse_sticker_tokens,
 )
-from .sticker_repo import cleanup_sticker_repo_manifest, record_sticker_repo_manifest
-from .sticker_selector import select_reply_sticker
+from .sticker.repo_files import cleanup_sticker_repo_manifest, record_sticker_repo_manifest
+from .sticker.selector import select_reply_sticker
 from .storage import PersonaStore
-from .tool_registry import ToolRegistry
-from .trainer import PersonaTrainer, parse_time_slot
+from .tools.registry import ToolRegistry
 
 __plugin_meta__ = PluginMetadata(
-    name="Qwen Persona",
-    description="通过内嵌 MLX-VLM 千问模型聊天，学习群友语气和表情包，并定时训练 LoRA。",
+    name="AI Companion",
+    description="AI 对话伙伴：本地 MLX / 在线 GLM 双推理后端，学习群友语气与表情包，支持 LoRA 训练。",
     usage=(
-        "配置 MLX-VLM 模型后，@机器人即可聊天。\n"
+        "配置推理后端后，@机器人即可聊天。\n"
         "命令：人格状态、人格训练（SUPERUSER）。"
     ),
     type="application",
-    homepage="https://github.com/local/nonebot-plugin-qwen-persona",
+    homepage="https://github.com/hszxjs/nonebot-plugin-qwen-persona-dev",
     supported_adapters=None,
     config=QwenPersonaConfig,
 )

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from .filters import is_question_like, normalize_text
+from .text import is_question_like, normalize_text
 
 
 IMAGE_QUESTION_RE = re.compile(

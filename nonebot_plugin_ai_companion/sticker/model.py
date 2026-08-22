@@ -7,7 +7,7 @@ import re
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
-from .sticker_classifier import (
+from .classifier import (
     StickerClassification,
     classify_image_sticker_data,
     classify_sticker_segment,

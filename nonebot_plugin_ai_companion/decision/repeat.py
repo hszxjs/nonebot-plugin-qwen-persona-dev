@@ -4,8 +4,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from .filters import is_question_like
-from .sticker import extract_plain_text, extract_segments, sticker_to_record
+from ..prompt.text import is_question_like
+from ..sticker.model import extract_plain_text, extract_segments, sticker_to_record
 
 
 @dataclass(frozen=True)

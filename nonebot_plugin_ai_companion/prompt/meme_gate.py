@@ -3,8 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
-from .filters import normalize_text
-from .media import context_text_from_sample
+from .text import normalize_text
+from .media_text import context_text_from_sample
 
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]+")

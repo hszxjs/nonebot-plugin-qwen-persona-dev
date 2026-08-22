@@ -12,12 +12,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .config import QwenPersonaConfig, effective_mlx_model
+from ..config import QwenPersonaConfig, effective_mlx_model
 from .generation_profiles import GenerationProfile, GenerationPurpose, profile_for_purpose
 from .generation_safety import trim_repetitive_tail
 from .mlx_backend import DefaultMlxBackend, MlxBackend
-from .model_download import HFDownloadManager, PreparedModel, is_existing_local_model, is_hf_repo_ref
-from .runtime_state import InferenceMetric, MlxRuntimeLog, OperationProgress, RuntimeOperation, utc_timestamp
+from ..model_manager.download import HFDownloadManager, PreparedModel, is_existing_local_model, is_hf_repo_ref
+from ..contracts import InferenceMetric, MlxRuntimeLog, OperationProgress, RuntimeOperation, utc_timestamp
 
 
 REPLACEMENT_CHAR = "\ufffd"

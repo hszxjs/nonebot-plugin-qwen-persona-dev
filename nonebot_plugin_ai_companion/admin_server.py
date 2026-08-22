@@ -11,7 +11,8 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from .config import MLX_MODEL_PRESETS, normalized_lora_modules
+from .config import normalized_lora_modules
+from .model_manager.presets import MLX_MODEL_PRESETS
 from .runtime_config import (
     admin_config_path,
     config_field_names,
@@ -576,7 +577,7 @@ def create_admin_app(
             chat_url = (config.qwen_persona_lora_helper_api_url or "").strip()
             api_key = (config.qwen_persona_lora_helper_api_key or "").strip()
         try:
-            from .glm_backend import fetch_online_models
+            from .providers.glm_backend import fetch_online_models
 
             models, source = await fetch_online_models(chat_url, api_key, timeout=8.0)
         except Exception as exc:  # noqa: BLE001 — 任何异常都走兜底，不阻塞前端

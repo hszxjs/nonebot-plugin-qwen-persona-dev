@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from .config import QwenPersonaConfig
-from .prompt_budget import effective_max_tokens
+from ..config import QwenPersonaConfig
+from ..prompt.budget import effective_max_tokens
 
 
 CAPTION_MAX_TOKENS = 64

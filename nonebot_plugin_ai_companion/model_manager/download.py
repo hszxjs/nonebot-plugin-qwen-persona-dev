@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
+
+from ..contracts import DownloadProgress
 
 logger = logging.getLogger(__name__)
 
@@ -16,11 +18,6 @@ MLX_VLM_ALLOW_PATTERNS = [
     "*.txt",
     "*.jinja",
 ]
-
-
-class DownloadProgress(Protocol):
-    def update(self, **kwargs: Any) -> None:
-        ...
 
 
 @dataclass(frozen=True)

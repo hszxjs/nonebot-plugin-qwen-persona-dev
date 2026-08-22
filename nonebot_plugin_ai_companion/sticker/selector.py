@@ -4,11 +4,12 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
-from .generation_profiles import GenerationPurpose
-from .reply_planner import ReplyIntent
-from .sticker_classifier import is_sendable_sticker_record
+from ..contracts import StickerSelectionRuntime
+from ..providers.generation_profiles import GenerationPurpose
+from ..prompt.planner import ReplyIntent
+from .classifier import is_sendable_sticker_record
 
 logger = logging.getLogger(__name__)
 
@@ -16,17 +17,6 @@ logger = logging.getLogger(__name__)
 JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 IMAGE_CAPABLE_TYPES = {"image", "mface", "emoji", "sticker"}
 MIN_REPLY_STICKER_COUNT = 5
-
-
-class StickerSelectionRuntime(Protocol):
-    async def chat(
-        self,
-        messages: list[dict[str, Any]],
-        *,
-        media_parts: list[dict[str, Any]] | None = None,
-        purpose: GenerationPurpose | str = GenerationPurpose.PERSONA_REPLY,
-    ) -> str:
-        ...
 
 
 @dataclass(frozen=True)

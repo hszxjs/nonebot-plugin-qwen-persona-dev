@@ -14,7 +14,7 @@ sys.modules.setdefault("nonebot_plugin_ai_companion", package)
 
 class ReplyPlanningTests(unittest.TestCase):
     def test_media_question_routes_to_image_explain_without_sticker_token_prompt(self) -> None:
-        from nonebot_plugin_ai_companion.reply_planner import (
+        from nonebot_plugin_ai_companion.prompt.planner import (
             ReplyIntent,
             build_reply_plan,
         )
@@ -37,7 +37,7 @@ class ReplyPlanningTests(unittest.TestCase):
         self.assertNotIn("/no_think", user_content)
 
     def test_plain_text_routes_to_persona_reply(self) -> None:
-        from nonebot_plugin_ai_companion.reply_planner import (
+        from nonebot_plugin_ai_companion.prompt.planner import (
             ReplyIntent,
             build_reply_plan,
         )
@@ -57,7 +57,7 @@ class ReplyPlanningTests(unittest.TestCase):
         self.assertNotIn("请自然接一句", plan.messages[1]["content"])
 
     def test_explicit_sticker_request_routes_to_sticker_request(self) -> None:
-        from nonebot_plugin_ai_companion.reply_planner import (
+        from nonebot_plugin_ai_companion.prompt.planner import (
             ReplyIntent,
             build_reply_plan,
         )
@@ -78,8 +78,8 @@ class ReplyPlanningTests(unittest.TestCase):
 
 class StickerClassifierTests(unittest.IsolatedAsyncioTestCase):
     async def test_prepare_message_learning_rejects_document_screenshot_as_sticker(self) -> None:
-        from nonebot_plugin_ai_companion.media import prepare_message_learning
-        from nonebot_plugin_ai_companion.sticker_classifier import classify_sticker_segment
+        from nonebot_plugin_ai_companion.memory.ingest import prepare_message_learning
+        from nonebot_plugin_ai_companion.sticker.classifier import classify_sticker_segment
 
         class Captioner:
             async def caption_media(self, _part: dict[str, object]) -> str:
@@ -113,7 +113,7 @@ class StickerClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(learning["sticker_events"][0]["status"], "rejected")
 
     async def test_explicit_custom_image_metadata_is_sendable_sticker(self) -> None:
-        from nonebot_plugin_ai_companion.media import prepare_message_learning
+        from nonebot_plugin_ai_companion.memory.ingest import prepare_message_learning
 
         part = {
             "type": "image",
@@ -139,7 +139,7 @@ class StickerClassifierTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(learning["sticker_events"][0]["status"], "accepted")
 
     async def test_prepare_message_learning_rejects_garbled_caption_summary(self) -> None:
-        from nonebot_plugin_ai_companion.media import prepare_message_learning
+        from nonebot_plugin_ai_companion.memory.ingest import prepare_message_learning
 
         class Captioner:
             async def caption_media(self, _part: dict[str, object]) -> str:
@@ -169,9 +169,9 @@ class StickerClassifierTests(unittest.IsolatedAsyncioTestCase):
 
 class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
     async def test_selector_uses_short_candidate_id_and_maps_to_sticker_key(self) -> None:
-        from nonebot_plugin_ai_companion.generation_profiles import GenerationPurpose
-        from nonebot_plugin_ai_companion.reply_planner import ReplyIntent
-        from nonebot_plugin_ai_companion.sticker_selector import select_reply_sticker
+        from nonebot_plugin_ai_companion.providers.generation_profiles import GenerationPurpose
+        from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+        from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
 
         class Runtime:
             def __init__(self) -> None:
@@ -226,8 +226,8 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("只返回候选 id", prompt)
 
     async def test_selector_rejects_non_exact_key_with_warning(self) -> None:
-        from nonebot_plugin_ai_companion.reply_planner import ReplyIntent
-        from nonebot_plugin_ai_companion.sticker_selector import select_reply_sticker
+        from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+        from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
 
         class Runtime:
             async def chat(
@@ -239,7 +239,7 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
             ) -> str:
                 return '{"key": "good"}'
 
-        with self.assertLogs("nonebot_plugin_ai_companion.sticker_selector", level="WARNING") as logs:
+        with self.assertLogs("nonebot_plugin_ai_companion.sticker.selector", level="WARNING") as logs:
             selection = await select_reply_sticker(
                 Runtime(),
                 candidates=[{"key": "face:good", "type": "face", "summary": "震惊", "data": {"id": "1"}, "count": 5}],
@@ -252,8 +252,8 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("invalid sticker selection" in item for item in logs.output))
 
     async def test_selector_excludes_non_sendable_plain_image_candidates(self) -> None:
-        from nonebot_plugin_ai_companion.reply_planner import ReplyIntent
-        from nonebot_plugin_ai_companion.sticker_selector import select_reply_sticker
+        from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+        from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
 
         class Runtime:
             def __init__(self) -> None:
@@ -309,8 +309,8 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(runtime.calls[0]["media_parts"], [])
 
     async def test_explicit_sticker_request_falls_back_to_sendable_candidate_on_invalid_output(self) -> None:
-        from nonebot_plugin_ai_companion.reply_planner import ReplyIntent
-        from nonebot_plugin_ai_companion.sticker_selector import select_reply_sticker
+        from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+        from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
 
         class Runtime:
             async def chat(
@@ -344,8 +344,8 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selection.raw_text, "🙂")
 
     async def test_selector_filters_low_frequency_candidates_and_falls_back_on_empty_output(self) -> None:
-        from nonebot_plugin_ai_companion.reply_planner import ReplyIntent
-        from nonebot_plugin_ai_companion.sticker_selector import select_reply_sticker
+        from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+        from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
 
         class Runtime:
             async def chat(
@@ -390,7 +390,7 @@ class StickerSelectorTests(unittest.IsolatedAsyncioTestCase):
 
 class StickerMessageTests(unittest.TestCase):
     def test_onebot_sticker_message_preserves_text_and_sticker_in_single_message(self) -> None:
-        from nonebot_plugin_ai_companion.sticker import build_onebot_v11_sticker_message
+        from nonebot_plugin_ai_companion.sticker.model import build_onebot_v11_sticker_message
 
         class Message:
             def __init__(self) -> None:
@@ -425,7 +425,7 @@ class StickerMessageTests(unittest.TestCase):
         self.assertEqual(reply.parts[0].data["text"], "这是影之诗")
 
     def test_onebot_custom_image_sticker_message_is_sendable(self) -> None:
-        from nonebot_plugin_ai_companion.sticker import build_onebot_v11_sticker_message
+        from nonebot_plugin_ai_companion.sticker.model import build_onebot_v11_sticker_message
 
         class Message:
             def __init__(self) -> None:

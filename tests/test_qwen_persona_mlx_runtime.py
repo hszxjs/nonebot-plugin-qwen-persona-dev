@@ -140,7 +140,7 @@ class RecordingDownloadManager:
 
 class MlxRuntimeTests(unittest.TestCase):
     def test_safe_bpe_detokenizer_drops_invalid_utf8_bytes(self) -> None:
-        from nonebot_plugin_ai_companion.mlx_runtime import _SafeBPEStreamingDetokenizer
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import _SafeBPEStreamingDetokenizer
 
         source = SimpleNamespace(
             trim_space=False,
@@ -157,7 +157,7 @@ class MlxRuntimeTests(unittest.TestCase):
 
     def test_runtime_patches_bpe_detokenizer_on_loaded_processor(self) -> None:
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         config = QwenPersonaConfig()
         runtime = MlxVLMRuntime(config)
@@ -178,7 +178,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=ReplacementTextBackend())
 
@@ -193,7 +193,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=CorruptReplacementTextBackend())
 
@@ -208,7 +208,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=RepeatingTailBackend())
 
@@ -223,7 +223,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=SuccessfulTextBackend())
 
@@ -236,7 +236,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=TokenMetricsBackend())
 
@@ -252,7 +252,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         backend = StructuredRecordingBackend()
         runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=backend)
@@ -277,7 +277,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         backend = SamplingRecordingBackend()
         runtime = MlxVLMRuntime(
@@ -298,7 +298,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         backend = SamplingRecordingBackend()
         runtime = MlxVLMRuntime(
@@ -328,8 +328,8 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.generation_profiles import GenerationPurpose
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.generation_profiles import GenerationPurpose
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         backend = SamplingRecordingBackend()
         runtime = MlxVLMRuntime(
@@ -361,7 +361,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=RepeatingCaptionBackend())
 
@@ -378,7 +378,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         backend = BlockingGenerateBackend()
         runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=backend)
@@ -403,7 +403,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         with tempfile.TemporaryDirectory() as temp_root:
             local_path = Path(temp_root) / "models" / "org--model"
@@ -431,7 +431,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         with tempfile.TemporaryDirectory() as temp_root:
             local_path = Path(temp_root) / "local-model"
@@ -454,7 +454,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         started = threading.Event()
         release = threading.Event()
@@ -497,7 +497,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         started = threading.Event()
         release = threading.Event()
@@ -549,7 +549,7 @@ class MlxRuntimeTests(unittest.TestCase):
         import asyncio
 
         from nonebot_plugin_ai_companion.config import QwenPersonaConfig
-        from nonebot_plugin_ai_companion.mlx_runtime import MlxVLMRuntime
+        from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
         started = threading.Event()
         release = threading.Event()

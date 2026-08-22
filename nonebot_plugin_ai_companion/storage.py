@@ -11,17 +11,17 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 from urllib.parse import quote, unquote, urlparse
 
-from .filters import is_command_like, is_training_noise, normalize_text
-from .generation_safety import is_low_quality_generated_text
-from .media import context_text_from_sample
-from .sticker import (
+from .prompt.text import is_command_like, is_training_noise, normalize_text
+from .providers.generation_safety import is_low_quality_generated_text
+from .prompt.media_text import context_text_from_sample
+from .sticker.model import (
     build_training_text,
     is_transient_image_sticker_data,
     meaningful_protocol_summary,
     parse_sticker_tokens,
     sticker_to_record,
 )
-from .sticker_classifier import classify_sticker_record, is_sendable_sticker_record
+from .sticker.classifier import classify_sticker_record, is_sendable_sticker_record
 
 MEDIA_ASSET_SOURCES = {"sticker", "admin_approved", "explicit_command"}
 CHAT_LOG_PREFIX_RE = re.compile(r"^\s*\d{5,12}\s*[:：]\s*")

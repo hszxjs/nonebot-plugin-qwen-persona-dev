@@ -5,9 +5,9 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from .filters import normalize_text
-from .sticker import sticker_to_record
-from .sticker_classifier import classify_sticker_segment
+from ..prompt.text import normalize_text
+from .model import sticker_to_record
+from .classifier import classify_sticker_segment
 
 logger = logging.getLogger(__name__)
 

@@ -20,8 +20,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from .config import QwenPersonaConfig
-from .runtime_state import InferenceMetric, utc_timestamp
+from ..config import QwenPersonaConfig
+from ..contracts import InferenceMetric, utc_timestamp
 
 logger = logging.getLogger(__name__)
 

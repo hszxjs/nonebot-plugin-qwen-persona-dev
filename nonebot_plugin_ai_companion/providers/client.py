@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .config import QwenPersonaConfig, effective_chat_model
+from ..config import QwenPersonaConfig, effective_chat_model
 from .glm_backend import GlmBackend
 from .mlx_runtime import MlxVLMRuntime
 

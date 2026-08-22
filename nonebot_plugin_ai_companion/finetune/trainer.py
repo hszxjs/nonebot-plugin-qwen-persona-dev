@@ -15,8 +15,8 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from .config import QwenPersonaConfig, effective_chat_model, normalized_lora_modules
-from .storage import PersonaStore
+from ..config import QwenPersonaConfig, effective_chat_model, normalized_lora_modules
+from ..storage import PersonaStore
 
 logger = logging.getLogger(__name__)
 

@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from .sticker import is_transient_image_sticker_data, meaningful_protocol_summary
-from .sticker_classifier import is_sendable_sticker_record
+from .model import is_transient_image_sticker_data, meaningful_protocol_summary
+from .classifier import is_sendable_sticker_record
 
 
 MAX_STICKER_MEDIA_BYTES = 16 * 1024 * 1024
