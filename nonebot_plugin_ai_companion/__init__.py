@@ -71,7 +71,7 @@ from .sticker.model import (
 )
 from .sticker.repo_files import cleanup_sticker_repo_manifest, record_sticker_repo_manifest
 from .sticker.selector import select_reply_sticker
-from .storage import PersonaStore
+from .store import PersonaStore
 from .tools.registry import ToolRegistry
 
 __plugin_meta__ = PluginMetadata(

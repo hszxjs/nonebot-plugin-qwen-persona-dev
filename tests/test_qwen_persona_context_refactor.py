@@ -208,7 +208,7 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.reason, "background_busy")
 
     async def test_search_context_samples_returns_matching_recent_text(self) -> None:
-        from nonebot_plugin_ai_companion.storage import PersonaStore
+        from nonebot_plugin_ai_companion.store import PersonaStore
 
         with tempfile.TemporaryDirectory() as temp_root:
             store = PersonaStore(Path(temp_root))
@@ -241,7 +241,7 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["plain_text"] for item in results], ["影之诗这游戏有很多卡"])
 
     async def test_search_media_assets_returns_matching_cached_vlm_result(self) -> None:
-        from nonebot_plugin_ai_companion.storage import PersonaStore
+        from nonebot_plugin_ai_companion.store import PersonaStore
 
         with tempfile.TemporaryDirectory() as temp_root:
             store = PersonaStore(Path(temp_root))
@@ -269,7 +269,7 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_background_media_analysis_records_only_sticker_like_images(self) -> None:
         from nonebot_plugin_ai_companion.sticker.analysis import analyze_media_parts
-        from nonebot_plugin_ai_companion.storage import PersonaStore
+        from nonebot_plugin_ai_companion.store import PersonaStore
 
         class Captioner:
             async def caption_media(self, part: dict[str, object]) -> str:
@@ -301,7 +301,7 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         from nonebot_plugin_ai_companion.sticker.analysis import analyze_media_parts
         from nonebot_plugin_ai_companion.sticker.model import sticker_to_record
         from nonebot_plugin_ai_companion.sticker.classifier import classify_sticker_segment
-        from nonebot_plugin_ai_companion.storage import PersonaStore
+        from nonebot_plugin_ai_companion.store import PersonaStore
 
         class Captioner:
             async def caption_media(self, _part: dict[str, object]) -> str:

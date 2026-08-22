@@ -15,7 +15,7 @@ sys.modules.setdefault("nonebot_plugin_ai_companion", package)
 
 class PersonaStoreDatasetTests(unittest.IsolatedAsyncioTestCase):
     async def test_export_sft_dataset_filters_self_and_generated_chat_log_outputs(self) -> None:
-        from nonebot_plugin_ai_companion.storage import PersonaStore
+        from nonebot_plugin_ai_companion.store import PersonaStore
 
         with tempfile.TemporaryDirectory() as temp_root:
             store = PersonaStore(Path(temp_root))
@@ -85,7 +85,7 @@ class PersonaStoreDatasetTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all("10001:" not in prompt for prompt in user_prompts))
 
     async def test_export_sft_dataset_skips_low_quality_media_asset_answers(self) -> None:
-        from nonebot_plugin_ai_companion.storage import PersonaStore
+        from nonebot_plugin_ai_companion.store import PersonaStore
 
         with tempfile.TemporaryDirectory() as temp_root:
             store = PersonaStore(Path(temp_root))
@@ -122,7 +122,7 @@ class PersonaStoreDatasetTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[0]["messages"][-1]["content"], "一个动漫角色惊讶地张大嘴巴。")
 
     async def test_export_sft_dataset_filters_external_and_media_chat_log_prefixes(self) -> None:
-        from nonebot_plugin_ai_companion.storage import PersonaStore
+        from nonebot_plugin_ai_companion.store import PersonaStore
 
         with tempfile.TemporaryDirectory() as temp_root:
             store = PersonaStore(Path(temp_root))

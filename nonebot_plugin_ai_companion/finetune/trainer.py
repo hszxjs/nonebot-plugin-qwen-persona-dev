@@ -10,13 +10,14 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
 from ..config import QwenPersonaConfig, effective_chat_model, normalized_lora_modules
-from ..storage import PersonaStore
+if TYPE_CHECKING:
+    from ..store import PersonaStore
 
 logger = logging.getLogger(__name__)
 
