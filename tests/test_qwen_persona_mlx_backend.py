@@ -7,10 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
-PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_qwen_persona"
-package = types.ModuleType("nonebot_plugin_qwen_persona")
+PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_ai_companion"
+package = types.ModuleType("nonebot_plugin_ai_companion")
 package.__path__ = [str(PLUGIN_DIR)]  # type: ignore[attr-defined]
-sys.modules.setdefault("nonebot_plugin_qwen_persona", package)
+sys.modules.setdefault("nonebot_plugin_ai_companion", package)
 
 
 class FakeArray:
@@ -32,7 +32,7 @@ def identity_sanitize_key(key: str) -> str:
 
 class MlxBackendHotfixTests(unittest.TestCase):
     def test_default_backend_forwards_repetition_controls_to_mlx_generate(self) -> None:
-        from nonebot_plugin_qwen_persona.mlx_backend import DefaultMlxBackend
+        from nonebot_plugin_ai_companion.mlx_backend import DefaultMlxBackend
 
         calls: list[dict[str, object]] = []
 
@@ -65,7 +65,7 @@ class MlxBackendHotfixTests(unittest.TestCase):
         self.assertEqual(calls[0]["repetition_context_size"], 64)
 
     def test_qwen35_hotfix_preserves_converted_mlx_norm_weights(self) -> None:
-        from nonebot_plugin_qwen_persona.mlx_backend import _patch_qwen35_norm_sanitize_module
+        from nonebot_plugin_ai_companion.mlx_backend import _patch_qwen35_norm_sanitize_module
 
         class BrokenModel:
             def sanitize(self, weights: dict[str, FakeArray]) -> dict[str, FakeArray]:
@@ -86,7 +86,7 @@ class MlxBackendHotfixTests(unittest.TestCase):
         self.assertEqual(out["language_model.model.layers.0.input_layernorm.weight"].value, 0.0)
 
     def test_qwen35_hotfix_preserves_hf_norm_shift(self) -> None:
-        from nonebot_plugin_qwen_persona.mlx_backend import _patch_qwen35_norm_sanitize_module
+        from nonebot_plugin_ai_companion.mlx_backend import _patch_qwen35_norm_sanitize_module
 
         class BrokenModel:
             def sanitize(self, weights: dict[str, FakeArray]) -> dict[str, FakeArray]:
@@ -105,7 +105,7 @@ class MlxBackendHotfixTests(unittest.TestCase):
         self.assertEqual(out["model.language_model.layers.0.input_layernorm.weight"].value, 1.0)
 
     def test_qwen35_hotfix_preserves_hf_text_only_norm_shift(self) -> None:
-        from nonebot_plugin_qwen_persona.mlx_backend import _patch_qwen35_norm_sanitize_module
+        from nonebot_plugin_ai_companion.mlx_backend import _patch_qwen35_norm_sanitize_module
 
         class BrokenModel:
             def sanitize(self, weights: dict[str, FakeArray]) -> dict[str, FakeArray]:
@@ -124,7 +124,7 @@ class MlxBackendHotfixTests(unittest.TestCase):
         self.assertEqual(out["model.layers.0.input_layernorm.weight"].value, 1.0)
 
     def test_qwen35_hotfix_is_idempotent(self) -> None:
-        from nonebot_plugin_qwen_persona.mlx_backend import _patch_qwen35_norm_sanitize_module
+        from nonebot_plugin_ai_companion.mlx_backend import _patch_qwen35_norm_sanitize_module
 
         class BrokenModel:
             def sanitize(self, weights: dict[str, FakeArray]) -> dict[str, FakeArray]:

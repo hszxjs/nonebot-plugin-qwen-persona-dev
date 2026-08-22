@@ -6,10 +6,10 @@ import unittest
 from pathlib import Path
 import tempfile
 
-PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_qwen_persona"
-package = types.ModuleType("nonebot_plugin_qwen_persona")
+PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_ai_companion"
+package = types.ModuleType("nonebot_plugin_ai_companion")
 package.__path__ = [str(PLUGIN_DIR)]  # type: ignore[attr-defined]
-sys.modules.setdefault("nonebot_plugin_qwen_persona", package)
+sys.modules.setdefault("nonebot_plugin_ai_companion", package)
 
 
 class FailingHelperTrainerMixin:
@@ -24,8 +24,8 @@ class TrainerProgressTests(unittest.TestCase):
     def test_trainer_passes_dataset_excluded_user_ids_to_export(self) -> None:
         import asyncio
 
-        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
-        from nonebot_plugin_qwen_persona.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
 
         class Store:
             def __init__(self) -> None:
@@ -55,8 +55,8 @@ class TrainerProgressTests(unittest.TestCase):
         self.assertEqual(store.export_kwargs["excluded_user_ids"], {"bot-self"})
 
     def test_progress_log_records_stage_changes_without_waiting_for_final_log(self) -> None:
-        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
-        from nonebot_plugin_qwen_persona.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
 
         trainer = PersonaTrainer(QwenPersonaConfig(), store=object())  # type: ignore[arg-type]
 
@@ -79,8 +79,8 @@ class TrainerProgressTests(unittest.TestCase):
         import asyncio
         import json
 
-        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
-        from nonebot_plugin_qwen_persona.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
 
         class FailingTrainer(FailingHelperTrainerMixin, PersonaTrainer):
             pass
@@ -121,8 +121,8 @@ class TrainerProgressTests(unittest.TestCase):
         import asyncio
         import json
 
-        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
-        from nonebot_plugin_qwen_persona.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
 
         class CapturingTrainer(PersonaTrainer):
             def __init__(self, *args: object, **kwargs: object) -> None:
@@ -163,8 +163,8 @@ class TrainerProgressTests(unittest.TestCase):
 
         import httpx
 
-        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
-        from nonebot_plugin_qwen_persona.trainer import PersonaTrainer
+        from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+        from nonebot_plugin_ai_companion.trainer import PersonaTrainer
 
         class HttpFailingTrainer(PersonaTrainer):
             async def _assist_lora_record(self, *, api_url: str, record: dict[str, object]) -> dict[str, object]:

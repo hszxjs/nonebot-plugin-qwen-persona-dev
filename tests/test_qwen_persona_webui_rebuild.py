@@ -9,10 +9,10 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_qwen_persona"
-package = types.ModuleType("nonebot_plugin_qwen_persona")
+PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_ai_companion"
+package = types.ModuleType("nonebot_plugin_ai_companion")
 package.__path__ = [str(PLUGIN_DIR)]  # type: ignore[attr-defined]
-sys.modules.setdefault("nonebot_plugin_qwen_persona", package)
+sys.modules.setdefault("nonebot_plugin_ai_companion", package)
 
 
 class DummyRuntime:
@@ -193,8 +193,8 @@ class WebuiRebuildApiTests(unittest.TestCase):
         store: DummyStore | None = None,
         **config_overrides: object,
     ) -> TestClient:
-        from nonebot_plugin_qwen_persona.admin_server import create_admin_app
-        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_ai_companion.admin_server import create_admin_app
+        from nonebot_plugin_ai_companion.config import QwenPersonaConfig
 
         config = QwenPersonaConfig(
             qwen_persona_admin_token="secret",

@@ -7,15 +7,15 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_qwen_persona"
-package = types.ModuleType("nonebot_plugin_qwen_persona")
+PLUGIN_DIR = Path(__file__).resolve().parents[1] / "nonebot_plugin_ai_companion"
+package = types.ModuleType("nonebot_plugin_ai_companion")
 package.__path__ = [str(PLUGIN_DIR)]  # type: ignore[attr-defined]
-sys.modules.setdefault("nonebot_plugin_qwen_persona", package)
+sys.modules.setdefault("nonebot_plugin_ai_companion", package)
 
 
 class ReplyDecisionTests(unittest.TestCase):
     def test_at_bot_forces_reply_even_when_text_looks_command_like(self) -> None:
-        from nonebot_plugin_qwen_persona.reply_decision import should_attempt_reply
+        from nonebot_plugin_ai_companion.reply_decision import should_attempt_reply
 
         decision = should_attempt_reply(
             enable_reply=True,
@@ -34,7 +34,7 @@ class ReplyDecisionTests(unittest.TestCase):
         self.assertEqual(decision.reason, "force_reply")
 
     def test_plain_command_like_message_is_filtered_before_random_reply(self) -> None:
-        from nonebot_plugin_qwen_persona.reply_decision import should_attempt_reply
+        from nonebot_plugin_ai_companion.reply_decision import should_attempt_reply
 
         decision = should_attempt_reply(
             enable_reply=True,
@@ -55,7 +55,7 @@ class ReplyDecisionTests(unittest.TestCase):
 
 class ReplyPlannerContextTests(unittest.TestCase):
     def test_question_prompt_prioritizes_answering_over_persona_imitation(self) -> None:
-        from nonebot_plugin_qwen_persona.reply_planner import ReplyIntent, build_reply_plan
+        from nonebot_plugin_ai_companion.reply_planner import ReplyIntent, build_reply_plan
 
         plan = build_reply_plan(
             system_prompt="你正在扮演群友。",
@@ -76,7 +76,7 @@ class ReplyPlannerContextTests(unittest.TestCase):
         self.assertNotIn("自然接一句", user_content)
 
     def test_prompt_declares_intent_and_requires_meme_gate(self) -> None:
-        from nonebot_plugin_qwen_persona.reply_planner import build_reply_plan
+        from nonebot_plugin_ai_companion.reply_planner import build_reply_plan
 
         gated = build_reply_plan(
             system_prompt="system",
@@ -115,7 +115,7 @@ class ReplyPlannerContextTests(unittest.TestCase):
         self.assertNotIn("口头禅", ungated_content)
 
     def test_style_memory_is_marked_as_non_factual_reference(self) -> None:
-        from nonebot_plugin_qwen_persona.reply_planner import build_reply_plan
+        from nonebot_plugin_ai_companion.reply_planner import build_reply_plan
 
         plan = build_reply_plan(
             system_prompt="你正在扮演群友。",
@@ -134,7 +134,7 @@ class ReplyPlannerContextTests(unittest.TestCase):
 
 class MessageContextEnvelopeTests(unittest.TestCase):
     def test_extracts_quoted_and_forwarded_text_context(self) -> None:
-        from nonebot_plugin_qwen_persona.message_context import build_message_context
+        from nonebot_plugin_ai_companion.message_context import build_message_context
 
         message = [
             {"type": "text", "data": {"text": "这是什么"}},
@@ -164,7 +164,7 @@ class MessageContextEnvelopeTests(unittest.TestCase):
 
 class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
     async def test_background_media_analysis_decision_filters_plain_commands(self) -> None:
-        from nonebot_plugin_qwen_persona.media_analysis import should_analyze_background_media
+        from nonebot_plugin_ai_companion.media_analysis import should_analyze_background_media
 
         command = should_analyze_background_media(
             enable_learning=True,
@@ -191,7 +191,7 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(forced.reason, "force_reply")
 
     async def test_background_media_analysis_decision_rejects_when_background_busy(self) -> None:
-        from nonebot_plugin_qwen_persona.media_analysis import should_analyze_background_media
+        from nonebot_plugin_ai_companion.media_analysis import should_analyze_background_media
 
         decision = should_analyze_background_media(
             enable_learning=True,
@@ -208,7 +208,7 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.reason, "background_busy")
 
     async def test_search_context_samples_returns_matching_recent_text(self) -> None:
-        from nonebot_plugin_qwen_persona.storage import PersonaStore
+        from nonebot_plugin_ai_companion.storage import PersonaStore
 
         with tempfile.TemporaryDirectory() as temp_root:
             store = PersonaStore(Path(temp_root))
@@ -241,7 +241,7 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["plain_text"] for item in results], ["影之诗这游戏有很多卡"])
 
     async def test_search_media_assets_returns_matching_cached_vlm_result(self) -> None:
-        from nonebot_plugin_qwen_persona.storage import PersonaStore
+        from nonebot_plugin_ai_companion.storage import PersonaStore
 
         with tempfile.TemporaryDirectory() as temp_root:
             store = PersonaStore(Path(temp_root))
@@ -268,8 +268,8 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item["answer"] for item in results], ["影之诗表情包，角色震惊地看着卡牌"])
 
     async def test_background_media_analysis_records_only_sticker_like_images(self) -> None:
-        from nonebot_plugin_qwen_persona.media_analysis import analyze_media_parts
-        from nonebot_plugin_qwen_persona.storage import PersonaStore
+        from nonebot_plugin_ai_companion.media_analysis import analyze_media_parts
+        from nonebot_plugin_ai_companion.storage import PersonaStore
 
         class Captioner:
             async def caption_media(self, part: dict[str, object]) -> str:
@@ -298,10 +298,10 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats["media_assets"], 1)
 
     async def test_background_media_analysis_does_not_double_count_known_image_sticker(self) -> None:
-        from nonebot_plugin_qwen_persona.media_analysis import analyze_media_parts
-        from nonebot_plugin_qwen_persona.sticker import sticker_to_record
-        from nonebot_plugin_qwen_persona.sticker_classifier import classify_sticker_segment
-        from nonebot_plugin_qwen_persona.storage import PersonaStore
+        from nonebot_plugin_ai_companion.media_analysis import analyze_media_parts
+        from nonebot_plugin_ai_companion.sticker import sticker_to_record
+        from nonebot_plugin_ai_companion.sticker_classifier import classify_sticker_segment
+        from nonebot_plugin_ai_companion.storage import PersonaStore
 
         class Captioner:
             async def caption_media(self, _part: dict[str, object]) -> str:
@@ -342,7 +342,7 @@ class RetrievalAndMediaAnalysisTests(unittest.IsolatedAsyncioTestCase):
 
 class ToolRegistryTests(unittest.TestCase):
     def test_tool_registry_defaults_to_no_available_tools(self) -> None:
-        from nonebot_plugin_qwen_persona.tool_registry import ToolRegistry
+        from nonebot_plugin_ai_companion.tool_registry import ToolRegistry
 
         registry = ToolRegistry()
 
@@ -352,7 +352,7 @@ class ToolRegistryTests(unittest.TestCase):
 
 class PromptConfigTests(unittest.TestCase):
     def test_default_system_prompt_prioritizes_context_answering_over_roleplay(self) -> None:
-        from nonebot_plugin_qwen_persona.config import QwenPersonaConfig
+        from nonebot_plugin_ai_companion.config import QwenPersonaConfig
 
         prompt = QwenPersonaConfig().qwen_persona_system_prompt
 
