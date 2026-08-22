@@ -40,7 +40,7 @@ from .observability.debug_log import append_caption_debug_log
 from .observability.events import safe_record_sticker_event
 from .observability.inference_events import record_inference_event
 from .prompt.budget import effective_context_message_limit, trim_history_lines_for_context
-from .prompt.builder import build_system_prompt
+from .prompt.builder import PromptContext, build_system_prompt
 from .prompt.media_text import (
     context_text_from_sample,
     sanitize_model_reply_media_text,
@@ -56,6 +56,8 @@ from .prompt.text import (
 )
 from .providers.client import QwenClient
 from .providers.mlx_runtime import MlxVLMRuntime
+from .role_card.model import RoleCard
+from .role_card.service import RoleCardService
 from .sticker.analysis import analyze_media_parts, should_analyze_background_media
 from .sticker.model import extract_plain_text, parse_sticker_tokens
 from .sticker.selector import select_reply_sticker
@@ -85,6 +87,7 @@ class ChatService:
         repeat_tracker: RepeatTracker,
         conversation_pattern_tracker: ConversationPatternTracker,
         tool_registry: ToolRegistry,
+        role_card_service: RoleCardService | None = None,
     ) -> None:
         self.env = env
         self.config: AiCompanionConfig = env.config
@@ -96,6 +99,7 @@ class ChatService:
         self.repeat_tracker = repeat_tracker
         self.conversation_pattern_tracker = conversation_pattern_tracker
         self.tool_registry = tool_registry
+        self.role_card_service = role_card_service
         self.background_media_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
@@ -208,7 +212,14 @@ class ChatService:
         raw_reply = ""
         if reply_plan.intent != ReplyIntent.STICKER_REQUEST:
             try:
-                raw_reply = await self.client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
+                allowed_tools: list[str] | None = None
+                if self.role_card_service is not None:
+                    card, _binding = await self.role_card_service.get_effective_card(
+                        group_id=ids.get("group_id"), user_id=ids.get("user_id")
+                    )
+                    if card is not None and card.allowed_tools:
+                        allowed_tools = list(card.allowed_tools)
+                raw_reply = await self._generate_reply(reply_plan, allowed_tools=allowed_tools)
             except Exception as exc:
                 await record_inference_event(
                     store=self.store,
@@ -289,6 +300,84 @@ class ChatService:
             return
         self.conversation_pattern_tracker.reset(ids["group_id"])
         matcher.stop_propagation()
+
+    # ------------------------------------------------------------------
+    # 推理（含工具调用回路，配置默认关闭）
+    # ------------------------------------------------------------------
+    async def _generate_reply(
+        self,
+        reply_plan: ReplyPlan,
+        *,
+        allowed_tools: list[str] | None,
+    ) -> str:
+        tools_payload = (
+            self.tool_registry.openai_tools_payload(allowed_tools)
+            if self.config.ai_companion_enable_tool_calls and self.tool_registry.has_tools
+            else []
+        )
+        if not tools_payload:
+            return await self.client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
+        try:
+            return await self._run_tool_loop(
+                messages=reply_plan.messages,
+                media_parts=reply_plan.media_parts,
+                tools_payload=tools_payload,
+            )
+        except NotImplementedError:
+            logger.info("ai companion tool calls unsupported by backend, falling back to plain chat")
+            return await self.client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
+
+    async def _run_tool_loop(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        media_parts: list[dict[str, Any]] | None,
+        tools_payload: list[dict[str, Any]],
+    ) -> str:
+        """function calling 回路：模型请求工具 → 执行 → 结果回填 → 二次推理。
+
+        轮次上限与超时由配置约束，防止死循环（文档四节）。
+        """
+        import json as _json
+
+        max_rounds = max(1, int(self.config.ai_companion_tool_max_rounds or 1))
+        tool_timeout = float(self.config.ai_companion_tool_call_timeout_seconds or 15.0)
+        result_cap = int(self.config.ai_companion_tool_result_max_chars or 1200)
+        conversation = [dict(message) for message in messages]
+        for _round in range(max_rounds):
+            content, tool_calls = await self.client.chat_with_tools(conversation, tools=tools_payload)
+            if not tool_calls:
+                return content
+            conversation.append({"role": "assistant", "content": content or "", "tool_calls": tool_calls})
+            for call in tool_calls:
+                function = call.get("function") or {}
+                name = str(function.get("name") or "")
+                try:
+                    arguments = _json.loads(function.get("arguments") or "{}")
+                except ValueError:
+                    arguments = {}
+                try:
+                    result = await asyncio.wait_for(self.tool_registry.execute(name, arguments), timeout=tool_timeout)
+                except TimeoutError:
+                    logger.warning("ai companion tool %s timed out (%.0fs)", name, tool_timeout)
+                    conversation.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": str(call.get("id") or name),
+                            "content": f"工具 {name} 执行超时",
+                        }
+                    )
+                    continue
+                logger.info("ai companion tool call %s ok=%s", name, result.ok)
+                conversation.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": str(call.get("id") or name),
+                        "content": result.render(max_chars=result_cap),
+                    }
+                )
+        # 超过轮次上限：普通调用收敛出最终文本
+        return await self.client.chat(conversation, media_parts=None)
 
     # ------------------------------------------------------------------
     # 决策与输入构建
@@ -407,11 +496,24 @@ class ChatService:
     # ------------------------------------------------------------------
     # 提示词计划
     # ------------------------------------------------------------------
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(
+        self,
+        *,
+        card: RoleCard | None = None,
+        user_nickname: str | None = None,
+    ) -> str:
+        identity_text = None
+        if card is not None and self.role_card_service is not None:
+            identity_text = self.role_card_service.identity_prompt(card, user_nickname=user_nickname)
+        allowed_tools = list(card.allowed_tools) if card is not None and card.allowed_tools else None
         return build_system_prompt(
-            self.config,
-            tool_registry=self.tool_registry,
-            command_prefixes=self.env.command_start_values(),
+            PromptContext(
+                config=self.config,
+                tool_registry=self.tool_registry,
+                command_prefixes=self.env.command_start_values(),
+                identity_text=identity_text,
+                allowed_tools=allowed_tools,
+            )
         )
 
     @staticmethod
@@ -499,6 +601,12 @@ class ChatService:
     ) -> ReplyPlan:
         context_limit = effective_context_message_limit(self.config)
         query_text = self._context_query_text(envelope)
+        # 角色卡：会话绑定的卡渲染身份段；切换绑定后短期上下文从 bound_at 重新计。
+        card, binding = (
+            await self.role_card_service.get_effective_card(group_id=group_id, user_id=ids.get("user_id"))
+            if self.role_card_service is not None
+            else (None, None)
+        )
         history, relevant_samples, relevant_media_assets = await asyncio.gather(
             self._recent_context_samples(group_id, context_limit),
             self._search_relevant_context_samples(group_id, query_text, max(3, context_limit // 2)),
@@ -537,9 +645,16 @@ class ChatService:
 
         style_memory_lines: list[str] = []
         current_message_id = str(ids.get("message_id") or "")
+        bound_at = float(binding.bound_at) if binding is not None else None
         for item in reversed(history):
             if current_message_id and str(item.get("message_id") or "") == current_message_id:
                 continue
+            if bound_at is not None and binding is not None and card is not None:
+                try:
+                    if float(item.get("created_at") or 0) < bound_at:
+                        continue  # 切换角色卡前的旧上下文不进新人格的短期记忆
+                except (TypeError, ValueError):
+                    pass
             context_text = context_text_from_sample(item)
             context_text, _sticker_keys = parse_sticker_tokens(context_text)
             if self._is_context_noise(context_text):
@@ -559,7 +674,7 @@ class ChatService:
         )
 
         return build_reply_plan(
-            system_prompt=self._build_system_prompt(),
+            system_prompt=self._build_system_prompt(card=card, user_nickname=envelope.sender_name),
             conversation_lines=conversation_lines,
             style_memory_lines=style_memory_lines,
             active_memes=active_memes,

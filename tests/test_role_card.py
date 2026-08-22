@@ -44,9 +44,7 @@ async def test_role_card_crud_roundtrip(service: RoleCardService) -> None:
     assert fetched is not None
     assert fetched.style_tags == ["傲娇", "简短"]
 
-    updated = await service.update_card(
-        card.id, RoleCardCreate(name="测试人格2", system_prompt="改了", enabled=False)
-    )
+    updated = await service.update_card(card.id, RoleCardCreate(name="测试人格2", system_prompt="改了", enabled=False))
     assert updated is not None
     assert updated.name == "测试人格2"
     assert not updated.enabled
@@ -141,9 +139,7 @@ async def test_generate_and_refresh_member_mimic(service: RoleCardService, monke
         await service.refresh_member_mimic_style((await service.create_card(RoleCardCreate(name="普通"))).id)
 
 
-async def test_analyze_user_style_requires_enough_samples(
-    service: RoleCardService, monkeypatch
-) -> None:
+async def test_analyze_user_style_requires_enough_samples(service: RoleCardService, monkeypatch) -> None:
     # 无样本 → AuxLlmError
     from nonebot_plugin_ai_companion.providers.aux_llm import AuxLlmError
 
@@ -160,9 +156,7 @@ async def test_identity_prompt_includes_style_lines(service: RoleCardService) ->
         )
     )
     # 手工补风格字段（bot_persona 通常不填，这里验证渲染逻辑）
-    await service.cards.patch_style_fields(
-        card.id, catchphrases=["绝了"], emotion_baseline="平静"
-    )
+    await service.cards.patch_style_fields(card.id, catchphrases=["绝了"], emotion_baseline="平静")
     refreshed = await service.get_card(card.id)
     assert refreshed is not None
     text = service.identity_prompt(refreshed, user_nickname="阿明")

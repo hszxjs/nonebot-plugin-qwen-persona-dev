@@ -29,6 +29,8 @@ from .finetune.trainer import PersonaTrainer
 from .learning_service import LearningService
 from .providers.client import QwenClient
 from .providers.mlx_runtime import MlxVLMRuntime
+from .role_card.repo import RoleCardRepo, SessionRoleBindingRepo
+from .role_card.service import RoleCardService
 from .runtime_config import (
     apply_config_values,
     config_to_dict,
@@ -37,6 +39,7 @@ from .runtime_config import (
 )
 from .sticker.repo_files import cleanup_sticker_repo_manifest
 from .store import PersonaStore
+from .tools.builtins import register_builtin_tools
 from .tools.registry import ToolRegistry
 
 __plugin_meta__ = PluginMetadata(
@@ -75,6 +78,13 @@ nickname_resolver = NicknameResolver()
 repeat_tracker = RepeatTracker()
 conversation_pattern_tracker = ConversationPatternTracker()
 tool_registry = ToolRegistry()
+register_builtin_tools(tool_registry, config=plugin_config, store=store)
+role_card_service = RoleCardService(
+    config=plugin_config,
+    cards=RoleCardRepo(store.db),
+    bindings=SessionRoleBindingRepo(store.db),
+    samples=store.samples,
+)
 trainer = PersonaTrainer(plugin_config, store)
 
 chat_service = ChatService(
@@ -87,6 +97,7 @@ chat_service = ChatService(
     repeat_tracker=repeat_tracker,
     conversation_pattern_tracker=conversation_pattern_tracker,
     tool_registry=tool_registry,
+    role_card_service=role_card_service,
 )
 learning_service = LearningService(
     env=env,
@@ -114,6 +125,8 @@ admin_server = AdminServer(
     store=store,
     qwen_client=client,
     trainer=trainer,
+    role_card_service=role_card_service,
+    tool_registry=tool_registry,
 )
 
 _CONFIG_RESTART_REQUIRED = {

@@ -260,9 +260,7 @@ class PersonaDatabase:
                 )
                 """
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_role_cards_type ON role_cards(role_type, enabled)"
-            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_role_cards_type ON role_cards(role_type, enabled)")
 
     @staticmethod
     def is_noise_text(

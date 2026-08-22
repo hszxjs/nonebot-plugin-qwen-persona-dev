@@ -194,6 +194,26 @@ class AiCompanionConfig(BaseModel):
         "不会假装拥有管理员权限。"
     )
 
+    # ---- 提示词分段（文档十节）：开关与排序可运营配置，不改代码 ----
+    ai_companion_prompt_segment_order: list[str] = Field(default_factory=list)
+    ai_companion_disabled_prompt_segments: list[str] = Field(default_factory=list)
+
+    # ---- 工具调用（默认关闭；GLM 在线后端支持 function calling 回路）----
+    ai_companion_enable_tool_calls: bool = False
+    ai_companion_tool_max_rounds: int = 2
+    ai_companion_tool_call_timeout_seconds: float = 15.0
+    ai_companion_tool_result_max_chars: int = 1200
+
+    # ---- 网页搜索 Provider（BaseSearchProvider 实现：searxng / tavily）----
+    ai_companion_search_provider: str = ""
+    ai_companion_searxng_url: str = ""
+    ai_companion_tavily_api_key: str = ""
+    ai_companion_search_result_limit: int = 3
+
+    # ---- member_mimic 风格分析 ----
+    ai_companion_member_mimic_model: str = "glm-4.5-flash"
+    ai_companion_member_mimic_sample_limit: int = 120
+
     model_config = ConfigDict(extra="ignore")
 
 

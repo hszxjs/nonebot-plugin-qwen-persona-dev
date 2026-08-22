@@ -74,6 +74,23 @@ class QwenClient:
                 pass
         return await backend.chat(messages, media_parts=media_parts)
 
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """带 function calling 的对话（仅在线 GLM 后端支持）。
+
+        返回 (文本, tool_calls)；当前后端不支持时抛 NotImplementedError，
+        调用方应回退到普通 chat()。
+        """
+        if self.active_backend() != "glm":
+            raise NotImplementedError("tool calls require the glm backend")
+        glm = self.glm_backend
+        assert hasattr(glm, "chat_with_tools")
+        return await glm.chat_with_tools(messages, tools=tools)
+
     def metrics_snapshot(self) -> dict[str, Any]:
         return self._active.metrics_snapshot()
 

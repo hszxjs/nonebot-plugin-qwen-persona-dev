@@ -225,6 +225,36 @@ class GlmBackend:
             headers["Authorization"] = f"Bearer {key}"
         return headers
 
+    async def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+        tool_choice: str = "auto",
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """带 function calling 的一次对话：返回 (文本, tool_calls 列表)。
+
+        tool_calls 元素为 OpenAI 结构 {id, type, function: {name, arguments(str)}}。
+        """
+        url = self._api_url
+        if not url:
+            self._last_error = "ai_companion_online_api_url 未配置"
+            self._healthy = False
+            raise RuntimeError(self._last_error)
+        payload: dict[str, Any] = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": 0.7,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        timeout = float(self.config.ai_companion_online_timeout or 90.0)
+        data = await self._post_with_retry(url, self._headers(), payload, timeout)
+        message = (data.get("choices") or [{}])[0].get("message", {}) or {}
+        content = str(message.get("content") or "")
+        tool_calls = [dict(call) for call in message.get("tool_calls") or [] if isinstance(call, dict)]
+        return content, tool_calls
+
     async def chat(
         self,
         messages: list[dict[str, Any]],

@@ -42,9 +42,7 @@ class RoleCardRepo:
         def _sync() -> RoleCard | None:
             self.db.ensure_schema()
             with self.db.connection() as conn:
-                row = conn.execute(
-                    "SELECT * FROM role_cards WHERE id = ?", (card_id,)
-                ).fetchone()
+                row = conn.execute("SELECT * FROM role_cards WHERE id = ?", (card_id,)).fetchone()
             return self._row_to_card(row) if row else None
 
         return await asyncio.to_thread(_sync)
@@ -242,9 +240,7 @@ class SessionRoleBindingRepo:
         def _sync() -> list[SessionRoleBinding]:
             self.db.ensure_schema()
             with self.db.connection() as conn:
-                rows = conn.execute(
-                    "SELECT session_key, role_card_id, bound_at FROM session_role_bindings"
-                ).fetchall()
+                rows = conn.execute("SELECT session_key, role_card_id, bound_at FROM session_role_bindings").fetchall()
             return [binding_row_to_model(row) for row in rows]
 
         return await asyncio.to_thread(_sync)
@@ -293,9 +289,7 @@ class SessionRoleBindingRepo:
         def _sync() -> bool:
             self.db.ensure_schema()
             with self.db.connection() as conn:
-                cursor = conn.execute(
-                    "DELETE FROM session_role_bindings WHERE session_key = ?", (session_key,)
-                )
+                cursor = conn.execute("DELETE FROM session_role_bindings WHERE session_key = ?", (session_key,))
             return bool(cursor.rowcount)
 
         return await asyncio.to_thread(_sync)

@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .auth import make_auth_dependency
-from .routes import misc, operations, runtime, settings, stickers, training
+from .routes import misc, operations, role_cards, runtime, settings, stickers, training
 
 
 def _static_root(static_dir: Path | None = None) -> Path:
@@ -40,6 +40,8 @@ def create_admin_app(
     store: Any | None = None,
     trainer: Any | None = None,
     qwen_client: Any | None = None,
+    role_card_service: Any | None = None,
+    tool_registry: Any | None = None,
     static_dir: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AI Companion Admin", docs_url=None, redoc_url=None)
@@ -67,6 +69,9 @@ def create_admin_app(
     app.include_router(settings.build_router(config=config, auth=auth, save_callback=save_callback))
     app.include_router(
         misc.build_router(config=config, auth=auth, store=store, mlx_runtime=mlx_runtime, static_root=root)
+    )
+    app.include_router(
+        role_cards.build_router(auth=auth, role_card_service=role_card_service, tool_registry=tool_registry)
     )
 
     @app.api_route("/{path:path}", methods=["GET", "HEAD"])
@@ -97,6 +102,8 @@ class AdminServer:
         store: Any | None = None,
         qwen_client: Any | None = None,
         trainer: Any | None = None,
+        role_card_service: Any | None = None,
+        tool_registry: Any | None = None,
         static_dir: Path | None = None,
     ) -> None:
         self.config = config
@@ -106,6 +113,8 @@ class AdminServer:
         self.store = store
         self.qwen_client = qwen_client
         self.trainer = trainer
+        self.role_card_service = role_card_service
+        self.tool_registry = tool_registry
         self.static_dir = static_dir
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -122,6 +131,8 @@ class AdminServer:
             store=self.store,
             trainer=self.trainer,
             qwen_client=self.qwen_client,
+            role_card_service=self.role_card_service,
+            tool_registry=self.tool_registry,
             static_dir=self.static_dir,
         )
         host = str(getattr(self.config, "ai_companion_admin_host", "127.0.0.1"))

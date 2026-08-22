@@ -13,7 +13,7 @@ from ..memory.samples import ChatSampleRepo
 from ..providers.aux_llm import AuxLlmError
 from .model import RoleCard, RoleCardCreate, RoleType, SessionRoleBinding, session_key_for
 from .repo import RoleCardRepo, SessionRoleBindingRepo
-from .style_analyzer import StyleProfile, analyze_user_style, profile_to_patch_kwargs
+from .style_analyzer import analyze_user_style, profile_to_patch_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +93,7 @@ class RoleCardService:
         group_id: str | None = None,
     ) -> RoleCard:
         """为指定 QQ 号生成（或更新）member_mimic 角色卡。样本不足/LLM 失败抛 AuxLlmError。"""
-        profile = await analyze_user_style(
-            self.config, self.samples, user_id=user_id, group_id=group_id
-        )
+        profile = await analyze_user_style(self.config, self.samples, user_id=user_id, group_id=group_id)
         existing = await self.cards.get_member_mimic_by_user(user_id)
         if existing is not None:
             updated = await self.cards.patch_style_fields(existing.id, **profile_to_patch_kwargs(profile))
@@ -126,9 +124,7 @@ class RoleCardService:
         if card.role_type != RoleType.MEMBER_MIMIC or not card.target_user_id:
             raise ValueError(f"role card {card_id} is not a member_mimic card")
         try:
-            profile = await analyze_user_style(
-                self.config, self.samples, user_id=card.target_user_id
-            )
+            profile = await analyze_user_style(self.config, self.samples, user_id=card.target_user_id)
         except AuxLlmError:
             # 刷新失败保留旧画像并向上抛，由 API 层转换为可读错误。
             raise
