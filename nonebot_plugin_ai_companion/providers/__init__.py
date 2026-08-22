@@ -4,8 +4,10 @@ from .base import BaseProvider, ProviderCapabilities
 from .client import QwenClient
 from .generation_profiles import GenerationProfile, GenerationPurpose, profile_for_purpose
 from .glm_backend import GlmBackend
+from .llama_cpp import LlamaCppBackend
 from .mlx_backend import DefaultMlxBackend, MlxBackend
 from .mlx_runtime import MlxVLMRuntime
+from .ollama import OllamaBackend
 from .registry import (
     ProviderNotFoundError,
     ProviderRegistrationError,
@@ -20,6 +22,8 @@ __all__ = [
     "QwenClient",
     "GlmBackend",
     "MlxVLMRuntime",
+    "OllamaBackend",
+    "LlamaCppBackend",
     "DefaultMlxBackend",
     "MlxBackend",
     "BaseProvider",

@@ -55,6 +55,7 @@ from .prompt.text import (
     sanitize_reply,
 )
 from .providers.client import QwenClient
+from .providers.instances import ProviderResolver
 from .providers.mlx_runtime import MlxVLMRuntime
 from .role_card.model import RoleCard
 from .role_card.service import RoleCardService
@@ -88,6 +89,7 @@ class ChatService:
         conversation_pattern_tracker: ConversationPatternTracker,
         tool_registry: ToolRegistry,
         role_card_service: RoleCardService | None = None,
+        provider_resolver: ProviderResolver | None = None,
     ) -> None:
         self.env = env
         self.config: AiCompanionConfig = env.config
@@ -100,6 +102,7 @@ class ChatService:
         self.conversation_pattern_tracker = conversation_pattern_tracker
         self.tool_registry = tool_registry
         self.role_card_service = role_card_service
+        self.provider_resolver = provider_resolver
         self.background_media_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
@@ -301,6 +304,13 @@ class ChatService:
         self.conversation_pattern_tracker.reset(ids["group_id"])
         matcher.stop_propagation()
 
+    async def _vision_provider(self) -> Any:
+        """vision 角色解析：绑定实例优先，否则回退本地 MLX 运行时（三期解决）。"""
+        if self.provider_resolver is None:
+            return self.mlx_runtime
+        provider, _model, _pid = await self.provider_resolver.resolve_with_meta("vision")
+        return provider if provider is not None else self.mlx_runtime
+
     # ------------------------------------------------------------------
     # 推理（含工具调用回路，配置默认关闭）
     # ------------------------------------------------------------------
@@ -315,6 +325,20 @@ class ChatService:
             if self.config.ai_companion_enable_tool_calls and self.tool_registry.has_tools
             else []
         )
+        # chat 角色绑定实例：优先走解析器（含降级链与模型覆盖）
+        if self.provider_resolver is not None and await self._chat_instance_provider() is not None:
+            provider = await self._chat_instance_provider()
+            if tools_payload and hasattr(provider, "chat_with_tools"):
+                try:
+                    return await self._run_tool_loop(
+                        messages=reply_plan.messages,
+                        media_parts=reply_plan.media_parts,
+                        tools_payload=tools_payload,
+                        provider=provider,
+                    )
+                except NotImplementedError:
+                    pass
+            return await self.provider_resolver.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
         if not tools_payload:
             return await self.client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
         try:
@@ -327,12 +351,23 @@ class ChatService:
             logger.info("ai companion tool calls unsupported by backend, falling back to plain chat")
             return await self.client.chat(reply_plan.messages, media_parts=reply_plan.media_parts)
 
+    async def _chat_instance_provider(self) -> Any | None:
+        """chat 角色绑定的实例 provider（未绑定/实例缺失返回 None）。"""
+        if self.provider_resolver is None:
+            return None
+        binding = await self.provider_resolver.bindings.get_binding("chat")
+        if not binding or not binding.provider_id:
+            return None
+        instance = await self.provider_resolver.instances.get_instance(binding.provider_id)
+        return instance.provider if instance is not None else None
+
     async def _run_tool_loop(
         self,
         *,
         messages: list[dict[str, Any]],
         media_parts: list[dict[str, Any]] | None,
         tools_payload: list[dict[str, Any]],
+        provider: Any | None = None,
     ) -> str:
         """function calling 回路：模型请求工具 → 执行 → 结果回填 → 二次推理。
 
@@ -344,8 +379,10 @@ class ChatService:
         tool_timeout = float(self.config.ai_companion_tool_call_timeout_seconds or 15.0)
         result_cap = int(self.config.ai_companion_tool_result_max_chars or 1200)
         conversation = [dict(message) for message in messages]
+        chat_tools = provider.chat_with_tools if provider is not None else self.client.chat_with_tools
+        final_chat = provider.chat if provider is not None else self.client.chat
         for _round in range(max_rounds):
-            content, tool_calls = await self.client.chat_with_tools(conversation, tools=tools_payload)
+            content, tool_calls = await chat_tools(conversation, tools=tools_payload)
             if not tool_calls:
                 return content
             conversation.append({"role": "assistant", "content": content or "", "tool_calls": tool_calls})
@@ -377,7 +414,7 @@ class ChatService:
                     }
                 )
         # 超过轮次上限：普通调用收敛出最终文本
-        return await self.client.chat(conversation, media_parts=None)
+        return await final_chat(conversation, media_parts=None)
 
     # ------------------------------------------------------------------
     # 决策与输入构建
@@ -799,7 +836,7 @@ class ChatService:
         try:
             result = await analyze_media_parts(
                 store=self.store,
-                captioner=self.mlx_runtime,
+                captioner=await self._vision_provider(),
                 parts=media_parts,
                 group_id=ids.get("group_id"),
                 user_id=ids.get("user_id"),
@@ -1009,9 +1046,9 @@ class ChatService:
                 seen.add(key)
             else:
                 logger.warning(f"ai companion incoming sticker key missing: {key}")
-        # 现状保持：表情选择器固定使用本地 MLX 运行时（GLM 模式下也走本地视觉）。
+        # 三期：表情选择器走 vision 角色解析（默认仍回退本地 MLX 运行时）。
         selection = await select_reply_sticker(
-            self.mlx_runtime,
+            await self._vision_provider(),
             candidates=candidates,
             trigger_text=trigger_text,
             reply_text=reply_text,

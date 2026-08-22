@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 
 from ..config import AiCompanionConfig
 from ..memory.samples import ChatSampleRepo
@@ -26,11 +27,13 @@ class RoleCardService:
         cards: RoleCardRepo,
         bindings: SessionRoleBindingRepo,
         samples: ChatSampleRepo,
+        data_cleaning_chat: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
         self.config = config
         self.cards = cards
         self.bindings = bindings
         self.samples = samples
+        self.data_cleaning_chat = data_cleaning_chat
 
     # ---- 查询 ----
     async def list_cards(self, *, role_type: RoleType | None = None) -> list[RoleCard]:
@@ -93,7 +96,13 @@ class RoleCardService:
         group_id: str | None = None,
     ) -> RoleCard:
         """为指定 QQ 号生成（或更新）member_mimic 角色卡。样本不足/LLM 失败抛 AuxLlmError。"""
-        profile = await analyze_user_style(self.config, self.samples, user_id=user_id, group_id=group_id)
+        profile = await analyze_user_style(
+            self.config,
+            self.samples,
+            user_id=user_id,
+            group_id=group_id,
+            data_cleaning_chat=self.data_cleaning_chat,
+        )
         existing = await self.cards.get_member_mimic_by_user(user_id)
         if existing is not None:
             updated = await self.cards.patch_style_fields(existing.id, **profile_to_patch_kwargs(profile))
@@ -124,7 +133,12 @@ class RoleCardService:
         if card.role_type != RoleType.MEMBER_MIMIC or not card.target_user_id:
             raise ValueError(f"role card {card_id} is not a member_mimic card")
         try:
-            profile = await analyze_user_style(self.config, self.samples, user_id=card.target_user_id)
+            profile = await analyze_user_style(
+                self.config,
+                self.samples,
+                user_id=card.target_user_id,
+                data_cleaning_chat=self.data_cleaning_chat,
+            )
         except AuxLlmError:
             # 刷新失败保留旧画像并向上抛，由 API 层转换为可读错误。
             raise

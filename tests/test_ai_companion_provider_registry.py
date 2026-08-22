@@ -37,7 +37,7 @@ def test_mlx_and_glm_registered_with_types() -> None:
 def test_provider_specs_filter_by_type() -> None:
     locals_only = provider_specs(provider_type="local")
     remotes_only = provider_specs(provider_type="remote")
-    assert [spec.name for spec in locals_only] == ["mlx"]
+    assert [spec.name for spec in locals_only] == ["llama_cpp", "mlx", "ollama"]
     assert [spec.name for spec in remotes_only] == ["glm"]
 
 
@@ -50,8 +50,8 @@ def test_create_provider_builds_backends() -> None:
 
 
 def test_unknown_provider_raises_with_available_hint() -> None:
-    with pytest.raises(ProviderNotFoundError, match="ollama"):
-        create_provider("ollama", AiCompanionConfig())
+    with pytest.raises(ProviderNotFoundError, match="vllm"):
+        create_provider("vllm", AiCompanionConfig())
 
 
 def test_duplicate_registration_rejected() -> None:

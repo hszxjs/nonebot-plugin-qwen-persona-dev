@@ -15,7 +15,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .auth import make_auth_dependency
-from .routes import misc, operations, role_cards, runtime, settings, stickers, training
+from .routes import backends, misc, operations, role_cards, runtime, settings, stickers, training
+from .routes import model_manager as model_manager_routes
 
 
 def _static_root(static_dir: Path | None = None) -> Path:
@@ -42,6 +43,9 @@ def create_admin_app(
     qwen_client: Any | None = None,
     role_card_service: Any | None = None,
     tool_registry: Any | None = None,
+    provider_instances: Any | None = None,
+    provider_bindings: Any | None = None,
+    model_manager: Any | None = None,
     static_dir: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AI Companion Admin", docs_url=None, redoc_url=None)
@@ -73,6 +77,8 @@ def create_admin_app(
     app.include_router(
         role_cards.build_router(auth=auth, role_card_service=role_card_service, tool_registry=tool_registry)
     )
+    app.include_router(backends.build_router(auth=auth, instances=provider_instances, bindings=provider_bindings))
+    app.include_router(model_manager_routes.build_router(auth=auth, model_manager=model_manager))
 
     @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def static_or_fallback(path: str, request: Request) -> Response:
@@ -104,6 +110,9 @@ class AdminServer:
         trainer: Any | None = None,
         role_card_service: Any | None = None,
         tool_registry: Any | None = None,
+        provider_instances: Any | None = None,
+        provider_bindings: Any | None = None,
+        model_manager: Any | None = None,
         static_dir: Path | None = None,
     ) -> None:
         self.config = config
@@ -115,6 +124,9 @@ class AdminServer:
         self.trainer = trainer
         self.role_card_service = role_card_service
         self.tool_registry = tool_registry
+        self.provider_instances = provider_instances
+        self.provider_bindings = provider_bindings
+        self.model_manager = model_manager
         self.static_dir = static_dir
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -133,6 +145,9 @@ class AdminServer:
             qwen_client=self.qwen_client,
             role_card_service=self.role_card_service,
             tool_registry=self.tool_registry,
+            provider_instances=self.provider_instances,
+            provider_bindings=self.provider_bindings,
+            model_manager=self.model_manager,
             static_dir=self.static_dir,
         )
         host = str(getattr(self.config, "ai_companion_admin_host", "127.0.0.1"))

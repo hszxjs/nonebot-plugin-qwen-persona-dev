@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -50,8 +51,13 @@ async def analyze_user_style(
     *,
     user_id: str,
     group_id: str | None = None,
+    data_cleaning_chat: Callable[[str], Awaitable[str]] | None = None,
 ) -> StyleProfile:
-    """分析指定群友近期消息，产出风格画像；样本不足或调用失败抛 AuxLlmError。"""
+    """分析指定群友近期消息，产出风格画像；样本不足或调用失败抛 AuxLlmError。
+
+    data_cleaning_chat：data_cleaning 角色绑定的实例对话函数（三期）；
+    未提供时回退辅助 LLM（aux_chat）。
+    """
     limit = int(getattr(config, "ai_companion_member_mimic_sample_limit", 120) or 120)
     samples = await samples_repo.recent_samples_by_user(user_id=user_id, limit=limit, group_id=group_id)
     lines: list[str] = []
@@ -63,15 +69,24 @@ async def analyze_user_style(
     if len(lines) < 10:
         raise AuxLlmError(f"not enough samples for user {user_id} (got {len(lines)} lines)")
 
-    model = str(getattr(config, "ai_companion_member_mimic_model", "glm-4.5-flash") or "glm-4.5-flash")
-    reply = await aux_chat(
-        config,
-        prompt=_STYLE_PROMPT.format(user_id=user_id, messages="\n".join(lines[-200:])),
-        model=model,
-        max_tokens=900,
-        temperature=0.2,
-        timeout_seconds=30.0,
-    )
+    prompt = _STYLE_PROMPT.format(user_id=user_id, messages="\n".join(lines[-200:]))
+    if data_cleaning_chat is not None:
+        try:
+            reply = str(await data_cleaning_chat(prompt)).strip()
+        except Exception as exc:
+            raise AuxLlmError(f"data_cleaning provider failed: {exc!r}") from exc
+        if not reply:
+            raise AuxLlmError("data_cleaning provider empty content")
+    else:
+        model = str(getattr(config, "ai_companion_member_mimic_model", "glm-4.5-flash") or "glm-4.5-flash")
+        reply = await aux_chat(
+            config,
+            prompt=prompt,
+            model=model,
+            max_tokens=900,
+            temperature=0.2,
+            timeout_seconds=30.0,
+        )
     data = parse_json_object(reply)
 
     def _str_list(key: str, cap: int) -> list[str]:

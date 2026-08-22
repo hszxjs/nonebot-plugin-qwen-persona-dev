@@ -210,6 +210,10 @@ class AiCompanionConfig(BaseModel):
     ai_companion_tavily_api_key: str = ""
     ai_companion_search_result_limit: int = 3
 
+    # ---- 本地推理后端默认端点（Ollama / llama.cpp，可创建多个 DB 实例覆盖）----
+    ai_companion_ollama_api_url: str = "http://127.0.0.1:11434"
+    ai_companion_llama_cpp_api_url: str = "http://127.0.0.1:8080"
+
     # ---- member_mimic 风格分析 ----
     ai_companion_member_mimic_model: str = "glm-4.5-flash"
     ai_companion_member_mimic_sample_limit: int = 120

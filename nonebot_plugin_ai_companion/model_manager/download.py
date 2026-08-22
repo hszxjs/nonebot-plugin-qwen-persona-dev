@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,11 @@ from typing import Any
 from ..contracts import DownloadProgress
 
 logger = logging.getLogger(__name__)
+
+
+class _DownloadCancelled(RuntimeError):
+    """用户取消下载（ModelManager.cancel_download 触发）。"""
+
 
 MLX_VLM_ALLOW_PATTERNS = [
     "*.json",
@@ -40,8 +46,12 @@ def is_hf_repo_ref(model_ref: str) -> bool:
     return "/" in value and ":" not in value
 
 
-def local_repo_dir(model_ref: str) -> str:
-    return str(model_ref or "").strip().replace("/", "--").replace("\\", "--").replace(":", "--")
+def local_repo_dir(model_ref: str, model_dir: Path | None = None) -> Path:
+    """模型引用 → 共享目录下的本地目录（model_dir 缺省仅做名字规范化）。"""
+    name = str(model_ref or "").strip().replace("/", "--").replace("\\", "--").replace(":", "--")
+    if model_dir is None:
+        return Path(name)
+    return Path(model_dir) / name
 
 
 class HFDownloadManager:
@@ -57,9 +67,10 @@ class HFDownloadManager:
     def prepare_model(
         self,
         model_ref: str,
-        *,
         model_dir: Path,
         progress: DownloadProgress,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> PreparedModel:
         if is_existing_local_model(model_ref):
             local_path = Path(model_ref).expanduser()
@@ -88,7 +99,7 @@ class HFDownloadManager:
             total_bytes=total_bytes,
         )
         downloaded = {"bytes": 0}
-        tqdm_class = self._progress_tqdm(progress, downloaded, total_bytes)
+        tqdm_class = self._progress_tqdm(progress, downloaded, total_bytes, cancel_check=cancel_check)
 
         kwargs: dict[str, Any] = {
             "repo_id": model_ref,
@@ -161,6 +172,7 @@ class HFDownloadManager:
         progress: DownloadProgress,
         downloaded: dict[str, int],
         total_bytes: int | None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> Any:
         try:
             from tqdm.auto import tqdm
@@ -175,6 +187,9 @@ class HFDownloadManager:
 
             def update(self, n: float | None = 1) -> Any:
                 result = super().update(n)
+                if cancel_check is not None and cancel_check():
+                    self.close()
+                    raise _DownloadCancelled()
                 downloaded["bytes"] += int(n or 0)
                 progress.update(
                     phase="downloading",

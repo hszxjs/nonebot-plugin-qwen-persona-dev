@@ -27,7 +27,14 @@ from .delivery.onebot_v11 import is_poke_at_self, send_counter_poke
 from .finetune.schedule import install_training_schedule
 from .finetune.trainer import PersonaTrainer
 from .learning_service import LearningService
+from .model_manager.manager import ModelManager
 from .providers.client import QwenClient
+from .providers.instances import (
+    InferenceBackendRepo,
+    ProviderInstanceManager,
+    ProviderResolver,
+    RoleProviderBindingRepo,
+)
 from .providers.mlx_runtime import MlxVLMRuntime
 from .role_card.repo import RoleCardRepo, SessionRoleBindingRepo
 from .role_card.service import RoleCardService
@@ -79,11 +86,42 @@ repeat_tracker = RepeatTracker()
 conversation_pattern_tracker = ConversationPatternTracker()
 tool_registry = ToolRegistry()
 register_builtin_tools(tool_registry, config=plugin_config, store=store)
+model_manager_service = ModelManager(plugin_config)
+backend_repo = InferenceBackendRepo(store.db)
+provider_binding_repo = RoleProviderBindingRepo(store.db)
+provider_instances = ProviderInstanceManager(backend_repo)
+provider_resolver = ProviderResolver(
+    config=plugin_config,
+    client=client,
+    mlx_runtime=mlx_runtime,
+    instances=provider_instances,
+    bindings=provider_binding_repo,
+)
+
+
+async def _data_cleaning_chat(prompt: str) -> str:
+    """data_cleaning 角色实例对话；未绑定回退辅助 LLM（aux_llm）。"""
+    from .providers.aux_llm import aux_chat
+
+    provider, _model, _pid = await provider_resolver.resolve_with_meta("data_cleaning")
+    if provider is not None:
+        return await provider.chat([{"role": "user", "content": prompt}])
+    return await aux_chat(
+        plugin_config,
+        prompt=prompt,
+        model=plugin_config.ai_companion_member_mimic_model,
+        max_tokens=900,
+        temperature=0.2,
+        timeout_seconds=30.0,
+    )
+
+
 role_card_service = RoleCardService(
     config=plugin_config,
     cards=RoleCardRepo(store.db),
     bindings=SessionRoleBindingRepo(store.db),
     samples=store.samples,
+    data_cleaning_chat=_data_cleaning_chat,
 )
 trainer = PersonaTrainer(plugin_config, store)
 
@@ -98,6 +136,7 @@ chat_service = ChatService(
     conversation_pattern_tracker=conversation_pattern_tracker,
     tool_registry=tool_registry,
     role_card_service=role_card_service,
+    provider_resolver=provider_resolver,
 )
 learning_service = LearningService(
     env=env,
@@ -127,6 +166,9 @@ admin_server = AdminServer(
     trainer=trainer,
     role_card_service=role_card_service,
     tool_registry=tool_registry,
+    provider_instances=provider_instances,
+    provider_bindings=provider_binding_repo,
+    model_manager=model_manager_service,
 )
 
 _CONFIG_RESTART_REQUIRED = {

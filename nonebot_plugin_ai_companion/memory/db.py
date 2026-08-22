@@ -261,6 +261,35 @@ class PersonaDatabase:
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_role_cards_type ON role_cards(role_type, enabled)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS inference_backend_configs (
+                    id TEXT PRIMARY KEY,
+                    backend_type TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    priority INTEGER NOT NULL DEFAULT 100,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS role_provider_bindings (
+                    role TEXT PRIMARY KEY,
+                    provider_id TEXT NOT NULL,
+                    model TEXT NOT NULL DEFAULT '',
+                    fallback_provider_id TEXT,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_backend_configs_priority "
+                "ON inference_backend_configs(enabled, priority)"
+            )
 
     @staticmethod
     def is_noise_text(

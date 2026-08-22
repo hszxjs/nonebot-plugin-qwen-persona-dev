@@ -108,7 +108,7 @@ async def test_session_key_rules() -> None:
 
 
 async def test_generate_and_refresh_member_mimic(service: RoleCardService, monkeypatch) -> None:
-    async def fake_analyze(config, samples_repo, *, user_id, group_id=None):
+    async def fake_analyze(config, samples_repo, *, user_id, group_id=None, data_cleaning_chat=None):
         assert isinstance(samples_repo, ChatSampleRepo)
         return StyleProfile(
             system_prompt="你现在以群友 42 的口吻说话",
