@@ -73,24 +73,42 @@ pyrefly check nonebot_plugin_ai_companion       # 类型检查（0 error；mlx.c
 pnpm --dir webui test                           # 前端 11 用例
 ```
 
+## 第二期交付（已完成）
+
+- **role_card 域**：`RoleCard` 统一抽象（`bot_persona` / `member_mimic` 共享字段），
+  增量表 `role_cards` / `session_role_bindings`（按惯例先备份 persona.sqlite3）；
+  会话绑定切换后短期上下文从 `bound_at` 重新计（长期检索不受影响）
+- **member_mimic**：`style_analyzer` 用辅助 LLM（providers/aux_llm.py，glm-4.5-flash）
+  从该群友近期样本增量提炼口头禅/语气/话题偏好/情绪基线，支持一键"刷新语言风格"
+- **提示词分段**（文档十节）：identity/selfcheck/naturalness/sticker/tools 默认段
+  与一期输出逐字节兼容（有测试锁定）；memory/scene/motivation 新段按
+  `ai_companion_prompt_segment_order` / `ai_companion_disabled_prompt_segments` 配置拼入
+- **工具域 v2**（文档四节）：`@register(name, parameters, permission_tags)` 注册表、
+  角色卡 `allowed_tools` 白名单（权限矩阵，webui 勾选编辑）、内置
+  memory_query / sticker_send / web_search；`BaseSearchProvider` 抽象 + SearxNG + Tavily
+- **GLM 工具调用回路**：`chat_with_tools` → 执行 → 结果回填 → 二次推理，
+  `ai_companion_enable_tool_calls` 默认关闭，轮次/超时/结果长度有上限防死循环
+- **API/webui**：`/api/role-cards`（CRUD/克隆/绑定/生成/刷新风格）+ `/api/tools`；
+  webui 新增"角色卡"页（第 6 个工作区）
+
 ## 后续分期路线（源自总体架构文档，未实施）
 
-- **第二期：role_card 域**。`RoleCard` 统一抽象（`bot_persona` / `member_mimic` 共享字段结构）、
-  角色卡 × 工具权限矩阵、`BaseSearchProvider` 搜索工具域、系统提示词分段开关配置化
-  （prompt/builder.py 已预留为分段拼装的落点）
 - **第三期：Provider 域扩展**。Ollama / llama.cpp 适配器（`@register` 装饰器即插即用）、
   `InferenceBackendConfig` 数据库持久化与故障降级链、`RoleProviderBinding`
-  （chat/vision/data_cleaning 三角色绑定）、模型管理器页面（SSE 流式下载进度）。
-  `providers/base.py` 的 capabilities()/default_models() 已为前端展示预留
+  （chat/vision/data_cleaning 三角色绑定，含表情选择/后台识图改走 vision 角色绑定）、
+  模型管理器页面（SSE 流式下载进度）
 - **第四期：observability 增强**。`MessageLog` 记录 trigger/reply 平台消息 ID、
   `/trace` 引用溯源命令、历史（HTTP）+ 实时（SSE）合并时间线、反拟人化黑名单词库页
 - **第五期：finetune 增强 + 长期记忆**。`LoraAdapter` 角色卡+语种绑定与版本回滚、
-  长期结构化记忆（重要度/时效性/衰减）、Alembic 迁移体系、KPI Dashboard 首页
+  长期结构化记忆（重要度/时效性/衰减，喂给 prompt memory 段）、Alembic 迁移体系、
+  KPI Dashboard 首页
 
 ## 已知的现状债务（刻意保留，分期解决）
 
 - 表情选择与后台识图固定直连 `mlx_runtime`（GLM 模式下本地视觉仍被使用）——第三期随
   RoleProviderBinding 的 vision 角色绑定一起解决
+- 工具调用回路仅 GLM 后端支持（MLX 无 function calling）；MLX 模式下工具仅作为
+  提示词描述存在，第三期评估本地工具协议
 - `sticker/assets.py` 的去重/回填/清理维护例程会跨表重写 chat_samples（同事务、表情域语义，
   已在模块 docstring 标注）；第五期 Alembic 化时收敛
 - prompt 各段（身份/记忆/场景/接话动机/自检）目前是单一 builder 函数，第二期拆分段落注册表

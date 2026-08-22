@@ -232,3 +232,70 @@ export type ModelsPayload = {
   models: string[]
   source: "api" | "fallback"
 }
+
+export type RoleCardType = "bot_persona" | "member_mimic"
+
+export type RoleCard = {
+  id: string
+  role_type: RoleCardType
+  name: string
+  system_prompt: string
+  style_tags: string[]
+  tone_examples: string[]
+  catchphrases: string[]
+  topic_preferences: string[]
+  emotion_baseline: string
+  relation_profile: string
+  allowed_tools: string[]
+  avatar: string
+  enabled: boolean
+  target_user_id: string | null
+  created_at: number
+  updated_at: number
+  bindings: string[]
+}
+
+export type RoleCardPayload = {
+  name: string
+  role_type?: RoleCardType
+  system_prompt?: string
+  style_tags?: string[]
+  tone_examples?: string[]
+  allowed_tools?: string[]
+  avatar?: string
+  enabled?: boolean
+  target_user_id?: string | null
+}
+
+export type RoleCardsPayload = {
+  items: RoleCard[]
+  total: number
+  role_types: string[]
+}
+
+export type RoleCardBinding = {
+  session_key: string
+  role_card_id: string
+  bound_at: number
+}
+
+export type RoleCardBindResult = {
+  binding: RoleCardBinding
+}
+
+export type RoleCardUnbindResult = {
+  unbound: 0 | 1
+}
+
+export type ToolInfo = {
+  name: string
+  description: string
+  parameters: Record<string, unknown>
+  permission_tags: string[]
+  executable: boolean
+}
+
+export type ToolsPayload = {
+  items: ToolInfo[]
+  total: number
+}

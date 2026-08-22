@@ -56,7 +56,21 @@ AI_COMPANION_ONLINE_MODEL=glm-5.2
 
 - @机器人 或私聊即可对话；命中称呼关键词、复读、对话模式也会触发
 - 命令：`人格状态`、`人格训练`（SUPERUSER）、`人格模型状态`、`人格部署模型`（SUPERUSER）
-- 管理 WebUI：`http://127.0.0.1:8082`（运维控制台 / 表情仓库 / 配置 / 规则 / 诊断）
+- 管理 WebUI：`http://127.0.0.1:8082`（运维控制台 / 表情仓库 / 角色卡 / 配置 / 规则 / 诊断）
+
+### 角色卡与工具（第二期）
+
+- **角色卡**：管理页可创建 `bot_persona` 人格（系统提示词支持 `{persona_name}` / `{user_nickname}`
+  / `{time}` / `{memory_summary}` 变量），或按 QQ 号一键生成 `member_mimic` 群友模仿卡
+  （自动分析口头禅/语气/话题偏好，可随时"刷新语言风格"）。绑定到群后生效，
+  切换绑定会重置该会话短期上下文
+- **工具权限矩阵**：每张角色卡可勾选允许的工具（memory_query / sticker_send / web_search）；
+  `AI_COMPANION_ENABLE_TOOL_CALLS=true` 时 GLM 在线后端启用 function calling
+  回路（执行工具 → 回填 → 二次推理，轮次/超时受限）
+- **网页搜索**：`AI_COMPANION_SEARCH_PROVIDER=searxng|tavily` 并配置
+  `AI_COMPANION_SEARXNG_URL` 或 `AI_COMPANION_TAVILY_API_KEY` 后，web_search 工具可用
+- **提示词分段**：`AI_COMPANION_PROMPT_SEGMENT_ORDER` / `AI_COMPANION_DISABLED_PROMPT_SEGMENTS`
+  可调整/关闭系统提示词各段（identity/selfcheck/naturalness/sticker/tools/memory/scene/motivation）
 
 ## 开发
 

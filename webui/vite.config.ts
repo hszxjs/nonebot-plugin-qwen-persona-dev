@@ -12,7 +12,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../nonebot_plugin_qwen_persona/webui_static",
+    outDir: "../nonebot_plugin_ai_companion/webui_static",
     emptyOutDir: true,
   },
   test: {

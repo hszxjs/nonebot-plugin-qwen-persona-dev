@@ -1,6 +1,7 @@
 import {
   IconAdjustments,
   IconHomeStats,
+  IconIdBadge2,
   IconMoodSmile,
   IconShieldCheck,
   IconTool,
@@ -25,6 +26,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { DiagnosticsWorkspace } from "@/features/diagnostics/diagnostics-workspace"
 import { OperationsDashboard } from "@/features/operations/operations-dashboard"
+import { RoleCardsWorkspace } from "@/features/role-cards/role-cards-workspace"
 import { RulesWorkspace } from "@/features/rules/rules-workspace"
 import { SettingsWorkspace } from "@/features/settings/settings-workspace"
 import { StickersWorkspace } from "@/features/stickers/stickers-workspace"
@@ -33,6 +35,7 @@ import { useOperationsOverview } from "@/lib/api"
 const navItems = [
   { to: "/", label: "运维控制台", icon: IconHomeStats },
   { to: "/stickers", label: "表情仓库", icon: IconMoodSmile },
+  { to: "/role-cards", label: "角色卡", icon: IconIdBadge2 },
   { to: "/settings", label: "配置管理", icon: IconAdjustments },
   { to: "/rules", label: "规则过滤", icon: IconShieldCheck },
   { to: "/diagnostics", label: "诊断", icon: IconTool },
@@ -106,6 +109,7 @@ export function App() {
           <Routes>
             <Route path="/" element={<OperationsPage />} />
             <Route path="/stickers" element={<StickersWorkspace />} />
+            <Route path="/role-cards" element={<RoleCardsWorkspace />} />
             <Route path="/settings" element={<SettingsWorkspace />} />
             <Route path="/rules" element={<RulesWorkspace />} />
             <Route path="/diagnostics" element={<DiagnosticsWorkspace />} />

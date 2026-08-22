@@ -1,4 +1,4 @@
-import ky from "ky"
+import ky, { HTTPError } from "ky"
 import useSWR from "swr"
 
 import type {
@@ -7,11 +7,17 @@ import type {
   LogsPayload,
   ModelsPayload,
   OperationsOverview,
+  RoleCard,
+  RoleCardBindResult,
+  RoleCardPayload,
+  RoleCardUnbindResult,
+  RoleCardsPayload,
   RuntimeAction,
   RuntimeActionResult,
   SettingsPayload,
   StickerEventsPayload,
   StickerGalleryPayload,
+  ToolsPayload,
   TrainingActionResult,
 } from "@/lib/types"
 
@@ -145,4 +151,75 @@ export function runTrainingAction(fullExternalCorpus = false) {
         : {},
     })
     .json<TrainingActionResult>()
+}
+
+export async function apiErrorMessage(error: unknown): Promise<string> {
+  if (error instanceof HTTPError) {
+    try {
+      const body = (await error.response.clone().json()) as {
+        error?: string
+        detail?: string
+      }
+      if (body?.error) return body.error
+      if (body?.detail) return body.detail
+    } catch {
+      // 响应体不是 JSON 时退回默认 message
+    }
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
+export function useRoleCards() {
+  return useSWR<RoleCardsPayload>("role-cards", fetchJson)
+}
+
+export function useTools() {
+  return useSWR<ToolsPayload>("tools", fetchJson, {
+    revalidateOnFocus: false,
+    dedupingInterval: 60_000,
+  })
+}
+
+export function createRoleCard(payload: RoleCardPayload) {
+  return api.post("role-cards", { json: payload }).json<{ item: RoleCard }>()
+}
+
+export function updateRoleCard(id: string, payload: Partial<RoleCardPayload>) {
+  return api
+    .patch(`role-cards/${encodeURIComponent(id)}`, { json: payload })
+    .json<{ item: RoleCard }>()
+}
+
+export function deleteRoleCard(id: string) {
+  return api.delete(`role-cards/${encodeURIComponent(id)}`).json<{ deleted: number }>()
+}
+
+export function cloneRoleCard(id: string, name: string) {
+  return api
+    .post(`role-cards/${encodeURIComponent(id)}/clone`, { json: { name } })
+    .json<{ item: RoleCard }>()
+}
+
+export function bindRoleCard(id: string, body: { group_id?: string | null; user_id?: string | null }) {
+  return api
+    .post(`role-cards/${encodeURIComponent(id)}/bind`, { json: body })
+    .json<RoleCardBindResult>()
+}
+
+export function unbindRoleCard(body: { group_id?: string; user_id?: string }) {
+  return api.delete("role-cards/bindings", { json: body }).json<RoleCardUnbindResult>()
+}
+
+export function generateMemberMimic(userId: string, groupId?: string) {
+  return api
+    .post("role-cards/member-mimic", {
+      json: groupId ? { user_id: userId, group_id: groupId } : { user_id: userId },
+    })
+    .json<{ item: RoleCard }>()
+}
+
+export function refreshMemberMimicStyle(id: string) {
+  return api
+    .post(`role-cards/${encodeURIComponent(id)}/refresh-style`)
+    .json<{ item: RoleCard }>()
 }
