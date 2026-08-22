@@ -218,6 +218,39 @@ class ChatSampleRepo:
             )
         )
 
+    async def recent_samples_by_user(
+        self,
+        *,
+        user_id: str,
+        limit: int,
+        group_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """按用户取最近样本（member_mimic 风格分析取数；可限定群）。"""
+
+        def _sync() -> list[dict[str, Any]]:
+            self.db.ensure_schema()
+            clauses = ["user_id = ?"]
+            params: list[Any] = [user_id]
+            if group_id:
+                clauses.append("group_id = ?")
+                params.append(group_id)
+            params.append(max(1, min(int(limit), 2000)))
+            with self.db.connection() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT user_id, group_id, message_id, plain_text, training_text,
+                           sticker_keys, created_at
+                    FROM chat_samples
+                    WHERE {" AND ".join(clauses)}
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
+            return [dict(row) for row in rows]
+
+        return await asyncio.to_thread(_sync)
+
     async def cleanup_empty_samples(self) -> int:
         def _sync() -> int:
             self.db.ensure_schema()

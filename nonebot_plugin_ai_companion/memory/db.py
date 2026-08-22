@@ -229,6 +229,40 @@ class PersonaDatabase:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_media_assets_source_time ON media_assets(source, created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_inference_events_time ON inference_events(created_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sticker_events_time ON sticker_events(created_at DESC)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS role_cards (
+                    id TEXT PRIMARY KEY,
+                    role_type TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    system_prompt TEXT NOT NULL DEFAULT '',
+                    style_tags TEXT NOT NULL DEFAULT '[]',
+                    tone_examples TEXT NOT NULL DEFAULT '[]',
+                    catchphrases TEXT NOT NULL DEFAULT '[]',
+                    topic_preferences TEXT NOT NULL DEFAULT '[]',
+                    emotion_baseline TEXT NOT NULL DEFAULT '',
+                    relation_profile TEXT NOT NULL DEFAULT '',
+                    allowed_tools TEXT NOT NULL DEFAULT '[]',
+                    avatar TEXT NOT NULL DEFAULT '',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    target_user_id TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS session_role_bindings (
+                    session_key TEXT PRIMARY KEY,
+                    role_card_id TEXT NOT NULL,
+                    bound_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_role_cards_type ON role_cards(role_type, enabled)"
+            )
 
     @staticmethod
     def is_noise_text(
