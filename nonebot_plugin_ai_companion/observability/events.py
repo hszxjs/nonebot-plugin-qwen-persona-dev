@@ -359,3 +359,32 @@ class StickerEventRepo:
             "message": row["message"],
             "details": self.db.json_object(row["details_json"]),
         }
+
+
+async def safe_record_sticker_event(
+    store: Any,
+    *,
+    logger: Any,
+    event_type: str,
+    status: str,
+    key: str | None = None,
+    group_id: str | None = None,
+    user_id: str | None = None,
+    message: str = "",
+    details: dict[str, Any] | None = None,
+) -> None:
+    """记录表情事件的容错包装：store 缺能力或写入失败时只告警不抛出。"""
+    if not hasattr(store, "record_sticker_event"):
+        return
+    try:
+        await store.record_sticker_event(
+            event_type=event_type,
+            status=status,
+            key=key,
+            group_id=group_id,
+            user_id=user_id,
+            message=message,
+            details=details or {},
+        )
+    except Exception as exc:
+        logger.warning(f"ai companion sticker event record failed: {exc!r}")
