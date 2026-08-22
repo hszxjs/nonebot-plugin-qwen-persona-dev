@@ -74,7 +74,7 @@ async def send_counter_poke(bot: Any, event: Any) -> bool:
             failures.append(f"{api_name}: {type(exc).__name__}: {exc}")
             continue
     if failures:
-        logger.warning("qwen persona counter poke failed: %s", "; ".join(failures))
+        logger.warning("ai companion counter poke failed: %s", "; ".join(failures))
     return False
 
 

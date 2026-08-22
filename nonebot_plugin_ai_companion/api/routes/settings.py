@@ -15,26 +15,26 @@ from ...runtime_config import (
 )
 
 RELOAD_SENSITIVE_FIELDS = {
-    "qwen_persona_mlx_model",
-    "qwen_persona_mlx_adapter_path",
-    "qwen_persona_mlx_auto_load",
-    "qwen_persona_mlx_trust_remote_code",
-    "qwen_persona_model_dir",
-    "qwen_persona_admin_enabled",
-    "qwen_persona_admin_host",
-    "qwen_persona_admin_port",
-    "qwen_persona_data_dir",
-    "qwen_persona_train_times",
-    "qwen_persona_enable_training",
-    "qwen_persona_learning_priority",
-    "qwen_persona_reply_priority",
+    "ai_companion_mlx_model",
+    "ai_companion_mlx_adapter_path",
+    "ai_companion_mlx_auto_load",
+    "ai_companion_mlx_trust_remote_code",
+    "ai_companion_model_dir",
+    "ai_companion_admin_enabled",
+    "ai_companion_admin_host",
+    "ai_companion_admin_port",
+    "ai_companion_data_dir",
+    "ai_companion_train_times",
+    "ai_companion_enable_training",
+    "ai_companion_learning_priority",
+    "ai_companion_reply_priority",
 }
 
 DANGER_FIELDS = {
-    "qwen_persona_lora_train_command",
-    "qwen_persona_after_train_command",
-    "qwen_persona_lora_helper_api_key",
-    "qwen_persona_admin_token",
+    "ai_companion_lora_train_command",
+    "ai_companion_after_train_command",
+    "ai_companion_lora_helper_api_key",
+    "ai_companion_admin_token",
 }
 
 

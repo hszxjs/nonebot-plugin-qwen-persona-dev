@@ -157,7 +157,7 @@ async def _caption_or_empty(captioner: MediaCaptioner | None, part: dict[str, An
     try:
         return normalize_text(await captioner.caption_media(part))[:200]
     except Exception as exc:
-        logger.warning("qwen persona media analysis caption failed: %r", exc)
+        logger.warning("ai companion media analysis caption failed: %r", exc)
         return ""
 
 

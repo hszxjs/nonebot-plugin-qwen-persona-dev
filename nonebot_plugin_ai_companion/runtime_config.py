@@ -12,7 +12,7 @@ def config_field_names(config: Any) -> list[str]:
     legacy_fields = getattr(type(config), "__fields__", None)
     if legacy_fields is not None:
         return list(legacy_fields)
-    return [name for name in vars(config) if name.startswith("qwen_persona_")]
+    return [name for name in vars(config) if name.startswith("ai_companion_")]
 
 
 def config_to_dict(config: Any) -> dict[str, Any]:
@@ -32,10 +32,10 @@ def config_to_python_dict(config: Any) -> dict[str, Any]:
 
 
 def admin_config_path(config: Any) -> Path:
-    configured = str(getattr(config, "qwen_persona_admin_config_file", "") or "").strip()
+    configured = str(getattr(config, "ai_companion_admin_config_file", "") or "").strip()
     if configured:
         return Path(configured)
-    data_dir = Path(str(getattr(config, "qwen_persona_data_dir", "data/qwen_persona")))
+    data_dir = Path(str(getattr(config, "ai_companion_data_dir", "data/qwen_persona")))
     return data_dir / "admin_config.json"
 
 
@@ -46,7 +46,14 @@ def load_config_overrides(config: Any) -> dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         return {}
-    return {key: value for key, value in data.items() if key in set(config_field_names(config))}
+    allowed = set(config_field_names(config))
+    merged: dict[str, Any] = {}
+    for key, value in data.items():
+        # admin_config.json 里的旧 qwen_persona_* 键迁移到新前缀；下次保存即完成迁移。
+        new_key = "ai_companion_" + key.removeprefix("qwen_persona_") if key.startswith("qwen_persona_") else key
+        if new_key in allowed:
+            merged[new_key] = value
+    return merged
 
 
 def save_config_overrides(config: Any, values: dict[str, Any]) -> Path:

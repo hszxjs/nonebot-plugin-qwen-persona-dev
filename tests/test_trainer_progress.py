@@ -15,7 +15,7 @@ class FailingHelperTrainerMixin:
 def test_trainer_passes_dataset_excluded_user_ids_to_export(tmp_path: Path) -> None:
     import asyncio
 
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
     class Store:
@@ -34,9 +34,9 @@ def test_trainer_passes_dataset_excluded_user_ids_to_export(tmp_path: Path) -> N
 
     store = Store()
     trainer = PersonaTrainer(
-        QwenPersonaConfig(
-            qwen_persona_data_dir=str(tmp_path),
-            qwen_persona_dataset_excluded_user_ids={"bot-self"},
+        AiCompanionConfig(
+            ai_companion_data_dir=str(tmp_path),
+            ai_companion_dataset_excluded_user_ids={"bot-self"},
         ),
         store=store,  # type: ignore[arg-type]
     )
@@ -47,10 +47,10 @@ def test_trainer_passes_dataset_excluded_user_ids_to_export(tmp_path: Path) -> N
 
 
 def test_progress_log_records_stage_changes_without_waiting_for_final_log() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
-    trainer = PersonaTrainer(QwenPersonaConfig(), store=object())  # type: ignore[arg-type]
+    trainer = PersonaTrainer(AiCompanionConfig(), store=object())  # type: ignore[arg-type]
 
     trainer._start_progress(reason="admin_full_external")
     trainer._set_progress(
@@ -71,7 +71,7 @@ def test_progress_log_records_stage_changes_without_waiting_for_final_log() -> N
 def test_lora_helper_limit_bounds_attempts_not_successes(tmp_path: Path) -> None:
     import asyncio
 
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
     class FailingTrainer(FailingHelperTrainerMixin, PersonaTrainer):
@@ -87,9 +87,9 @@ def test_lora_helper_limit_bounds_attempts_not_successes(tmp_path: Path) -> None
         encoding="utf-8",
     )
     trainer = FailingTrainer(
-        QwenPersonaConfig(
-            qwen_persona_lora_helper_api_url="http://helper.invalid/v1",
-            qwen_persona_lora_helper_sample_limit=2,
+        AiCompanionConfig(
+            ai_companion_lora_helper_api_url="http://helper.invalid/v1",
+            ai_companion_lora_helper_sample_limit=2,
         ),
         store=object(),  # type: ignore[arg-type]
     )
@@ -112,7 +112,7 @@ def test_lora_helper_limit_bounds_attempts_not_successes(tmp_path: Path) -> None
 def test_lora_helper_base_v1_url_posts_to_chat_completions_endpoint(tmp_path: Path) -> None:
     import asyncio
 
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
     class CapturingTrainer(PersonaTrainer):
@@ -128,9 +128,9 @@ def test_lora_helper_base_v1_url_posts_to_chat_completions_endpoint(tmp_path: Pa
     record = {"messages": [{"role": "user", "content": "u"}]}
     raw_dataset_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
     trainer = CapturingTrainer(
-        QwenPersonaConfig(
-            qwen_persona_lora_helper_api_url="https://dm-fox.rjj.cc/codex/v1",
-            qwen_persona_lora_helper_sample_limit=1,
+        AiCompanionConfig(
+            ai_companion_lora_helper_api_url="https://dm-fox.rjj.cc/codex/v1",
+            ai_companion_lora_helper_sample_limit=1,
         ),
         store=object(),  # type: ignore[arg-type]
     )
@@ -155,7 +155,7 @@ def test_lora_helper_fallback_log_includes_http_error_body(tmp_path: Path) -> No
 
     import httpx
 
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
 
     class HttpFailingTrainer(PersonaTrainer):
@@ -172,9 +172,9 @@ def test_lora_helper_fallback_log_includes_http_error_body(tmp_path: Path) -> No
     record = {"messages": [{"role": "user", "content": "u"}]}
     raw_dataset_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
     trainer = HttpFailingTrainer(
-        QwenPersonaConfig(
-            qwen_persona_lora_helper_api_url="https://helper.test/v1",
-            qwen_persona_lora_helper_sample_limit=1,
+        AiCompanionConfig(
+            ai_companion_lora_helper_api_url="https://helper.test/v1",
+            ai_companion_lora_helper_sample_limit=1,
         ),
         store=object(),  # type: ignore[arg-type]
     )

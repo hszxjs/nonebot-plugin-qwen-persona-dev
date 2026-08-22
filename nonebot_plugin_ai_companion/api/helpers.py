@@ -59,18 +59,18 @@ def training_config(config: Any) -> dict[str, Any]:
     return {
         "target_configured": True,
         "helper_configured": bool(
-            str(getattr(config, "qwen_persona_lora_helper_api_url", "") or "").strip()
+            str(getattr(config, "ai_companion_lora_helper_api_url", "") or "").strip()
         ),
-        "min_train_samples": int(getattr(config, "qwen_persona_min_train_samples", 0) or 0),
-        "dataset_limit": int(getattr(config, "qwen_persona_dataset_limit", 0) or 0),
+        "min_train_samples": int(getattr(config, "ai_companion_min_train_samples", 0) or 0),
+        "dataset_limit": int(getattr(config, "ai_companion_dataset_limit", 0) or 0),
         "external_corpus_enabled": bool(
-            getattr(config, "qwen_persona_external_corpus_enabled", False)
+            getattr(config, "ai_companion_external_corpus_enabled", False)
         ),
         "external_corpus_limit": int(
-            getattr(config, "qwen_persona_external_corpus_limit", 0) or 0
+            getattr(config, "ai_companion_external_corpus_limit", 0) or 0
         ),
         "multimodal_training_enabled": bool(
-            getattr(config, "qwen_persona_multimodal_training_enabled", False)
+            getattr(config, "ai_companion_multimodal_training_enabled", False)
         ),
         "mlx_lora_modules": normalized_lora_modules(config),
     }
@@ -83,7 +83,7 @@ def log_tail_entries(log_tail: str, *, stream: str = "train") -> list[dict[str, 
 
 def plugin_log_path(config: Any) -> Path:
     data_dir = Path(
-        str(getattr(config, "qwen_persona_data_dir", "data/qwen_persona") or "data/qwen_persona")
+        str(getattr(config, "ai_companion_data_dir", "data/qwen_persona") or "data/qwen_persona")
     )
     return data_dir / "bot_runtime.log"
 

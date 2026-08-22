@@ -15,7 +15,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from ..config import QwenPersonaConfig, effective_chat_model, normalized_lora_modules
+from ..config import AiCompanionConfig, effective_chat_model, normalized_lora_modules
 if TYPE_CHECKING:
     from ..store import PersonaStore
 
@@ -52,7 +52,7 @@ def parse_time_slot(slot: str) -> tuple[int, int]:
 
 
 class PersonaTrainer:
-    def __init__(self, config: QwenPersonaConfig, store: PersonaStore) -> None:
+    def __init__(self, config: AiCompanionConfig, store: PersonaStore) -> None:
         self.config = config
         self.store = store
         self._lock = asyncio.Lock()
@@ -177,8 +177,8 @@ class PersonaTrainer:
         full_external_corpus: bool = False,
     ) -> TrainingResult:
         run_id = time.strftime("%Y%m%d-%H%M%S")
-        data_dir = Path(self.config.qwen_persona_data_dir)
-        raw_dataset_path = data_dir / "datasets" / f"qwen_persona_{run_id}.jsonl"
+        data_dir = Path(self.config.ai_companion_data_dir)
+        raw_dataset_path = data_dir / "datasets" / f"ai_companion_{run_id}.jsonl"
         output_dir = data_dir / "lora_runs" / run_id
         self._set_progress(
             stage="exporting_dataset",
@@ -187,7 +187,7 @@ class PersonaTrainer:
         )
 
         external_enabled = (
-            bool(self.config.qwen_persona_external_corpus_enabled)
+            bool(self.config.ai_companion_external_corpus_enabled)
             if include_external_corpus is None
             else bool(include_external_corpus)
         )
@@ -196,26 +196,26 @@ class PersonaTrainer:
         elif full_external_corpus:
             external_limit = 0
         else:
-            external_limit = self.config.qwen_persona_external_corpus_limit
+            external_limit = self.config.ai_companion_external_corpus_limit
         sample_count = await self.store.export_sft_dataset(
             output_path=raw_dataset_path,
-            limit=0 if full_external_corpus else self.config.qwen_persona_dataset_limit,
-            history_window=self.config.qwen_persona_dataset_history_window,
-            system_prompt=self.config.qwen_persona_system_prompt,
-            command_prefixes=self.config.qwen_persona_command_prefixes,
-            command_regexes=self.config.qwen_persona_command_regexes,
+            limit=0 if full_external_corpus else self.config.ai_companion_dataset_limit,
+            history_window=self.config.ai_companion_dataset_history_window,
+            system_prompt=self.config.ai_companion_system_prompt,
+            command_prefixes=self.config.ai_companion_command_prefixes,
+            command_regexes=self.config.ai_companion_command_regexes,
             external_limit=external_limit,
             include_multimodal_assets=bool(
-                self.config.qwen_persona_multimodal_training_enabled
+                self.config.ai_companion_multimodal_training_enabled
             ),
-            excluded_user_ids=self.config.qwen_persona_dataset_excluded_user_ids,
+            excluded_user_ids=self.config.ai_companion_dataset_excluded_user_ids,
         )
         self._set_progress(stage="dataset_exported", sample_count=sample_count)
 
-        if sample_count < self.config.qwen_persona_min_train_samples:
+        if sample_count < self.config.ai_companion_min_train_samples:
             log = (
                 f"sample_count={sample_count}, "
-                f"min_train_samples={self.config.qwen_persona_min_train_samples}"
+                f"min_train_samples={self.config.ai_companion_min_train_samples}"
             )
             await self.store.begin_training_run(
                 run_id=run_id,
@@ -243,9 +243,9 @@ class PersonaTrainer:
                 output_dir=str(output_dir),
             )
 
-        command_template = self.config.qwen_persona_lora_train_command.strip()
+        command_template = self.config.ai_companion_lora_train_command.strip()
 
-        if self.config.qwen_persona_lora_helper_api_url.strip():
+        if self.config.ai_companion_lora_helper_api_url.strip():
             self._set_progress(stage="assisting_dataset", sample_count=sample_count)
         dataset_path, helper_log = await self._maybe_build_assisted_dataset(
             raw_dataset_path=raw_dataset_path,
@@ -284,9 +284,9 @@ class PersonaTrainer:
 
         final_status = train_status
         final_log = (helper_log + "\n\n" if helper_log else "") + train_log
-        if train_status == "success" and self.config.qwen_persona_after_train_command.strip():
+        if train_status == "success" and self.config.ai_companion_after_train_command.strip():
             self._set_progress(stage="running_after_train", log=train_log)
-            after_command = self.config.qwen_persona_after_train_command.format_map(mapping)
+            after_command = self.config.ai_companion_after_train_command.format_map(mapping)
             after_status, after_log = await self._run_shell(after_command, mapping)
             final_status = "success" if after_status == "success" else f"after_train_{after_status}"
             final_log = final_log + "\n\n[after_train]\n" + after_log
@@ -314,13 +314,13 @@ class PersonaTrainer:
         run_id: str,
     ) -> tuple[Path, str]:
         api_url = self._normalize_lora_helper_api_url(
-            self.config.qwen_persona_lora_helper_api_url
+            self.config.ai_companion_lora_helper_api_url
         )
         if not api_url:
             return raw_dataset_path, ""
 
-        assisted_path = raw_dataset_path.with_name(f"qwen_persona_{run_id}.assisted.jsonl")
-        limit = self.config.qwen_persona_lora_helper_sample_limit
+        assisted_path = raw_dataset_path.with_name(f"ai_companion_{run_id}.assisted.jsonl")
+        limit = self.config.ai_companion_lora_helper_sample_limit
         attempted = 0
         processed = 0
         fallback = 0
@@ -370,7 +370,7 @@ class PersonaTrainer:
                     target.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
                     if fallback <= 3:
                         message = (
-                            "qwen persona lora helper fallback: "
+                            "ai companion lora helper fallback: "
                             f"{self._format_lora_helper_error(exc)}"
                         )
                         logger.warning(message)
@@ -388,7 +388,7 @@ class PersonaTrainer:
 
         log = (
             "[lora_helper]\n"
-            f"model={self.config.qwen_persona_lora_helper_model}\n"
+            f"model={self.config.ai_companion_lora_helper_model}\n"
             f"raw_dataset={raw_dataset_path}\n"
             f"assisted_dataset={assisted_path}\n"
             f"total={total} attempted={attempted} processed={processed} fallback={fallback} skipped={skipped}"
@@ -445,21 +445,21 @@ class PersonaTrainer:
 
     async def _assist_lora_record(self, *, api_url: str, record: dict[str, Any]) -> dict[str, Any]:
         headers = {"Content-Type": "application/json"}
-        if self.config.qwen_persona_lora_helper_api_key.strip():
+        if self.config.ai_companion_lora_helper_api_key.strip():
             headers["Authorization"] = (
-                f"Bearer {self.config.qwen_persona_lora_helper_api_key.strip()}"
+                f"Bearer {self.config.ai_companion_lora_helper_api_key.strip()}"
             )
 
-        extra_body = dict(self.config.qwen_persona_lora_helper_extra_body)
+        extra_body = dict(self.config.ai_companion_lora_helper_extra_body)
         # response_format 对 GLM 系列（含 glm-5.2）的 OpenAI 兼容端点是可选的，
         # 部分中转/官方网关对 json_object 支持不稳定。默认开启，用户可在
         # extra_body 里用 _disable_response_format=true 关闭，或直接覆盖 response_format。
         payload: dict[str, Any] = {
-            "model": self.config.qwen_persona_lora_helper_model,
+            "model": self.config.ai_companion_lora_helper_model,
             "messages": [
                 {
                     "role": "system",
-                    "content": self.config.qwen_persona_lora_helper_system_prompt,
+                    "content": self.config.ai_companion_lora_helper_system_prompt,
                 },
                 {
                     "role": "user",
@@ -474,7 +474,7 @@ class PersonaTrainer:
         # 用户自定义字段最后合并，可覆盖任何上述默认值。
         payload.update(extra_body)
 
-        timeout = float(self.config.qwen_persona_lora_helper_timeout)
+        timeout = float(self.config.ai_companion_lora_helper_timeout)
         # 仅对限流和网关错误退避重试；4xx（鉴权/参数错误等）直接抛出走 fallback。
         retryable_status = {429, 500, 502, 503, 504}
         max_retries = 3
@@ -600,33 +600,33 @@ class PersonaTrainer:
             "--output-path",
             str(output_path),
             "--learning-rate",
-            str(float(self.config.qwen_persona_mlx_lora_learning_rate)),
+            str(float(self.config.ai_companion_mlx_lora_learning_rate)),
             "--batch-size",
-            str(max(1, int(self.config.qwen_persona_mlx_lora_batch_size))),
+            str(max(1, int(self.config.ai_companion_mlx_lora_batch_size))),
             "--steps-per-report",
-            str(max(1, int(self.config.qwen_persona_mlx_lora_steps_per_report))),
+            str(max(1, int(self.config.ai_companion_mlx_lora_steps_per_report))),
             "--steps-per-save",
-            str(max(1, int(self.config.qwen_persona_mlx_lora_save_every))),
+            str(max(1, int(self.config.ai_companion_mlx_lora_save_every))),
             "--max-seq-length",
-            str(max(128, int(self.config.qwen_persona_mlx_lora_max_seq_length))),
+            str(max(128, int(self.config.ai_companion_mlx_lora_max_seq_length))),
             "--gradient-accumulation-steps",
-            str(max(1, int(self.config.qwen_persona_mlx_lora_grad_accum_steps))),
+            str(max(1, int(self.config.ai_companion_mlx_lora_grad_accum_steps))),
             "--lora-alpha",
-            str(float(self.config.qwen_persona_mlx_lora_scale)),
+            str(float(self.config.ai_companion_mlx_lora_scale)),
             "--lora-rank",
-            str(max(1, int(self.config.qwen_persona_mlx_lora_rank))),
+            str(max(1, int(self.config.ai_companion_mlx_lora_rank))),
             "--lora-dropout",
-            str(float(self.config.qwen_persona_mlx_lora_dropout)),
+            str(float(self.config.ai_companion_mlx_lora_dropout)),
         ]
-        if int(self.config.qwen_persona_mlx_lora_epochs) > 0:
-            command.extend(["--epochs", str(int(self.config.qwen_persona_mlx_lora_epochs))])
+        if int(self.config.ai_companion_mlx_lora_epochs) > 0:
+            command.extend(["--epochs", str(int(self.config.ai_companion_mlx_lora_epochs))])
         else:
-            command.extend(["--iters", str(max(1, int(self.config.qwen_persona_mlx_lora_iters or 1)))])
-        if self.config.qwen_persona_mlx_lora_grad_checkpoint:
+            command.extend(["--iters", str(max(1, int(self.config.ai_companion_mlx_lora_iters or 1)))])
+        if self.config.ai_companion_mlx_lora_grad_checkpoint:
             command.append("--grad-checkpoint")
-        if self.config.qwen_persona_mlx_lora_mask_prompt:
+        if self.config.ai_companion_mlx_lora_mask_prompt:
             command.append("--train-on-completions")
-        adapter_path = self.config.qwen_persona_mlx_adapter_path.strip()
+        adapter_path = self.config.ai_companion_mlx_adapter_path.strip()
         if adapter_path:
             command.extend(["--adapter-path", adapter_path])
 
@@ -653,7 +653,7 @@ class PersonaTrainer:
                 "QWEN_PERSONA_SAMPLE_COUNT": str(sample_count),
             }
         )
-        cwd = self.config.qwen_persona_train_cwd.strip() or None
+        cwd = self.config.ai_companion_train_cwd.strip() or None
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=cwd,
@@ -662,7 +662,7 @@ class PersonaTrainer:
             stderr=asyncio.subprocess.STDOUT,
         )
         try:
-            timeout = self.config.qwen_persona_train_timeout_seconds or None
+            timeout = self.config.ai_companion_train_timeout_seconds or None
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except TimeoutError:
             process.kill()
@@ -697,7 +697,7 @@ class PersonaTrainer:
                 "QWEN_PERSONA_MODEL": str(mapping["model"]),
             }
         )
-        cwd = self.config.qwen_persona_train_cwd.strip() or None
+        cwd = self.config.ai_companion_train_cwd.strip() or None
         process = await asyncio.create_subprocess_shell(
             command,
             cwd=cwd,
@@ -707,7 +707,7 @@ class PersonaTrainer:
         )
 
         try:
-            timeout = self.config.qwen_persona_train_timeout_seconds or None
+            timeout = self.config.ai_companion_train_timeout_seconds or None
             stdout, _ = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except TimeoutError:
             process.kill()

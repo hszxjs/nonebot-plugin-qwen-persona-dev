@@ -66,10 +66,10 @@ const stickers: StickerGalleryPayload = {
 const settings: SettingsPayload = {
   override_file: "/tmp/qwen-persona.toml",
   values: {
-    qwen_persona_admin_enabled: true,
-    qwen_persona_command_prefixes: ["/", "!"],
-    qwen_persona_command_regexes: ["^/help"],
-    qwen_persona_blacklist_words: ["spam"],
+    ai_companion_admin_enabled: true,
+    ai_companion_command_prefixes: ["/", "!"],
+    ai_companion_command_regexes: ["^/help"],
+    ai_companion_blacklist_words: ["spam"],
   },
 }
 
@@ -172,8 +172,8 @@ describe("admin workspaces", () => {
     expect(screen.getByRole("tab", { name: "系统后台" })).toBeInTheDocument()
     expect(screen.queryByRole("tab", { name: "规则过滤" })).not.toBeInTheDocument()
     expect(screen.getByText("后台开关")).toBeInTheDocument()
-    expect(screen.getByTitle("qwen_persona_admin_enabled")).toBeInTheDocument()
-    expect(screen.getByRole("switch", { name: "qwen_persona_admin_enabled" })).toBeInTheDocument()
+    expect(screen.getByTitle("ai_companion_admin_enabled")).toBeInTheDocument()
+    expect(screen.getByRole("switch", { name: "ai_companion_admin_enabled" })).toBeInTheDocument()
     expect(screen.getByText("需要确认")).toBeInTheDocument()
     expect(screen.queryByText(/保存后可能触发 reload/)).not.toBeInTheDocument()
     expect(screen.queryByText(/变更后自动保存/)).not.toBeInTheDocument()

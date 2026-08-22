@@ -42,7 +42,7 @@ def build_router(*, config: Any, auth, store: Any | None) -> APIRouter:
     async def sticker_preview(sticker_key: str) -> FileResponse:
         if not store or not hasattr(store, "get_sticker_preview_path"):
             raise HTTPException(status_code=404, detail="sticker preview not found")
-        repo_dir = getattr(config, "qwen_persona_sticker_repo_dir", "data/qwen_persona/sticker_repo")
+        repo_dir = getattr(config, "ai_companion_sticker_repo_dir", "data/qwen_persona/sticker_repo")
         path = await maybe_await(store.get_sticker_preview_path(sticker_key, repo_dir=repo_dir))
         if path is None or not Path(path).is_file():
             raise HTTPException(status_code=404, detail="sticker preview not found")

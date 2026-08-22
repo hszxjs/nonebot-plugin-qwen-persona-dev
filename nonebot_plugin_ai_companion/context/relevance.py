@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from ..config import QwenPersonaConfig
+from ..config import AiCompanionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ JUDGE_MODEL = "glm-4.5-flash"
 
 
 async def check_media_relevance(
-    config: QwenPersonaConfig,
+    config: AiCompanionConfig,
     media_context_text: str,
     conversation_text: str,
 ) -> bool:
@@ -29,12 +29,12 @@ async def check_media_relevance(
         return True
     try:
         # 复用在线推理配置；优先 online 端点，降级用 lora_helper 端点。
-        url = (config.qwen_persona_online_api_url or "").strip()
+        url = (config.ai_companion_online_api_url or "").strip()
         if not url:
-            url = (config.qwen_persona_lora_helper_api_url or "").strip()
-        key = (config.qwen_persona_online_api_key or "").strip()
+            url = (config.ai_companion_lora_helper_api_url or "").strip()
+        key = (config.ai_companion_online_api_key or "").strip()
         if not key:
-            key = (config.qwen_persona_lora_helper_api_key or "").strip()
+            key = (config.ai_companion_lora_helper_api_key or "").strip()
         if not url or not key:
             return True
         prompt = (

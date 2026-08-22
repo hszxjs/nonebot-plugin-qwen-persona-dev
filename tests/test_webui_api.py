@@ -183,10 +183,10 @@ def make_client(
     **config_overrides: object,
 ) -> TestClient:
     from nonebot_plugin_ai_companion.admin_server import create_admin_app
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
 
-    config = QwenPersonaConfig(
-        qwen_persona_admin_token="secret",
+    config = AiCompanionConfig(
+        ai_companion_admin_token="secret",
         **config_overrides,
     )
 
@@ -227,7 +227,7 @@ def test_reload_sensitive_setting_requires_confirmation() -> None:
     client = make_client(saved=saved)
 
     response = client.patch(
-        "/api/settings/fields/qwen_persona_mlx_model?token=secret",
+        "/api/settings/fields/ai_companion_mlx_model?token=secret",
         json={"value": "new-model"},
     )
 
@@ -246,7 +246,7 @@ def test_settings_payload_is_value_contract_without_ui_metadata() -> None:
     assert "sections" not in payload
     assert "fields" not in payload
     assert (
-        payload["values"]["qwen_persona_mlx_model"]
+        payload["values"]["ai_companion_mlx_model"]
         == "mlx-community/Qwen3.5-9B-MLX-4bit"
     )
 
@@ -259,7 +259,7 @@ def test_setting_update_rejects_unknown_and_invalid_values() -> None:
         json={"value": "x"},
     )
     invalid = client.patch(
-        "/api/settings/fields/qwen_persona_max_tokens?token=secret",
+        "/api/settings/fields/ai_companion_max_tokens?token=secret",
         json={"value": "not-a-number"},
     )
 
@@ -340,7 +340,7 @@ def test_plugin_logs_tail_runtime_log_file(tmp_path: Path) -> None:
         "older\n07-12 plugin ready\n07-12 handled event\n",
         encoding="utf-8",
     )
-    response = make_client(qwen_persona_data_dir=str(data_dir)).get(
+    response = make_client(ai_companion_data_dir=str(data_dir)).get(
         "/api/plugin/logs?tail=2&token=secret"
     )
 

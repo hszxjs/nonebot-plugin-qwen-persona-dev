@@ -12,12 +12,12 @@ from typing import Any
 from nonebot.adapters import Bot, Event
 
 from .command_discovery import discover_picmenu_command_regexes
-from .config import QwenPersonaConfig
+from .config import AiCompanionConfig
 from .prompt.text import is_command_like
 
 
 class BotEnvironment:
-    def __init__(self, driver_config: Any, config: QwenPersonaConfig) -> None:
+    def __init__(self, driver_config: Any, config: AiCompanionConfig) -> None:
         self.driver_config = driver_config
         self.config = config
 
@@ -54,24 +54,24 @@ class BotEnvironment:
 
     # ---- 群与命令 ----
     def group_enabled(self, group_id: str | None) -> bool:
-        enabled = {str(item) for item in self.config.qwen_persona_enabled_groups}
+        enabled = {str(item) for item in self.config.ai_companion_enabled_groups}
         return not enabled or (group_id is not None and group_id in enabled)
 
     def command_start_values(self) -> list[str]:
-        values = list(self.config.qwen_persona_command_prefixes)
+        values = list(self.config.ai_companion_command_prefixes)
         values.extend(
             str(item) for item in getattr(self.driver_config, "command_start", set()) or set()
         )
         return values
 
     def command_regex_values(self) -> list[str]:
-        regexes = list(self.config.qwen_persona_command_regexes)
-        if self.config.qwen_persona_auto_read_picmenu_config:
+        regexes = list(self.config.ai_companion_command_regexes)
+        if self.config.ai_companion_auto_read_picmenu_config:
             regexes.extend(
                 discover_picmenu_command_regexes(
                     self.driver_config,
-                    config_keys=self.config.qwen_persona_picmenu_config_keys,
-                    command_keys=self.config.qwen_persona_picmenu_command_keys,
+                    config_keys=self.config.ai_companion_picmenu_config_keys,
+                    command_keys=self.config.ai_companion_picmenu_command_keys,
                     prefixes=self.command_start_values(),
                 )
             )
@@ -87,18 +87,18 @@ class BotEnvironment:
     # ---- 黑名单 ----
     def is_blacklisted(self, user_id: str | None, group_id: str | None, text: str) -> bool:
         if user_id and user_id in {
-            str(item) for item in self.config.qwen_persona_blacklist_user_ids
+            str(item) for item in self.config.ai_companion_blacklist_user_ids
         }:
             return True
         if group_id and group_id in {
-            str(item) for item in self.config.qwen_persona_blacklist_group_ids
+            str(item) for item in self.config.ai_companion_blacklist_group_ids
         }:
             return True
-        for word in self.config.qwen_persona_blacklist_words:
+        for word in self.config.ai_companion_blacklist_words:
             word = str(word).strip()
             if word and word in text:
                 return True
-        for pattern in self.config.qwen_persona_blacklist_regexes:
+        for pattern in self.config.ai_companion_blacklist_regexes:
             try:
                 if re.search(pattern, text):
                     return True
@@ -127,6 +127,6 @@ class BotEnvironment:
         nicknames = [
             str(item) for item in getattr(self.driver_config, "nickname", set()) or set()
         ]
-        nicknames.extend(self.config.qwen_persona_trigger_keywords)
+        nicknames.extend(self.config.ai_companion_trigger_keywords)
         stripped = plain_text.lstrip()
         return bool(stripped and any(stripped.startswith(name) for name in nicknames if name))

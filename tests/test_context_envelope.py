@@ -326,9 +326,9 @@ def test_tool_registry_defaults_to_no_available_tools() -> None:
 
 
 def test_default_system_prompt_prioritizes_context_answering_over_roleplay() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
 
-    prompt = QwenPersonaConfig().qwen_persona_system_prompt
+    prompt = AiCompanionConfig().ai_companion_system_prompt
 
     assert "优先理解上下文" in prompt
     assert "回答问题" in prompt

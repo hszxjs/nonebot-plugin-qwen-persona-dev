@@ -73,7 +73,7 @@ def iter_config_items(config: Any) -> list[tuple[str, Any]]:
         try:
             value = getattr(config, name)
         except Exception as exc:
-            logger.warning("qwen persona command discovery skipped config field %s: %r", name, exc)
+            logger.warning("ai companion command discovery skipped config field %s: %r", name, exc)
             continue
         if callable(value):
             continue

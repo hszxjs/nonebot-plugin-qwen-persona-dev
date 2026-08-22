@@ -23,26 +23,26 @@ from .runtime_config import (
 logger = logging.getLogger(__name__)
 
 RELOAD_SENSITIVE_FIELDS = {
-    "qwen_persona_mlx_model",
-    "qwen_persona_mlx_adapter_path",
-    "qwen_persona_mlx_auto_load",
-    "qwen_persona_mlx_trust_remote_code",
-    "qwen_persona_model_dir",
-    "qwen_persona_admin_enabled",
-    "qwen_persona_admin_host",
-    "qwen_persona_admin_port",
-    "qwen_persona_data_dir",
-    "qwen_persona_train_times",
-    "qwen_persona_enable_training",
-    "qwen_persona_learning_priority",
-    "qwen_persona_reply_priority",
+    "ai_companion_mlx_model",
+    "ai_companion_mlx_adapter_path",
+    "ai_companion_mlx_auto_load",
+    "ai_companion_mlx_trust_remote_code",
+    "ai_companion_model_dir",
+    "ai_companion_admin_enabled",
+    "ai_companion_admin_host",
+    "ai_companion_admin_port",
+    "ai_companion_data_dir",
+    "ai_companion_train_times",
+    "ai_companion_enable_training",
+    "ai_companion_learning_priority",
+    "ai_companion_reply_priority",
 }
 
 DANGER_FIELDS = {
-    "qwen_persona_lora_train_command",
-    "qwen_persona_after_train_command",
-    "qwen_persona_lora_helper_api_key",
-    "qwen_persona_admin_token",
+    "ai_companion_lora_train_command",
+    "ai_companion_after_train_command",
+    "ai_companion_lora_helper_api_key",
+    "ai_companion_admin_token",
 }
 
 
@@ -71,7 +71,7 @@ def _safe_static_file(root: Path, request_path: str) -> Path | None:
 
 
 def _authorized(config: Any, token: str | None, header_token: str | None) -> bool:
-    expected = str(getattr(config, "qwen_persona_admin_token", "") or "")
+    expected = str(getattr(config, "ai_companion_admin_token", "") or "")
     if not expected:
         return True
     return expected in {token or "", header_token or ""}
@@ -124,12 +124,12 @@ def _training_running(trainer: Any | None) -> bool:
 def _training_config(config: Any) -> dict[str, Any]:
     return {
         "target_configured": True,
-        "helper_configured": bool(str(getattr(config, "qwen_persona_lora_helper_api_url", "") or "").strip()),
-        "min_train_samples": int(getattr(config, "qwen_persona_min_train_samples", 0) or 0),
-        "dataset_limit": int(getattr(config, "qwen_persona_dataset_limit", 0) or 0),
-        "external_corpus_enabled": bool(getattr(config, "qwen_persona_external_corpus_enabled", False)),
-        "external_corpus_limit": int(getattr(config, "qwen_persona_external_corpus_limit", 0) or 0),
-        "multimodal_training_enabled": bool(getattr(config, "qwen_persona_multimodal_training_enabled", False)),
+        "helper_configured": bool(str(getattr(config, "ai_companion_lora_helper_api_url", "") or "").strip()),
+        "min_train_samples": int(getattr(config, "ai_companion_min_train_samples", 0) or 0),
+        "dataset_limit": int(getattr(config, "ai_companion_dataset_limit", 0) or 0),
+        "external_corpus_enabled": bool(getattr(config, "ai_companion_external_corpus_enabled", False)),
+        "external_corpus_limit": int(getattr(config, "ai_companion_external_corpus_limit", 0) or 0),
+        "multimodal_training_enabled": bool(getattr(config, "ai_companion_multimodal_training_enabled", False)),
         "mlx_lora_modules": normalized_lora_modules(config),
     }
 
@@ -143,7 +143,7 @@ def _log_tail_entries(log_tail: str, *, stream: str = "train") -> list[dict[str,
 
 
 def _plugin_log_path(config: Any) -> Path:
-    data_dir = Path(str(getattr(config, "qwen_persona_data_dir", "data/qwen_persona") or "data/qwen_persona"))
+    data_dir = Path(str(getattr(config, "ai_companion_data_dir", "data/qwen_persona") or "data/qwen_persona"))
     return data_dir / "bot_runtime.log"
 
 
@@ -282,7 +282,7 @@ def create_admin_app(
             )
         if not mlx_runtime or not hasattr(mlx_runtime, action):
             raise HTTPException(status_code=503, detail="mlx runtime unavailable")
-        model = str(getattr(config, "qwen_persona_mlx_model", "") or "").strip() or "unknown"
+        model = str(getattr(config, "ai_companion_mlx_model", "") or "").strip() or "unknown"
         result = await _maybe_await(getattr(mlx_runtime, action)())
         runtime = _runtime_summary(dict(result or {}))
         return {
@@ -366,10 +366,10 @@ def create_admin_app(
         try:
             payload = await request.json()
         except Exception as exc:
-            logger.warning("qwen persona admin training request body ignored: %r", exc)
+            logger.warning("ai companion admin training request body ignored: %r", exc)
             payload = {}
         if not isinstance(payload, dict):
-            logger.warning("qwen persona admin training request body ignored: expected object")
+            logger.warning("ai companion admin training request body ignored: expected object")
             payload = {}
         include_external_corpus = payload.get("include_external_corpus")
         if include_external_corpus is not None:
@@ -385,7 +385,7 @@ def create_admin_app(
                     full_external_corpus=full_external_corpus,
                 )
             except Exception:
-                logger.exception("qwen persona admin training failed")
+                logger.exception("ai companion admin training failed")
 
         asyncio.create_task(run_background())
         await asyncio.sleep(0)
@@ -447,7 +447,7 @@ def create_admin_app(
         authorize(token, x_admin_token)
         if not store or not hasattr(store, "get_sticker_preview_path"):
             raise HTTPException(status_code=404, detail="sticker preview not found")
-        repo_dir = getattr(config, "qwen_persona_sticker_repo_dir", "data/qwen_persona/sticker_repo")
+        repo_dir = getattr(config, "ai_companion_sticker_repo_dir", "data/qwen_persona/sticker_repo")
         path = await _maybe_await(store.get_sticker_preview_path(sticker_key, repo_dir=repo_dir))
         if path is None or not Path(path).is_file():
             raise HTTPException(status_code=404, detail="sticker preview not found")
@@ -571,11 +571,11 @@ def create_admin_app(
     ) -> dict[str, Any]:
         authorize(token, x_admin_token)
         # 从在线推理配置派生 models 端点；未配置则回退到辅助训练配置。
-        chat_url = (config.qwen_persona_online_api_url or "").strip()
-        api_key = (config.qwen_persona_online_api_key or "").strip()
+        chat_url = (config.ai_companion_online_api_url or "").strip()
+        api_key = (config.ai_companion_online_api_key or "").strip()
         if not chat_url:
-            chat_url = (config.qwen_persona_lora_helper_api_url or "").strip()
-            api_key = (config.qwen_persona_lora_helper_api_key or "").strip()
+            chat_url = (config.ai_companion_lora_helper_api_url or "").strip()
+            api_key = (config.ai_companion_lora_helper_api_key or "").strip()
         try:
             from .providers.glm_backend import fetch_online_models
 
@@ -629,7 +629,7 @@ class AdminServer:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        if not getattr(self.config, "qwen_persona_admin_enabled", True):
+        if not getattr(self.config, "ai_companion_admin_enabled", True):
             return
         if self._thread and self._thread.is_alive():
             return
@@ -642,13 +642,13 @@ class AdminServer:
             qwen_client=self.qwen_client,
             static_dir=self.static_dir,
         )
-        host = str(getattr(self.config, "qwen_persona_admin_host", "127.0.0.1"))
-        port = int(getattr(self.config, "qwen_persona_admin_port", 8082))
+        host = str(getattr(self.config, "ai_companion_admin_host", "127.0.0.1"))
+        port = int(getattr(self.config, "ai_companion_admin_port", 8082))
         config = uvicorn.Config(app, host=host, port=port, log_level="warning")
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
-        self.logger.info(f"qwen persona admin server listening on http://{host}:{port}")
+        self.logger.info(f"ai companion admin server listening on http://{host}:{port}")
 
     def stop(self) -> None:
         if self._server:

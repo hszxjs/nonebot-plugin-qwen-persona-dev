@@ -38,7 +38,7 @@ class LearningService:
         self.conversation_pattern_tracker = conversation_pattern_tracker
 
     async def handle_learn(self, bot: Bot, event: Event) -> None:
-        if not self.config.qwen_persona_enable_learning:
+        if not self.config.ai_companion_enable_learning:
             return
         try:
             message = event.get_message()
@@ -55,7 +55,7 @@ class LearningService:
 
         learning = await prepare_message_learning(
             message,
-            sticker_segment_types=self.config.qwen_persona_sticker_segment_types,
+            sticker_segment_types=self.config.ai_companion_sticker_segment_types,
             captioner=None,
             image_fallback_text="",
             sticker_fallback_text="",
@@ -87,8 +87,8 @@ class LearningService:
         training_text = str(learning["training_text"])
         decision = should_learn_text(
             training_text,
-            min_chars=self.config.qwen_persona_min_sample_chars,
-            max_chars=self.config.qwen_persona_max_sample_chars,
+            min_chars=self.config.ai_companion_min_sample_chars,
+            max_chars=self.config.ai_companion_max_sample_chars,
             prefixes=self.env.command_start_values(),
             regexes=self.env.command_regex_values(),
         )
@@ -98,7 +98,7 @@ class LearningService:
             return
 
         await record_sticker_repo_manifest(
-            repo_dir=self.config.qwen_persona_sticker_repo_dir,
+            repo_dir=self.config.ai_companion_sticker_repo_dir,
             group_id=ids["group_id"],
             user_id=ids["user_id"],
             stickers=stickers,
@@ -106,8 +106,8 @@ class LearningService:
         training_text = filter_training_text_sticker_tokens(training_text, stickers)
         decision = should_learn_text(
             training_text,
-            min_chars=self.config.qwen_persona_min_sample_chars,
-            max_chars=self.config.qwen_persona_max_sample_chars,
+            min_chars=self.config.ai_companion_min_sample_chars,
+            max_chars=self.config.ai_companion_max_sample_chars,
             prefixes=self.env.command_start_values(),
             regexes=self.env.command_regex_values(),
         )
@@ -132,7 +132,7 @@ class LearningService:
             group_id=ids["group_id"],
             user_id=ids["user_id"],
             message=message,
-            sticker_segment_types=self.config.qwen_persona_sticker_segment_types,
+            sticker_segment_types=self.config.ai_companion_sticker_segment_types,
             plain_text=plain_text,
             sticker_keys=[
                 str(sticker.get("key") or "").strip()

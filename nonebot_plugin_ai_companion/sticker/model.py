@@ -253,13 +253,13 @@ def build_onebot_v11_sticker_message(
         try:
             result += message_segment.text(clean_text)
         except Exception as exc:
-            logger.warning("qwen persona sticker text segment build failed: %r", exc)
+            logger.warning("ai companion sticker text segment build failed: %r", exc)
     has_sticker = False
     for record in records:
         try:
             segment = build_onebot_v11_sticker_segment(message_segment, record)
         except Exception as exc:
-            logger.warning("qwen persona sticker segment build failed: %r", exc)
+            logger.warning("ai companion sticker segment build failed: %r", exc)
             continue
         if segment is None:
             continue

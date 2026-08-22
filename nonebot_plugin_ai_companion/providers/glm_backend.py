@@ -1,6 +1,6 @@
 """GLM 在线推理 backend（OpenAI 兼容）。
 
-当 qwen_persona_inference_backend == "glm" 时，QwenClient 把对话推理分发到这里。
+当 ai_companion_inference_backend == "glm" 时，QwenClient 把对话推理分发到这里。
 接口对齐 MlxVLMRuntime 的 chat / metrics_snapshot / status_snapshot / reconfigure，
 使上层（admin_server、inference_events）无需感知后端差异。
 """
@@ -20,7 +20,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from ..config import QwenPersonaConfig
+from ..config import AiCompanionConfig
 from ..contracts import InferenceMetric, utc_timestamp
 from .base import ProviderCapabilities
 from .registry import register
@@ -201,26 +201,26 @@ class GlmBackend:
 
     provider_name = "glm"
 
-    def __init__(self, config: QwenPersonaConfig) -> None:
+    def __init__(self, config: AiCompanionConfig) -> None:
         self.config = config
         self._metrics: deque[InferenceMetric] = deque(maxlen=120)
         self._last_error: str = ""
         self._healthy: bool = True
 
-    def reconfigure(self, config: QwenPersonaConfig) -> None:
+    def reconfigure(self, config: AiCompanionConfig) -> None:
         self.config = config
 
     @property
     def _api_url(self) -> str:
-        return (self.config.qwen_persona_online_api_url or "").strip()
+        return (self.config.ai_companion_online_api_url or "").strip()
 
     @property
     def _model(self) -> str:
-        return (self.config.qwen_persona_online_model or "glm-5.2").strip() or "glm-5.2"
+        return (self.config.ai_companion_online_model or "glm-5.2").strip() or "glm-5.2"
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        key = (self.config.qwen_persona_online_api_key or "").strip()
+        key = (self.config.ai_companion_online_api_key or "").strip()
         if key:
             headers["Authorization"] = f"Bearer {key}"
         return headers
@@ -234,12 +234,12 @@ class GlmBackend:
     ) -> str:
         url = self._api_url
         if not url:
-            self._last_error = "qwen_persona_online_api_url 未配置"
+            self._last_error = "ai_companion_online_api_url 未配置"
             self._healthy = False
             raise RuntimeError(self._last_error)
 
         # Coding 订阅端点只支持纯文本：multimodal=False 时丢弃图片仅发文字。
-        multimodal = bool(getattr(self.config, "qwen_persona_online_multimodal", False))
+        multimodal = bool(getattr(self.config, "ai_companion_online_multimodal", False))
         if multimodal:
             openai_messages = _build_openai_messages(messages, media_parts)
         else:
@@ -259,7 +259,7 @@ class GlmBackend:
             "messages": openai_messages,
             "temperature": 0.7,
         }
-        timeout = float(self.config.qwen_persona_online_timeout or 90.0)
+        timeout = float(self.config.ai_companion_online_timeout or 90.0)
         headers = self._headers()
 
         started = utc_timestamp()
@@ -363,7 +363,7 @@ class GlmBackend:
 
     def capabilities(self) -> ProviderCapabilities:
         return ProviderCapabilities(
-            vision=bool(getattr(self.config, "qwen_persona_online_multimodal", False)),
+            vision=bool(getattr(self.config, "ai_companion_online_multimodal", False)),
             function_calling=False,
             streaming=False,
             lora_hotload=False,

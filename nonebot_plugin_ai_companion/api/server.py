@@ -114,7 +114,7 @@ class AdminServer:
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
-        if not getattr(self.config, "qwen_persona_admin_enabled", True):
+        if not getattr(self.config, "ai_companion_admin_enabled", True):
             return
         if self._thread and self._thread.is_alive():
             return
@@ -127,8 +127,8 @@ class AdminServer:
             qwen_client=self.qwen_client,
             static_dir=self.static_dir,
         )
-        host = str(getattr(self.config, "qwen_persona_admin_host", "127.0.0.1"))
-        port = int(getattr(self.config, "qwen_persona_admin_port", 8082))
+        host = str(getattr(self.config, "ai_companion_admin_host", "127.0.0.1"))
+        port = int(getattr(self.config, "ai_companion_admin_port", 8082))
         uvicorn_config = uvicorn.Config(app, host=host, port=port, log_level="warning")
         self._server = uvicorn.Server(uvicorn_config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)

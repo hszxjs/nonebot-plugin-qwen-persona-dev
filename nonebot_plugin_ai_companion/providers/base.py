@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from ..config import QwenPersonaConfig
+    from ..config import AiCompanionConfig
     from .generation_profiles import GenerationPurpose
 
 
@@ -42,7 +42,7 @@ class BaseProvider(Protocol):
 
     def status_snapshot(self) -> dict[str, Any]: ...
 
-    def reconfigure(self, config: QwenPersonaConfig) -> None: ...
+    def reconfigure(self, config: AiCompanionConfig) -> None: ...
 
     def capabilities(self) -> ProviderCapabilities: ...
 

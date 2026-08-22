@@ -14,7 +14,7 @@ from nonebot.adapters import Bot, Event
 from nonebot.matcher import Matcher
 
 from .bot_env import BotEnvironment
-from .config import QwenPersonaConfig
+from .config import AiCompanionConfig
 from .context.envelope import MessageContextEnvelope, build_message_context
 from .context.envelope import _at_targets_from_message
 from .context.forward import count_forward_segments, resolve_forward
@@ -88,7 +88,7 @@ class ChatService:
         tool_registry: ToolRegistry,
     ) -> None:
         self.env = env
-        self.config: QwenPersonaConfig = env.config
+        self.config: AiCompanionConfig = env.config
         self.store = store
         self.client = client
         self.mlx_runtime = mlx_runtime
@@ -119,8 +119,8 @@ class ChatService:
                 f_texts, f_media = await resolve_forward(
                     bot,
                     message,
-                    max_messages=int(self.config.qwen_persona_forward_max_messages),
-                    max_chars=int(self.config.qwen_persona_forward_max_chars),
+                    max_messages=int(self.config.ai_companion_forward_max_messages),
+                    max_chars=int(self.config.ai_companion_forward_max_chars),
                 )
                 if f_texts:
                     forward_block = "【合并转发】\n" + "\n".join(f_texts)
@@ -141,7 +141,7 @@ class ChatService:
         image_count = sum(
             1 for p in media_parts if str(p.get("type") or "") in {"image", "mface", "emoji", "sticker"}
         )
-        image_limit = int(self.config.qwen_persona_media_image_limit)
+        image_limit = int(self.config.ai_companion_media_image_limit)
         if image_count > image_limit and media_context_text:
             logger.info(
                 "ai companion media: %d images > limit %d, dropping captions",
@@ -200,7 +200,7 @@ class ChatService:
         )
         sticker_reply_allowed = should_use_sticker_reply(
             incoming_has_sticker=bool(incoming_sticker_keys),
-            text_sticker_probability=self.config.qwen_persona_text_sticker_reply_probability,
+            text_sticker_probability=self.config.ai_companion_text_sticker_reply_probability,
             random_value=random.random(),
         )
         reply_plan = await self._build_model_reply_plan(
@@ -224,8 +224,8 @@ class ChatService:
                     store=self.store,
                     ids=ids,
                     trigger_reason="auto_reply",
-                    model=self.config.qwen_persona_mlx_model,
-                    adapter=self.config.qwen_persona_mlx_adapter_path,
+                    model=self.config.ai_companion_mlx_model,
+                    adapter=self.config.ai_companion_mlx_adapter_path,
                     started_at=inference_started,
                     finished_at=time.perf_counter(),
                     input_text=reply_input_text,
@@ -250,10 +250,10 @@ class ChatService:
                 model=(
                     self.client.active_model_name()
                     if hasattr(self.client, "active_model_name")
-                    else self.config.qwen_persona_mlx_model
+                    else self.config.ai_companion_mlx_model
                 ),
                 adapter=(
-                    self.config.qwen_persona_mlx_adapter_path
+                    self.config.ai_companion_mlx_adapter_path
                     if self.client.active_backend() == "mlx"
                     else ""
                 ),
@@ -273,7 +273,7 @@ class ChatService:
             logger.warning(
                 "ai companion generated sticker tokens ignored: "
                 + ",".join(
-                    generated_sticker_keys[: self.config.qwen_persona_max_reply_stickers]
+                    generated_sticker_keys[: self.config.ai_companion_max_reply_stickers]
                 )
             )
         clean_text = sanitize_reply(
@@ -315,7 +315,7 @@ class ChatService:
     # ------------------------------------------------------------------
     def _active_reply_captioner(self) -> MediaCaptioner | None:
         """主回复路径的图片 captioner：优先动漫识别，禁用则返回 None。"""
-        if getattr(self.config, "qwen_persona_anime_caption_enabled", True):
+        if getattr(self.config, "ai_companion_anime_caption_enabled", True):
             return self.captioner
         return None
 
@@ -339,15 +339,15 @@ class ChatService:
             to_me=self.env.is_to_me(event, plain_text),
         )
         return should_attempt_reply(
-            enable_reply=self.config.qwen_persona_enable_reply,
+            enable_reply=self.config.ai_companion_enable_reply,
             group_enabled=private_chat or self.env.group_enabled(ids["group_id"]),
             self_event=self.env.is_self_event(bot, ids),
             blacklisted=self.env.is_blacklisted(ids["user_id"], ids["group_id"], plain_text),
             command_like=self.env.is_command_message(plain_text),
             force_reply=force_reply,
             has_text=bool(str(plain_text or "").strip()) or force_reply,
-            reply_probability=self.config.qwen_persona_reply_probability,
-            follow_reply_probability=self.config.qwen_persona_follow_reply_probability,
+            reply_probability=self.config.ai_companion_reply_probability,
+            follow_reply_probability=self.config.ai_companion_follow_reply_probability,
             random_value=random.random(),
         )
 
@@ -372,7 +372,7 @@ class ChatService:
             to_me=self.env.is_to_me(event, plain_text),
         )
         decision = should_analyze_background_media(
-            enable_learning=self.config.qwen_persona_enable_learning,
+            enable_learning=self.config.ai_companion_enable_learning,
             group_enabled=private_chat or self.env.group_enabled(ids["group_id"]),
             self_event=self.env.is_self_event(bot, ids),
             blacklisted=self.env.is_blacklisted(ids["user_id"], ids["group_id"], plain_text),
@@ -392,7 +392,7 @@ class ChatService:
         logger.info(
             "ai companion reply media: captioner=%s, anime_enabled=%s, media_segments=%d",
             type(active_captioner).__name__ if active_captioner else "None",
-            getattr(self.config, "qwen_persona_anime_caption_enabled", True),
+            getattr(self.config, "ai_companion_anime_caption_enabled", True),
             sum(
                 1
                 for p in message_to_parts(message)
@@ -402,7 +402,7 @@ class ChatService:
         try:
             learning = await prepare_message_learning(
                 message,
-                sticker_segment_types=self.config.qwen_persona_sticker_segment_types,
+                sticker_segment_types=self.config.ai_companion_sticker_segment_types,
                 captioner=active_captioner,
                 image_fallback_text="",
                 sticker_fallback_text="",
@@ -483,7 +483,7 @@ class ChatService:
         return merged[:limit]
 
     async def _recent_context_samples(self, group_id: str | None, limit: int) -> list[dict[str, Any]]:
-        scope = str(getattr(self.config, "qwen_persona_context_scope", "mixed") or "mixed")
+        scope = str(getattr(self.config, "ai_companion_context_scope", "mixed") or "mixed")
         if scope == "group":
             return await self.store.recent_samples(group_id=group_id, limit=limit)
         if scope == "global" or not group_id:
@@ -529,7 +529,7 @@ class ChatService:
 
         conversation_lines = self._conversation_lines_from_envelope(envelope)
         # 图文相关性判断：若图片描述与对话文字无关，丢弃图片描述只保留文字。
-        if media_context_text and getattr(self.config, "qwen_persona_media_relevance_check", True):
+        if media_context_text and getattr(self.config, "ai_companion_media_relevance_check", True):
             dialogue_text = envelope.current_text
             if not dialogue_text and conversation_lines:
                 dialogue_text = " ".join(conversation_lines)
@@ -544,7 +544,7 @@ class ChatService:
         append_caption_debug_log(
             f"PROMPT media_context_text={media_context_text!r} "
             f"conversation_lines_count={len(conversation_lines)}",
-            data_dir=self.config.qwen_persona_data_dir,
+            data_dir=self.config.ai_companion_data_dir,
         )
         for item in relevant_samples:
             context_text = context_text_from_sample(item)
@@ -577,7 +577,7 @@ class ChatService:
                 media_assets=relevant_media_assets,
             ),
             context_text=query_text,
-            min_recent_count=self.config.qwen_persona_min_meme_recent_count,
+            min_recent_count=self.config.ai_companion_min_meme_recent_count,
             max_items=3,
         )
 
@@ -607,7 +607,7 @@ class ChatService:
     ) -> list[dict[str, Any]]:
         if not query:
             return []
-        scope = str(getattr(self.config, "qwen_persona_context_scope", "mixed") or "mixed")
+        scope = str(getattr(self.config, "ai_companion_context_scope", "mixed") or "mixed")
         search_group_id = None if scope == "global" else group_id
         try:
             return await self.store.search_context_samples(
@@ -627,7 +627,7 @@ class ChatService:
     ) -> list[dict[str, Any]]:
         if not query:
             return []
-        scope = str(getattr(self.config, "qwen_persona_context_scope", "mixed") or "mixed")
+        scope = str(getattr(self.config, "ai_companion_context_scope", "mixed") or "mixed")
         search_group_id = None if scope == "global" else group_id
         try:
             return await self.store.search_media_assets(
@@ -717,7 +717,7 @@ class ChatService:
                 parts=media_parts,
                 group_id=ids.get("group_id"),
                 user_id=ids.get("user_id"),
-                sticker_segment_types=set(self.config.qwen_persona_sticker_segment_types),
+                sticker_segment_types=set(self.config.ai_companion_sticker_segment_types),
             )
         except Exception as exc:
             logger.warning(f"ai companion background media analysis failed: {exc!r}")
@@ -775,18 +775,18 @@ class ChatService:
         message: Any,
         matcher: Matcher,
     ) -> bool:
-        if not self.config.qwen_persona_enable_repeat:
+        if not self.config.ai_companion_enable_repeat:
             return False
         candidate = self.repeat_tracker.observe(
             group_id=ids["group_id"],
             message=message,
-            sticker_segment_types=self.config.qwen_persona_sticker_segment_types,
-            min_count=self.config.qwen_persona_repeat_min_count,
-            cooldown_seconds=self.config.qwen_persona_repeat_cooldown_seconds,
+            sticker_segment_types=self.config.ai_companion_sticker_segment_types,
+            min_count=self.config.ai_companion_repeat_min_count,
+            cooldown_seconds=self.config.ai_companion_repeat_cooldown_seconds,
         )
         if not candidate:
             return False
-        if random.random() >= self.config.qwen_persona_repeat_probability:
+        if random.random() >= self.config.ai_companion_repeat_probability:
             return False
         if self.env.is_command_message(candidate.plain_text):
             return False
@@ -808,7 +808,7 @@ class ChatService:
         plain_text: str,
         matcher: Matcher,
     ) -> bool:
-        if not self.config.qwen_persona_enable_reply:
+        if not self.config.ai_companion_enable_reply:
             return False
         if not ids["group_id"] or not self.env.group_enabled(ids["group_id"]):
             return False
@@ -819,20 +819,20 @@ class ChatService:
         ):
             self.conversation_pattern_tracker.reset(ids["group_id"])
             return False
-        if self.config.qwen_persona_pattern_reply_threshold <= 0:
+        if self.config.ai_companion_pattern_reply_threshold <= 0:
             return False
 
         trigger = build_conversation_pattern_message(
             user_id=ids["user_id"] or "",
             message=message,
-            sticker_segment_types=self.config.qwen_persona_sticker_segment_types,
+            sticker_segment_types=self.config.ai_companion_sticker_segment_types,
         )
         if trigger is None:
             return False
         pattern = await self.store.get_conversation_pattern(
             group_id=ids["group_id"],
             trigger_signature=trigger.signature,
-            min_count=self.config.qwen_persona_pattern_reply_threshold,
+            min_count=self.config.ai_companion_pattern_reply_threshold,
         )
         if not pattern:
             return False
@@ -879,8 +879,8 @@ class ChatService:
                         "",
                         delivery.trailing_sticker_keys,
                         get_sticker=self.store.get_sticker,
-                        enable_sending_stickers=self.config.qwen_persona_enable_sending_stickers,
-                        max_reply_stickers=self.config.qwen_persona_max_reply_stickers,
+                        enable_sending_stickers=self.config.ai_companion_enable_sending_stickers,
+                        max_reply_stickers=self.config.ai_companion_max_reply_stickers,
                     )
                     if not (isinstance(sticker_reply, str) and not sticker_reply.strip()):
                         await matcher.send(sticker_reply)
@@ -891,8 +891,8 @@ class ChatService:
             text,
             sticker_keys,
             get_sticker=self.store.get_sticker,
-            enable_sending_stickers=self.config.qwen_persona_enable_sending_stickers,
-            max_reply_stickers=self.config.qwen_persona_max_reply_stickers,
+            enable_sending_stickers=self.config.ai_companion_enable_sending_stickers,
+            max_reply_stickers=self.config.ai_companion_max_reply_stickers,
         )
         if isinstance(reply, str) and not reply.strip():
             return False
@@ -914,7 +914,7 @@ class ChatService:
     ) -> str | None:
         candidates = await self.store.top_stickers(
             group_id=group_id,
-            limit=self.config.qwen_persona_sticker_prompt_limit,
+            limit=self.config.ai_companion_sticker_prompt_limit,
         )
         seen = {str(item.get("key") or "").strip() for item in candidates}
         for key in incoming_sticker_keys:
@@ -933,7 +933,7 @@ class ChatService:
             trigger_text=trigger_text,
             reply_text=reply_text,
             intent=intent,
-            min_count=self.config.qwen_persona_min_reply_sticker_count,
+            min_count=self.config.ai_companion_min_reply_sticker_count,
         )
         await safe_record_sticker_event(
             self.store,
@@ -948,7 +948,7 @@ class ChatService:
                 "intent": str(getattr(intent, "value", intent)),
                 "candidate_count": selection.candidate_count,
                 "usable_count": selection.usable_count,
-                "min_count": self.config.qwen_persona_min_reply_sticker_count,
+                "min_count": self.config.ai_companion_min_reply_sticker_count,
                 "fallback": selection.fallback,
                 "trigger_text": trigger_text[:240],
                 "reply_text": reply_text[:240],

@@ -16,20 +16,20 @@ def mlx_context_size(config: Any) -> int:
     return max(
         512,
         _int_value(
-            getattr(config, "qwen_persona_mlx_lora_max_seq_length", DEFAULT_MLX_CONTEXT_SIZE),
+            getattr(config, "ai_companion_mlx_lora_max_seq_length", DEFAULT_MLX_CONTEXT_SIZE),
             DEFAULT_MLX_CONTEXT_SIZE,
         ),
     )
 
 
 def effective_max_tokens(config: Any) -> int:
-    requested = max(1, _int_value(getattr(config, "qwen_persona_max_tokens", 256), 256))
+    requested = max(1, _int_value(getattr(config, "ai_companion_max_tokens", 256), 256))
     ctx_size = mlx_context_size(config)
     return max(16, min(requested, max(64, ctx_size // 4)))
 
 
 def effective_context_message_limit(config: Any) -> int:
-    requested = max(0, _int_value(getattr(config, "qwen_persona_context_messages", 16), 16))
+    requested = max(0, _int_value(getattr(config, "ai_companion_context_messages", 16), 16))
     ctx_size = mlx_context_size(config)
     return min(requested, max(4, ctx_size // 256))
 

@@ -24,7 +24,7 @@ from typing import Any
 
 import httpx
 
-from .config import QwenPersonaConfig
+from .config import AiCompanionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class _SauceNaoQuotaExhausted(Exception):
 class AnimeCaptioner:
     """动漫图片识别 captioner。无本地状态，可并发，全程容错。"""
 
-    def __init__(self, config: QwenPersonaConfig) -> None:
+    def __init__(self, config: AiCompanionConfig) -> None:
         self.config = config
         # 缓存：content_hash -> (caption, expire_timestamp)
         self._cache: dict[str, tuple[str, float]] = {}
@@ -130,12 +130,12 @@ class AnimeCaptioner:
         self._saucenao_short_remaining: int | None = None
         self._saucenao_long_remaining: int | None = None
 
-    def reconfigure(self, config: QwenPersonaConfig) -> None:
+    def reconfigure(self, config: AiCompanionConfig) -> None:
         self.config = config
 
     async def caption_media(self, part: dict[str, Any]) -> str:
         """识别图片，返回文字描述。失败/未命中返回 ''。"""
-        if not getattr(self.config, "qwen_persona_anime_caption_enabled", True):
+        if not getattr(self.config, "ai_companion_anime_caption_enabled", True):
             _debug_log(f"SKIP enabled=False type={part.get('type')}")
             return ""
 
@@ -150,7 +150,7 @@ class AnimeCaptioner:
             _debug_log(f"CACHE_HIT hash={content_hash[:8]} caption={cached[0]!r}")
             return cached[0]
 
-        min_sim = float(getattr(self.config, "qwen_persona_anime_min_similarity", 80.0))
+        min_sim = float(getattr(self.config, "ai_companion_anime_min_similarity", 80.0))
         # 搜索前压缩缩放：大图（如 9MB）直接上传 SauceNAO/iqdb 会超时，且命中率低。
         search_bytes = _downscale_for_search(image_bytes)
         _debug_log(f"SEARCH_START hash={content_hash[:8]} orig={len(image_bytes)} search={len(search_bytes)} min_sim={min_sim} saucenao={'yes' if self._saucenao_available() else 'no'}")
@@ -246,20 +246,20 @@ class AnimeCaptioner:
         return "；".join(results)
 
     def _vision_available(self) -> bool:
-        if not getattr(self.config, "qwen_persona_anime_vision_enabled", True):
+        if not getattr(self.config, "ai_companion_anime_vision_enabled", True):
             return False
         # 需要 url + key（key 空则尝试复用 online_api_key）
-        url = (getattr(self.config, "qwen_persona_anime_vision_api_url", "") or "").strip()
+        url = (getattr(self.config, "ai_companion_anime_vision_api_url", "") or "").strip()
         return bool(url)
 
     def _vision_creds(self) -> tuple[str, str]:
-        url = (getattr(self.config, "qwen_persona_anime_vision_api_url", "") or "").strip()
-        key = (getattr(self.config, "qwen_persona_anime_vision_api_key", "") or "").strip()
+        url = (getattr(self.config, "ai_companion_anime_vision_api_url", "") or "").strip()
+        key = (getattr(self.config, "ai_companion_anime_vision_api_key", "") or "").strip()
         # key 空则复用 GLM 在线推理或辅助训练的 key（同平台）
         if not key:
-            key = (getattr(self.config, "qwen_persona_online_api_key", "") or "").strip()
+            key = (getattr(self.config, "ai_companion_online_api_key", "") or "").strip()
         if not key:
-            key = (getattr(self.config, "qwen_persona_lora_helper_api_key", "") or "").strip()
+            key = (getattr(self.config, "ai_companion_lora_helper_api_key", "") or "").strip()
         return url, key
 
     async def _vision_describe_image(self, image_bytes: bytes) -> str:
@@ -271,7 +271,7 @@ class AnimeCaptioner:
         url, key = self._vision_creds()
         if not url or not key:
             return ""
-        model = (getattr(self.config, "qwen_persona_anime_vision_model", "glm-4.6v-flash") or "glm-4.6v-flash").strip()
+        model = (getattr(self.config, "ai_companion_anime_vision_model", "glm-4.6v-flash") or "glm-4.6v-flash").strip()
 
         # 缩放到视觉模型适中的尺寸（避免图太大传得慢）
         vision_bytes = _downscale_for_search(image_bytes, max_size=768)
@@ -327,7 +327,7 @@ class AnimeCaptioner:
         return ""
 
     def _saucenao_available(self) -> bool:
-        if not getattr(self.config, "qwen_persona_saucenao_api_key", "").strip():
+        if not getattr(self.config, "ai_companion_saucenao_api_key", "").strip():
             return False
         # 配额耗尽标记
         if self._saucenao_long_remaining is not None and self._saucenao_long_remaining <= 0:
@@ -350,8 +350,8 @@ class AnimeCaptioner:
 
     async def _search_saucenao(self, image_bytes: bytes, min_sim: float) -> str:
         """SauceNAO 单路搜索。POST 表单，返回 JSON。"""
-        api_key = self.config.qwen_persona_saucenao_api_key.strip()
-        dbmask = int(getattr(self.config, "qwen_persona_saucenao_dbmask", 999))
+        api_key = self.config.ai_companion_saucenao_api_key.strip()
+        dbmask = int(getattr(self.config, "ai_companion_saucenao_dbmask", 999))
         try:
             async with httpx.AsyncClient(timeout=_PER_ROUTE_TIMEOUT, follow_redirects=True) as c:
                 r = await c.post(

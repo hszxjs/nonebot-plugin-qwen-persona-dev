@@ -6,7 +6,7 @@ import logging
 
 from nonebot import require
 
-from ..config import QwenPersonaConfig
+from ..config import AiCompanionConfig
 from .trainer import PersonaTrainer, parse_time_slot
 
 logger = logging.getLogger(__name__)
@@ -24,11 +24,11 @@ async def run_scheduled_training(trainer: PersonaTrainer) -> None:
 
 
 def install_training_schedule(
-    config: QwenPersonaConfig,
+    config: AiCompanionConfig,
     trainer: PersonaTrainer,
 ) -> bool:
     """按 train_times 注册 cron 任务；返回是否成功安装。幂等由调用方保证。"""
-    if not config.qwen_persona_enable_training:
+    if not config.ai_companion_enable_training:
         return False
 
     try:
@@ -41,11 +41,11 @@ def install_training_schedule(
     async def _job() -> None:
         await run_scheduled_training(trainer)
 
-    for slot in config.qwen_persona_train_times:
+    for slot in config.ai_companion_train_times:
         try:
             hour, minute = parse_time_slot(slot)
         except ValueError as exc:
-            logger.warning(f"Invalid qwen_persona_train_times item {slot!r}: {exc}")
+            logger.warning(f"Invalid ai_companion_train_times item {slot!r}: {exc}")
             continue
 
         scheduler.add_job(
@@ -53,7 +53,7 @@ def install_training_schedule(
             "cron",
             hour=hour,
             minute=minute,
-            id=f"qwen_persona_lora_{hour:02d}_{minute:02d}",
+            id=f"ai_companion_lora_{hour:02d}_{minute:02d}",
             replace_existing=True,
             misfire_grace_time=600,
         )
@@ -61,12 +61,12 @@ def install_training_schedule(
     return True
 
 
-def schedule_job_ids(config: QwenPersonaConfig) -> list[str]:
+def schedule_job_ids(config: AiCompanionConfig) -> list[str]:
     ids: list[str] = []
-    for slot in config.qwen_persona_train_times:
+    for slot in config.ai_companion_train_times:
         try:
             hour, minute = parse_time_slot(slot)
         except ValueError:
             continue
-        ids.append(f"qwen_persona_lora_{hour:02d}_{minute:02d}")
+        ids.append(f"ai_companion_lora_{hour:02d}_{minute:02d}")
     return ids

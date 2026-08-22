@@ -177,7 +177,7 @@ def _persist_sticker_media_sync(repo_dir: Path, sticker: dict[str, Any]) -> None
             content = response.read(MAX_STICKER_MEDIA_BYTES + 1)
             content_type = _response_content_type(response)
     except Exception as exc:
-        logger.warning("qwen persona sticker media download failed: %s: %r", uri, exc)
+        logger.warning("ai companion sticker media download failed: %s: %r", uri, exc)
         return
     if not content or len(content) > MAX_STICKER_MEDIA_BYTES:
         return

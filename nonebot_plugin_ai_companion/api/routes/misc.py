@@ -72,11 +72,11 @@ def build_router(
     @router.get("/models")
     async def list_models() -> dict[str, Any]:
         # 从在线推理配置派生 models 端点；未配置则回退到辅助训练配置。
-        chat_url = (config.qwen_persona_online_api_url or "").strip()
-        api_key = (config.qwen_persona_online_api_key or "").strip()
+        chat_url = (config.ai_companion_online_api_url or "").strip()
+        api_key = (config.ai_companion_online_api_key or "").strip()
         if not chat_url:
-            chat_url = (config.qwen_persona_lora_helper_api_url or "").strip()
-            api_key = (config.qwen_persona_lora_helper_api_key or "").strip()
+            chat_url = (config.ai_companion_lora_helper_api_url or "").strip()
+            api_key = (config.ai_companion_lora_helper_api_key or "").strip()
         try:
             from ...providers.glm_backend import fetch_online_models
 

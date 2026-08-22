@@ -17,7 +17,7 @@ _QWEN35_NORM_SUFFIXES = (
     ".q_norm.weight",
     ".k_norm.weight",
 )
-_QWEN35_SANITIZE_HOTFIX_ATTR = "_qwen_persona_qwen35_norm_sanitize_hotfixed"
+_QWEN35_SANITIZE_HOTFIX_ATTR = "_ai_companion_qwen35_norm_sanitize_hotfixed"
 
 
 class MlxBackend(Protocol):

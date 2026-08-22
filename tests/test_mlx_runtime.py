@@ -150,10 +150,10 @@ def test_safe_bpe_detokenizer_drops_invalid_utf8_bytes() -> None:
 
 
 def test_runtime_patches_bpe_detokenizer_on_loaded_processor() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
-    config = QwenPersonaConfig()
+    config = AiCompanionConfig()
     runtime = MlxVLMRuntime(config)
     bpe_type = type("BPEStreamingDetokenizer", (), {})
     detokenizer = bpe_type()
@@ -170,10 +170,10 @@ def test_runtime_patches_bpe_detokenizer_on_loaded_processor() -> None:
 
 
 def test_chat_sanitizes_isolated_generated_replacement_characters() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
-    runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=ReplacementTextBackend())
+    runtime = MlxVLMRuntime(AiCompanionConfig(), backend=ReplacementTextBackend())
 
     reply = asyncio.run(runtime.chat([{"role": "user", "content": "hello"}]))
 
@@ -184,10 +184,10 @@ def test_chat_sanitizes_isolated_generated_replacement_characters() -> None:
 
 
 def test_chat_rejects_mostly_corrupt_generated_replacement_characters() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
-    runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=CorruptReplacementTextBackend())
+    runtime = MlxVLMRuntime(AiCompanionConfig(), backend=CorruptReplacementTextBackend())
 
     with pytest.raises(ValueError):
         asyncio.run(runtime.chat([{"role": "user", "content": "hello"}]))
@@ -198,10 +198,10 @@ def test_chat_rejects_mostly_corrupt_generated_replacement_characters() -> None:
 
 
 def test_chat_truncates_repetitive_generated_tail() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
-    runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=RepeatingTailBackend())
+    runtime = MlxVLMRuntime(AiCompanionConfig(), backend=RepeatingTailBackend())
 
     reply = asyncio.run(runtime.chat([{"role": "user", "content": "hello"}]))
 
@@ -212,10 +212,10 @@ def test_chat_truncates_repetitive_generated_tail() -> None:
 
 
 def test_chat_success_records_metrics_without_datetime_import_regression() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
-    runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=SuccessfulTextBackend())
+    runtime = MlxVLMRuntime(AiCompanionConfig(), backend=SuccessfulTextBackend())
 
     reply = asyncio.run(runtime.chat([{"role": "user", "content": "hello"}]))
 
@@ -224,10 +224,10 @@ def test_chat_success_records_metrics_without_datetime_import_regression() -> No
 
 
 def test_chat_records_backend_generation_metrics_when_available() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
-    runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=TokenMetricsBackend())
+    runtime = MlxVLMRuntime(AiCompanionConfig(), backend=TokenMetricsBackend())
 
     reply = asyncio.run(runtime.chat([{"role": "user", "content": "hello"}]))
 
@@ -239,11 +239,11 @@ def test_chat_records_backend_generation_metrics_when_available() -> None:
 
 
 def test_chat_passes_structured_messages_to_backend_template() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     backend = StructuredRecordingBackend()
-    runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=backend)
+    runtime = MlxVLMRuntime(AiCompanionConfig(), backend=backend)
 
     reply = asyncio.run(
         runtime.chat(
@@ -263,14 +263,14 @@ def test_chat_passes_structured_messages_to_backend_template() -> None:
 
 
 def test_chat_passes_repetition_controls_to_backend_generate() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     backend = SamplingRecordingBackend()
     runtime = MlxVLMRuntime(
-        QwenPersonaConfig(
-            qwen_persona_repetition_penalty=1.08,
-            qwen_persona_repetition_context_size=64,
+        AiCompanionConfig(
+            ai_companion_repetition_penalty=1.08,
+            ai_companion_repetition_context_size=64,
         ),
         backend=backend,
     )
@@ -283,18 +283,18 @@ def test_chat_passes_repetition_controls_to_backend_generate() -> None:
 
 
 def test_caption_media_uses_short_generation_profile() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     backend = SamplingRecordingBackend()
     runtime = MlxVLMRuntime(
-        QwenPersonaConfig(
-            qwen_persona_max_tokens=2048,
-            qwen_persona_mlx_lora_max_seq_length=2048,
-            qwen_persona_temperature=0.85,
-            qwen_persona_top_p=0.9,
-            qwen_persona_repetition_penalty=1.08,
-            qwen_persona_repetition_context_size=64,
+        AiCompanionConfig(
+            ai_companion_max_tokens=2048,
+            ai_companion_mlx_lora_max_seq_length=2048,
+            ai_companion_temperature=0.85,
+            ai_companion_top_p=0.9,
+            ai_companion_repetition_penalty=1.08,
+            ai_companion_repetition_context_size=64,
         ),
         backend=backend,
     )
@@ -312,19 +312,19 @@ def test_caption_media_uses_short_generation_profile() -> None:
 
 
 def test_sticker_selector_generation_profile_is_not_caption_limited() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.generation_profiles import GenerationPurpose
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     backend = SamplingRecordingBackend()
     runtime = MlxVLMRuntime(
-        QwenPersonaConfig(
-            qwen_persona_max_tokens=2048,
-            qwen_persona_mlx_lora_max_seq_length=2048,
-            qwen_persona_temperature=0.85,
-            qwen_persona_top_p=0.9,
-            qwen_persona_repetition_penalty=1.08,
-            qwen_persona_repetition_context_size=64,
+        AiCompanionConfig(
+            ai_companion_max_tokens=2048,
+            ai_companion_mlx_lora_max_seq_length=2048,
+            ai_companion_temperature=0.85,
+            ai_companion_top_p=0.9,
+            ai_companion_repetition_penalty=1.08,
+            ai_companion_repetition_context_size=64,
         ),
         backend=backend,
     )
@@ -344,10 +344,10 @@ def test_sticker_selector_generation_profile_is_not_caption_limited() -> None:
 
 
 def test_caption_media_rejects_repetitive_generated_caption() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
-    runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=RepeatingCaptionBackend())
+    runtime = MlxVLMRuntime(AiCompanionConfig(), backend=RepeatingCaptionBackend())
 
     caption = asyncio.run(
         runtime.caption_media({"type": "image", "data": {"url": "https://example.invalid/a.png"}})
@@ -360,11 +360,11 @@ def test_caption_media_rejects_repetitive_generated_caption() -> None:
 
 
 def test_generation_queue_is_visible_while_second_chat_waits() -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     backend = BlockingGenerateBackend()
-    runtime = MlxVLMRuntime(QwenPersonaConfig(), backend=backend)
+    runtime = MlxVLMRuntime(AiCompanionConfig(), backend=backend)
 
     async def run_case() -> dict[str, object]:
         first = asyncio.create_task(runtime.chat([{"role": "user", "content": "first"}]))
@@ -384,16 +384,16 @@ def test_generation_queue_is_visible_while_second_chat_waits() -> None:
 
 
 def test_hf_repo_downloads_to_configured_dir_before_loading(tmp_path: Path) -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     local_path = tmp_path / "models" / "org--model"
     local_path.mkdir(parents=True)
     backend = RecordingBackend()
     downloader = RecordingDownloadManager(local_path)
-    config = QwenPersonaConfig(
-        qwen_persona_mlx_model="org/model",
-        qwen_persona_model_dir=str(tmp_path / "controlled"),
+    config = AiCompanionConfig(
+        ai_companion_mlx_model="org/model",
+        ai_companion_model_dir=str(tmp_path / "controlled"),
     )
     runtime = MlxVLMRuntime(config, backend=backend, download_manager=downloader)
 
@@ -407,7 +407,7 @@ def test_hf_repo_downloads_to_configured_dir_before_loading(tmp_path: Path) -> N
 
 
 def test_existing_local_model_path_skips_download_manager(tmp_path: Path) -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     local_path = tmp_path / "local-model"
@@ -415,7 +415,7 @@ def test_existing_local_model_path_skips_download_manager(tmp_path: Path) -> Non
     backend = RecordingBackend()
     downloader = RecordingDownloadManager(tmp_path / "unused")
     runtime = MlxVLMRuntime(
-        QwenPersonaConfig(qwen_persona_mlx_model=str(local_path)),
+        AiCompanionConfig(ai_companion_mlx_model=str(local_path)),
         backend=backend,
         download_manager=downloader,
     )
@@ -428,7 +428,7 @@ def test_existing_local_model_path_skips_download_manager(tmp_path: Path) -> Non
 
 
 def test_download_progress_is_visible_while_load_is_running(tmp_path: Path) -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     started = threading.Event()
@@ -445,9 +445,9 @@ def test_download_progress_is_visible_while_load_is_running(tmp_path: Path) -> N
         local_path = tmp_path / "prepared"
         local_path.mkdir()
         runtime = MlxVLMRuntime(
-            QwenPersonaConfig(
-                qwen_persona_mlx_model="org/model",
-                qwen_persona_model_dir=str(tmp_path / "controlled"),
+            AiCompanionConfig(
+                ai_companion_mlx_model="org/model",
+                ai_companion_model_dir=str(tmp_path / "controlled"),
             ),
             backend=RecordingBackend(),
             download_manager=BlockingDownloadManager(local_path),
@@ -469,7 +469,7 @@ def test_download_progress_is_visible_while_load_is_running(tmp_path: Path) -> N
 
 
 def test_mlx_load_phase_is_indeterminate_and_does_not_keep_old_model_on_failure(tmp_path: Path) -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     started = threading.Event()
@@ -495,12 +495,12 @@ def test_mlx_load_phase_is_indeterminate_and_does_not_keep_old_model_on_failure(
         new_path.mkdir()
         backend = BlockingFailingBackend()
         runtime = MlxVLMRuntime(
-            QwenPersonaConfig(qwen_persona_mlx_model=str(old_path)),
+            AiCompanionConfig(ai_companion_mlx_model=str(old_path)),
             backend=backend,
         )
         await runtime.load()
         backend.fail_next = True
-        runtime.reconfigure(QwenPersonaConfig(qwen_persona_mlx_model=str(new_path)))
+        runtime.reconfigure(AiCompanionConfig(ai_companion_mlx_model=str(new_path)))
         task = asyncio.create_task(runtime.reload())
         assert await asyncio.to_thread(started.wait, 5)
         loading_snapshot = runtime.status_snapshot()
@@ -519,7 +519,7 @@ def test_mlx_load_phase_is_indeterminate_and_does_not_keep_old_model_on_failure(
 
 
 def test_hf_download_percent_clears_when_entering_mlx_load_phase(tmp_path: Path) -> None:
-    from nonebot_plugin_ai_companion.config import QwenPersonaConfig
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.providers.mlx_runtime import MlxVLMRuntime
 
     started = threading.Event()
@@ -547,9 +547,9 @@ def test_hf_download_percent_clears_when_entering_mlx_load_phase(tmp_path: Path)
         local_path = tmp_path / "prepared"
         local_path.mkdir()
         runtime = MlxVLMRuntime(
-            QwenPersonaConfig(
-                qwen_persona_mlx_model="org/model",
-                qwen_persona_model_dir=str(tmp_path / "controlled"),
+            AiCompanionConfig(
+                ai_companion_mlx_model="org/model",
+                ai_companion_model_dir=str(tmp_path / "controlled"),
             ),
             backend=BlockingBackend(),
             download_manager=FinishedDownloadManager(local_path),

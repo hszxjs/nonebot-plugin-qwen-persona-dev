@@ -12,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from ..config import QwenPersonaConfig, effective_mlx_model
+from ..config import AiCompanionConfig, effective_mlx_model
 from ..model_manager.download import HFDownloadManager, PreparedModel, is_existing_local_model, is_hf_repo_ref
 from ..model_manager.presets import MLX_MODEL_PRESETS
 from .base import ProviderCapabilities
@@ -36,7 +36,7 @@ class MlxVLMRuntime:
     provider_name = "mlx"
     def __init__(
         self,
-        config: QwenPersonaConfig,
+        config: AiCompanionConfig,
         *,
         backend: MlxBackend | None = None,
         download_manager: Any | None = None,
@@ -67,7 +67,7 @@ class MlxVLMRuntime:
         self._generation_queued = 0
         self._generation_current: str | None = None
 
-    def reconfigure(self, config: QwenPersonaConfig) -> None:
+    def reconfigure(self, config: AiCompanionConfig) -> None:
         self.config = config
 
     async def load(self, *, force: bool = False) -> dict[str, Any]:
@@ -257,7 +257,7 @@ class MlxVLMRuntime:
                 self._backend.load,
                 str(prepared.local_path),
                 adapter_path=adapter_path,
-                trust_remote_code=bool(self.config.qwen_persona_mlx_trust_remote_code),
+                trust_remote_code=bool(self.config.ai_companion_mlx_trust_remote_code),
             )
         except Exception as exc:
             self._state = "failed"
@@ -333,7 +333,7 @@ class MlxVLMRuntime:
         return importlib.util.find_spec("mlx_vlm") is not None
 
     def _adapter_path(self) -> str | None:
-        value = str(getattr(self.config, "qwen_persona_mlx_adapter_path", "") or "").strip()
+        value = str(getattr(self.config, "ai_companion_mlx_adapter_path", "") or "").strip()
         return value or None
 
     async def _prepare_model(self, model_name: str) -> PreparedModel:
@@ -358,7 +358,7 @@ class MlxVLMRuntime:
             )
             return PreparedModel(local_path=Path(model_name), source="direct")
 
-        model_dir = Path(str(getattr(self.config, "qwen_persona_model_dir", "") or "data/qwen_persona/models"))
+        model_dir = Path(str(getattr(self.config, "ai_companion_model_dir", "") or "data/qwen_persona/models"))
         progress = OperationProgress(self._update_download_progress)
         return await asyncio.to_thread(
             self._download_manager.prepare_model,

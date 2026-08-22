@@ -20,7 +20,7 @@ from .api.server import AdminServer
 from .anime_captioner import AnimeCaptioner
 from .bot_env import BotEnvironment
 from .chat_service import ChatService
-from .config import QwenPersonaConfig, load_plugin_config, normalize_matcher_priorities
+from .config import AiCompanionConfig, load_plugin_config, normalize_matcher_priorities
 from .context.nicknames import NicknameResolver
 from .decision.repeat import ConversationPatternTracker, RepeatTracker
 from .delivery.onebot_v11 import is_poke_at_self, send_counter_poke
@@ -49,7 +49,7 @@ __plugin_meta__ = PluginMetadata(
     type="application",
     homepage="https://github.com/hszxjs/nonebot-plugin-qwen-persona-dev",
     supported_adapters=None,
-    config=QwenPersonaConfig,
+    config=AiCompanionConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -65,12 +65,12 @@ priority_changes = normalize_matcher_priorities(plugin_config)
 if priority_changes:
     logger.warning(
         "ai companion matcher priorities normalized: "
-        f"learning={plugin_config.qwen_persona_learning_priority}, "
-        f"reply={plugin_config.qwen_persona_reply_priority}"
+        f"learning={plugin_config.ai_companion_learning_priority}, "
+        f"reply={plugin_config.ai_companion_reply_priority}"
     )
 
 env = BotEnvironment(driver.config, plugin_config)
-store = PersonaStore(Path(plugin_config.qwen_persona_data_dir))
+store = PersonaStore(Path(plugin_config.ai_companion_data_dir))
 mlx_runtime = MlxVLMRuntime(plugin_config)
 client = QwenClient(plugin_config, runtime=mlx_runtime)
 anime_captioner = AnimeCaptioner(plugin_config)
@@ -120,19 +120,19 @@ admin_server = AdminServer(
 )
 
 _CONFIG_RESTART_REQUIRED = {
-    "qwen_persona_mlx_model",
-    "qwen_persona_mlx_adapter_path",
-    "qwen_persona_mlx_auto_load",
-    "qwen_persona_mlx_trust_remote_code",
-    "qwen_persona_model_dir",
-    "qwen_persona_admin_enabled",
-    "qwen_persona_admin_host",
-    "qwen_persona_admin_port",
-    "qwen_persona_data_dir",
-    "qwen_persona_train_times",
-    "qwen_persona_enable_training",
-    "qwen_persona_learning_priority",
-    "qwen_persona_reply_priority",
+    "ai_companion_mlx_model",
+    "ai_companion_mlx_adapter_path",
+    "ai_companion_mlx_auto_load",
+    "ai_companion_mlx_trust_remote_code",
+    "ai_companion_model_dir",
+    "ai_companion_admin_enabled",
+    "ai_companion_admin_host",
+    "ai_companion_admin_port",
+    "ai_companion_data_dir",
+    "ai_companion_train_times",
+    "ai_companion_enable_training",
+    "ai_companion_learning_priority",
+    "ai_companion_reply_priority",
 }
 _schedule_installed = False
 
@@ -187,7 +187,7 @@ async def _startup() -> None:
         logger.warning(f"ai companion sticker summary cleanup skipped: {exc!r}")
     try:
         repo_cleanup = await cleanup_sticker_repo_manifest(
-            plugin_config.qwen_persona_sticker_repo_dir
+            plugin_config.ai_companion_sticker_repo_dir
         )
         if (
             repo_cleanup.get("removed")
@@ -204,7 +204,7 @@ async def _startup() -> None:
         logger.warning(f"ai companion sticker repo cleanup skipped: {exc!r}")
     try:
         backfill = await store.backfill_stickers_from_raw_segments(
-            plugin_config.qwen_persona_sticker_segment_types
+            plugin_config.ai_companion_sticker_segment_types
         )
         if backfill.get("samples_updated") or backfill.get("stickers_upserted"):
             logger.info(
@@ -216,7 +216,7 @@ async def _startup() -> None:
         logger.warning(f"ai companion sticker backfill skipped: {exc!r}")
     try:
         dedupe = await store.deduplicate_stickers_by_canonical_key(
-            plugin_config.qwen_persona_sticker_segment_types
+            plugin_config.ai_companion_sticker_segment_types
         )
         if any(dedupe.values()):
             logger.info(
@@ -231,7 +231,7 @@ async def _startup() -> None:
         admin_server.start()
     except Exception as exc:
         logger.exception(f"ai companion admin server failed to start: {exc!r}")
-    if plugin_config.qwen_persona_mlx_auto_load:
+    if plugin_config.ai_companion_mlx_auto_load:
         try:
             load_result = await mlx_runtime.load()
             logger.info(
@@ -260,7 +260,7 @@ async def _shutdown() -> None:
 # ---------------------------------------------------------------------------
 # matcher 路由
 # ---------------------------------------------------------------------------
-persona_learn = on_message(priority=plugin_config.qwen_persona_learning_priority, block=False)
+persona_learn = on_message(priority=plugin_config.ai_companion_learning_priority, block=False)
 
 
 @persona_learn.handle()
@@ -268,7 +268,7 @@ async def _learn_message(bot: Bot, event: Event) -> None:
     await learning_service.handle_learn(bot, event)
 
 
-persona_chat = on_message(priority=plugin_config.qwen_persona_reply_priority, block=False)
+persona_chat = on_message(priority=plugin_config.ai_companion_reply_priority, block=False)
 
 
 @persona_chat.handle()
@@ -276,7 +276,7 @@ async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     await chat_service.handle_chat(bot, event, matcher)
 
 
-persona_poke = on_notice(priority=plugin_config.qwen_persona_reply_priority - 1, block=False)
+persona_poke = on_notice(priority=plugin_config.ai_companion_reply_priority - 1, block=False)
 
 
 @persona_poke.handle()

@@ -12,7 +12,7 @@ def make_auth_dependency(config: Any):
         token: str | None = Query(default=None),
         x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
     ) -> None:
-        expected = str(getattr(config, "qwen_persona_admin_token", "") or "")
+        expected = str(getattr(config, "ai_companion_admin_token", "") or "")
         if not expected:
             return
         if expected not in {token or "", x_admin_token or ""}:

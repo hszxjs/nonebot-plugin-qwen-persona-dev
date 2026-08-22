@@ -15,10 +15,20 @@ import type {
   TrainingActionResult,
 } from "@/lib/types"
 
-const tokenStorageKey = "qwen-persona-admin-token"
+const tokenStorageKey = "ai-companion-admin-token"
+const legacyTokenStorageKey = "qwen-persona-admin-token"
 
 export function getAdminToken() {
-  return window.localStorage.getItem(tokenStorageKey) || ""
+  const token = window.localStorage.getItem(tokenStorageKey)
+  if (token) return token
+  // 旧版本 localStorage key 迁移：读到旧值则搬移到新 key
+  const legacy = window.localStorage.getItem(legacyTokenStorageKey)
+  if (legacy) {
+    window.localStorage.setItem(tokenStorageKey, legacy)
+    window.localStorage.removeItem(legacyTokenStorageKey)
+    return legacy
+  }
+  return ""
 }
 
 export function setAdminToken(token: string) {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..config import QwenPersonaConfig, effective_chat_model
+from ..config import AiCompanionConfig, effective_chat_model
 from .base import BaseProvider, ProviderCapabilities
 from .mlx_runtime import MlxVLMRuntime
 from .registry import create_provider, get_provider_spec
@@ -20,7 +20,7 @@ class QwenClient:
 
     def __init__(
         self,
-        config: QwenPersonaConfig,
+        config: AiCompanionConfig,
         *,
         runtime: MlxVLMRuntime | None = None,
         glm_backend: Any | None = None,
@@ -30,12 +30,12 @@ class QwenClient:
         self.mlx_runtime = runtime or create_provider("mlx", config)
         self.glm_backend = glm_backend or create_provider("glm", config)
 
-    def reconfigure(self, config: QwenPersonaConfig) -> None:
-        prev_backend = self.config.qwen_persona_inference_backend
+    def reconfigure(self, config: AiCompanionConfig) -> None:
+        prev_backend = self.config.ai_companion_inference_backend
         self.config = config
         self.mlx_runtime.reconfigure(config)
         self.glm_backend.reconfigure(config)
-        new_backend = config.qwen_persona_inference_backend
+        new_backend = config.ai_companion_inference_backend
         if prev_backend != new_backend:
             logger.info(
                 "inference backend switched: %s -> %s", prev_backend, new_backend
@@ -44,13 +44,13 @@ class QwenClient:
     @property
     def _active(self) -> BaseProvider:
         """当前激活的 backend（mlx_runtime 或 glm_backend）。"""
-        if self.config.qwen_persona_inference_backend == "glm":
+        if self.config.ai_companion_inference_backend == "glm":
             return self.glm_backend  # type: ignore[return-value]
         return self.mlx_runtime  # type: ignore[return-value]
 
     def active_backend(self) -> str:
         """返回当前后端标识：'mlx' 或 'glm'。"""
-        return self.config.qwen_persona_inference_backend
+        return self.config.ai_companion_inference_backend
 
     def active_backend_spec(self) -> dict[str, str]:
         """当前后端的注册信息（类型/展示名/文档链接，供前端展示）。"""

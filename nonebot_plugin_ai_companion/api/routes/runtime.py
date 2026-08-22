@@ -45,7 +45,7 @@ def build_router(*, config: Any, auth, mlx_runtime: Any | None, qwen_client: Any
             )
         if not mlx_runtime or not hasattr(mlx_runtime, action):
             raise HTTPException(status_code=503, detail="mlx runtime unavailable")
-        model = str(getattr(config, "qwen_persona_mlx_model", "") or "").strip() or "unknown"
+        model = str(getattr(config, "ai_companion_mlx_model", "") or "").strip() or "unknown"
         result = await maybe_await(getattr(mlx_runtime, action)())
         runtime = runtime_summary(dict(result or {}))
         return {

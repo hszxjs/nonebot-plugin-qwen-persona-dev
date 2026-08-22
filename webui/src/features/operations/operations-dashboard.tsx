@@ -241,7 +241,7 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
     if (!value) return
     setSwitchingBackend(true)
     try {
-      await saveSettingField("qwen_persona_inference_backend", value)
+      await saveSettingField("ai_companion_inference_backend", value)
       await mutate("operations/overview")
       toast.success(value === "glm" ? "已切换到 GLM 在线推理" : "已切换到本地 Qwen MLX")
     } catch (error) {
