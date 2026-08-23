@@ -453,13 +453,21 @@ persona_trace = on_command(
 @persona_trace.handle()
 async def _trace_reply(event: Event) -> None:
     """引用 Bot 的某条回复并发送 /trace：按 reply_message_id 反查溯源（文档十三节）。"""
-    quoted_id = quoted_message_id(event)
-    if not quoted_id:
-        await persona_trace.finish("请引用一条机器人回复后再发送 /trace。")
-    record = await store.message_logs.find_by_reply_message_id(quoted_id)
-    if record is None:
-        await persona_trace.finish("没找到这条回复的溯源记录（可能已滚动淘汰，或不是本插件的回复）。")
-    await persona_trace.finish(format_trace(record))
+    try:
+        quoted_id = quoted_message_id(event)
+        if not quoted_id:
+            await persona_trace.finish("请先引用一条机器人回复，再发送 /trace。")
+        record = await store.message_logs.find_by_reply_message_id(quoted_id)
+        if record is None:
+            await persona_trace.finish(
+                "没找到这条回复的溯源记录。\n"
+                "注意：只有开启记录之后机器人发出的回复才能溯源"
+                "（更早的回复、以及重启前未落库的回复不在记录范围内）。"
+            )
+        await persona_trace.finish(format_trace(record))
+    except Exception as exc:  # noqa: BLE001 — 命令异常必须可见，不能静默吞掉
+        logger.exception(f"ai companion /trace failed: {exc!r}")
+        await persona_trace.finish(f"溯源查询出错：{type(exc).__name__}: {exc}")
 
 
 persona_sticker_add = on_command(

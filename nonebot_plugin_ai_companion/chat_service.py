@@ -292,7 +292,7 @@ class ChatService:
         if reply_plan.allow_sticker and (
             clean_text or incoming_sticker_keys or reply_plan.intent == ReplyIntent.STICKER_REQUEST
         ):
-            sticker_key = await self._select_reply_sticker_key(
+            sticker_keys = await self._select_reply_sticker_keys(
                 group_id=ids["group_id"],
                 user_id=ids["user_id"],
                 trigger_text=reply_input_text,
@@ -300,8 +300,6 @@ class ChatService:
                 intent=reply_plan.intent,
                 incoming_sticker_keys=incoming_sticker_keys,
             )
-            if sticker_key:
-                sticker_keys = [sticker_key]
         if not clean_text and not sticker_keys:
             await self._record_message_log(
                 kind="chat",
@@ -1129,7 +1127,7 @@ class ChatService:
     # ------------------------------------------------------------------
     # 表情选择
     # ------------------------------------------------------------------
-    async def _select_reply_sticker_key(
+    async def _select_reply_sticker_keys(
         self,
         *,
         group_id: str | None,
@@ -1138,7 +1136,12 @@ class ChatService:
         reply_text: str,
         intent: ReplyIntent,
         incoming_sticker_keys: list[str],
-    ) -> str | None:
+    ) -> list[str]:
+        """选择回复携带的表情（多选，上限 max_reply_stickers）。
+
+        通道优先级：vision 角色（默认本地 MLX）→ 失败时用当前 chat provider 做
+        纯文本选择（候选带编号+摘要，文本模型可选）→ 全失败走加权随机兜底。
+        """
         candidates = await self.store.top_stickers(
             group_id=group_id,
             limit=self.config.ai_companion_sticker_prompt_limit,
@@ -1153,36 +1156,64 @@ class ChatService:
                 seen.add(key)
             else:
                 logger.warning(f"ai companion incoming sticker key missing: {key}")
-        # 三期：表情选择器走 vision 角色解析（默认仍回退本地 MLX 运行时）。
-        selection = await select_reply_sticker(
-            await self._vision_provider(),
+
+        max_stickers = max(1, int(self.config.ai_companion_max_reply_stickers or 1))
+        selector_kwargs = dict(
             candidates=candidates,
             trigger_text=trigger_text,
             reply_text=reply_text,
             intent=intent,
             min_count=self.config.ai_companion_min_reply_sticker_count,
+            max_stickers=max_stickers,
         )
+
+        selection = None
+        selection_error = ""
+        try:
+            selection = await select_reply_sticker(await self._vision_provider(), **selector_kwargs)
+        except Exception as exc:  # noqa: BLE001 — vision 通道异常时降级文本通道
+            selection_error = f"{type(exc).__name__}: {exc}"
+            logger.warning(f"ai companion sticker selection vision channel failed: {exc!r}")
+
+        if selection is not None and not selection.fallback and selection.key:
+            # vision 通道真实成功（非兜底）——直接采用
+            pass
+        else:
+            # vision 不可用/失败/兜底：尝试当前 chat provider 的纯文本选择
+            try:
+                text_selection = await select_reply_sticker(self.client, **selector_kwargs)
+                if text_selection is not None and text_selection.key and not text_selection.fallback or selection is None:
+                    selection = text_selection
+            except Exception as exc:  # noqa: BLE001 — 文本通道也失败则保留兜底
+                logger.warning(f"ai companion sticker selection text channel failed: {exc!r}")
+
+        if selection is None:
+            selection_keys: list[str] = []
+        else:
+            selection_keys = selection.selected_keys[:max_stickers]
+
         await safe_record_sticker_event(
             self.store,
             logger=logger,
             event_type="selector",
-            status="selected" if selection.key else "none",
-            key=selection.key,
+            status="selected" if selection_keys else "none",
+            key=selection_keys[0] if selection_keys else None,
             group_id=group_id,
             user_id=user_id,
-            message=selection.reason or ("selected sticker" if selection.key else "no sticker selected"),
+            message=selection.reason if selection else selection_error or "no sticker selected",
             details={
                 "intent": str(getattr(intent, "value", intent)),
-                "candidate_count": selection.candidate_count,
-                "usable_count": selection.usable_count,
+                "candidate_count": selection.candidate_count if selection else 0,
+                "usable_count": selection.usable_count if selection else 0,
                 "min_count": self.config.ai_companion_min_reply_sticker_count,
-                "fallback": selection.fallback,
+                "fallback": bool(selection and selection.fallback),
+                "selected_count": len(selection_keys),
                 "trigger_text": trigger_text[:240],
                 "reply_text": reply_text[:240],
-                "raw_text": selection.raw_text[:500],
+                "raw_text": (selection.raw_text[:500] if selection else ""),
             },
         )
-        return selection.key
+        return selection_keys
 
     # ------------------------------------------------------------------
     # 生命周期

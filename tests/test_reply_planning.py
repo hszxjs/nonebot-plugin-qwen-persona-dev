@@ -216,7 +216,7 @@ async def test_selector_uses_short_candidate_id_and_maps_to_sticker_key() -> Non
     prompt = runtime.calls[0]["messages"][1]["content"]
     assert "S1" in prompt
     assert long_key not in prompt
-    assert "只返回候选 id" in prompt
+    assert "只返回 JSON" in prompt and "候选 id" in prompt
 
 
 async def test_selector_rejects_non_exact_key_with_warning(caplog) -> None:

@@ -27,6 +27,13 @@ class StickerSelection:
     candidate_count: int = 0
     usable_count: int = 0
     fallback: bool = False
+    keys: tuple[str, ...] = ()
+
+    @property
+    def selected_keys(self) -> list[str]:
+        """去重后的选中表情（多选优先，回退单 key）。"""
+        merged = list(self.keys) if self.keys else ([self.key] if self.key else [])
+        return list(dict.fromkeys(merged))
 
 
 @dataclass(frozen=True)
@@ -45,6 +52,7 @@ async def select_reply_sticker(
     intent: ReplyIntent | str,
     max_candidate_images: int = 4,
     min_count: int = MIN_REPLY_STICKER_COUNT,
+    max_stickers: int = 1,
 ) -> StickerSelection:
     candidate_count = len(candidates)
     min_count_value = max(1, int(min_count))
@@ -71,6 +79,7 @@ async def select_reply_sticker(
         trigger_text=trigger_text,
         reply_text=reply_text,
         intent=str(getattr(intent, "value", intent)),
+        max_stickers=max_stickers,
     )
     media_parts = _candidate_media_parts(usable_candidates, max_candidate_images=max_candidate_images)
     try:
@@ -117,8 +126,11 @@ async def select_reply_sticker(
             usable_count=len(usable_candidates),
         )
 
-    selected = str(payload.get("id") or payload.get("key") or "").strip()
-    if not selected or selected.upper() == "NONE":
+    raw_ids = payload.get("ids")
+    if not isinstance(raw_ids, list):
+        raw_ids = [payload.get("id") or payload.get("key") or ""]
+    selected_ids = [str(item or "").strip() for item in raw_ids if str(item or "").strip()]
+    if not selected_ids or any(item.upper() == "NONE" for item in selected_ids):
         return StickerSelection(
             key=None,
             reason=str(payload.get("reason") or ""),
@@ -129,15 +141,26 @@ async def select_reply_sticker(
 
     ref_by_id = {item.id: item for item in candidate_refs}
     allowed_keys = {item.key for item in candidate_refs}
-    if selected in ref_by_id:
-        key = ref_by_id[selected].key
-    elif selected in allowed_keys:
-        key = selected
-    else:
-        logger.warning(
-            "invalid sticker selection: id_or_key=%r is not an exact candidate",
-            selected,
-        )
+
+    def _resolve(value: str) -> str | None:
+        if value in ref_by_id:
+            return ref_by_id[value].key
+        if value in allowed_keys:
+            return value
+        return None
+
+    resolved_keys: list[str] = []
+    for selected in selected_ids:
+        key = _resolve(selected)
+        if key is None:
+            logger.warning(
+                "invalid sticker selection: id_or_key=%r is not an exact candidate",
+                selected,
+            )
+            continue
+        if key not in resolved_keys:
+            resolved_keys.append(key)
+    if not resolved_keys:
         return StickerSelection(
             key=None,
             reason=str(payload.get("reason") or ""),
@@ -145,9 +168,12 @@ async def select_reply_sticker(
             candidate_count=candidate_count,
             usable_count=len(usable_candidates),
         )
+    resolved_keys = resolved_keys[: max(1, int(max_stickers))]
+    key = resolved_keys[0]
 
     return StickerSelection(
         key=key,
+        keys=tuple(resolved_keys),
         reason=str(payload.get("reason") or ""),
         raw_text=raw_text,
         candidate_count=candidate_count,
@@ -161,6 +187,7 @@ def _selector_messages(
     trigger_text: str,
     reply_text: str,
     intent: str,
+    max_stickers: int = 1,
 ) -> list[dict[str, Any]]:
     candidate_lines = []
     for ref in candidates:
@@ -173,7 +200,10 @@ def _selector_messages(
     return [
         {
             "role": "system",
-            "content": ("你是群聊表情选择器。只能选择候选 id，不能发明、补全或改写 id。如果没有合适表情，返回 NONE。"),
+            "content": (
+                "你是群聊表情选择器。只能选择候选 id，不能发明、补全或改写 id。"
+                "如果没有合适表情，返回 NONE。多数时候选 1 个；仅在情绪强烈或连发更自然时最多选 2 个。"
+            ),
         },
         {
             "role": "user",
@@ -184,7 +214,9 @@ def _selector_messages(
                 "只能选择候选 id，不能输出不存在的 id。\n"
                 "候选表情：\n"
                 + "\n".join(candidate_lines)
-                + '\n\n只返回候选 id 的 JSON：{"id":"候选 id 或 NONE","reason":"简短原因"}'
+                + '\n\n只返回 JSON：{"ids":["候选 id"]}（1 个，最多 '
+                + str(max(1, int(max_stickers)))
+                + ' 个；不合适则 {"ids":["NONE"]},"reason":"简短原因"}'
             ),
         },
     ]
@@ -245,9 +277,15 @@ def _fallback_sticker_selection(
 ) -> StickerSelection | None:
     if not candidates:
         return None
+    # 加权随机（按 count，封顶 30 防止单张垄断）：兜底也不再永远同一张
+    import random
+
+    top = candidates[:5]
+    weights = [min(float(getattr(item.item, "get", lambda *_: None)("count") or 1), 30.0) for item in top]
+    chosen = random.choices(top, weights=weights, k=1)[0] if len(top) > 1 else top[0]
     return StickerSelection(
-        key=candidates[0].key,
-        reason=reason or "fallback to first eligible sticker",
+        key=chosen.key,
+        reason=reason or "fallback weighted-random sticker",
         raw_text=raw_text,
         candidate_count=candidate_count,
         usable_count=len(candidates),

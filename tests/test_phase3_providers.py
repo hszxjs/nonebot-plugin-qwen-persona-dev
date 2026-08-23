@@ -513,3 +513,93 @@ async def test_trainer_auto_deploy_activates_and_callbacks(persona_store, monkey
     assert result2.adapter_version == 1
     assert await repo.find_active(role_card_id="card2", source_language="zh") is None
     assert len(deployed) == 1  # 没有新增回调
+
+
+# ---------------------------------------------------------------------------
+# 表情系统重构：多选解析 + 文本通道回退 + 加权随机兜底
+# ---------------------------------------------------------------------------
+def _candidates(n: int = 6) -> list[dict]:
+    return [{"key": f"image:key{i}", "type": "image", "summary": f"表情{i}", "count": 10 - i} for i in range(1, n + 1)]
+
+
+class _JsonRuntime:
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+
+    async def chat(self, messages, *, media_parts=None, purpose=""):
+        return self.payload
+
+
+async def test_selector_multi_ids_parsing() -> None:
+    from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+    from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
+
+    runtime = _JsonRuntime('{"ids": ["S1", "S3"], "reason": "双重情绪"}')
+    selection = await select_reply_sticker(
+        runtime,
+        candidates=_candidates(),
+        trigger_text="笑死",
+        reply_text="哈哈哈哈",
+        intent=ReplyIntent.PERSONA_TEXT,
+        max_stickers=2,
+    )
+    assert selection.selected_keys == ["image:key1", "image:key3"]
+    assert selection.key == "image:key1"
+
+
+async def test_selector_multi_ids_capped_and_dedup() -> None:
+    from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+    from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
+
+    runtime = _JsonRuntime('{"ids": ["S2", "S2", "S4", "S5"]}')
+    selection = await select_reply_sticker(
+        runtime,
+        candidates=_candidates(),
+        trigger_text="t",
+        reply_text="r",
+        intent=ReplyIntent.PERSONA_TEXT,
+        max_stickers=2,
+    )
+    assert selection.selected_keys == ["image:key2", "image:key4"]
+
+
+async def test_selector_single_id_compat_and_none() -> None:
+    from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+    from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
+
+    selection = await select_reply_sticker(
+        _JsonRuntime('{"id": "S2"}'),
+        candidates=_candidates(),
+        trigger_text="t",
+        reply_text="r",
+        intent=ReplyIntent.PERSONA_TEXT,
+    )
+    assert selection.selected_keys == ["image:key2"]
+
+    none_selection = await select_reply_sticker(
+        _JsonRuntime('{"ids": ["NONE"]}'),
+        candidates=_candidates(),
+        trigger_text="t",
+        reply_text="r",
+        intent=ReplyIntent.PERSONA_TEXT,
+    )
+    assert none_selection.selected_keys == []
+
+
+async def test_selector_fallback_is_weighted_random_not_always_first() -> None:
+    from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
+    from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
+
+    picked = set()
+    for _ in range(30):
+        selection = await select_reply_sticker(
+            _JsonRuntime("not json at all"),
+            candidates=_candidates(6),
+            trigger_text="t",
+            reply_text="r",
+            intent=ReplyIntent.PERSONA_TEXT,
+        )
+        assert selection.fallback
+        picked.update(selection.selected_keys)
+    # 6 个候选、30 次加权随机——不应永远只有第一名
+    assert len(picked) >= 2, picked
