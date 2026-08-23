@@ -205,6 +205,88 @@ export type LogEntry = {
   message: string
 }
 
+export type TimelineLogSource = "message" | "inference" | "sticker"
+
+export type MessageLogEntry = {
+  source: "message"
+  created_at: number
+  time: string
+  group_id: string | null
+  user_id: string | null
+  status?: string
+  trigger_message_id?: number | string | null
+  reply_message_id?: number | string | null
+  reply_kind?: string
+  trigger_reason?: string
+  decision_detail?: Record<string, unknown> | null
+  role_card_id?: string | null
+  role_card_name?: string | null
+  provider?: string | null
+  model?: string | null
+  latency_seconds?: number | null
+  sticker_keys?: string[]
+  input_preview?: string
+  output_preview?: string
+}
+
+export type InferenceLogEntry = {
+  source: "inference"
+  created_at: number
+  time: string
+  group_id: string | null
+  user_id: string | null
+  status?: string
+  event_id: string
+  trigger_reason: string
+  model: string
+  adapter: string
+  latency_seconds: number | null
+  tps: number | null
+  media_count: number
+  response_chars: number
+  error_summary: string
+  input_preview: string
+  output_preview: string
+}
+
+export type StickerLogEntry = {
+  source: "sticker"
+  created_at: number
+  time: string
+  group_id: string | null
+  user_id: string | null
+  status?: string
+  event_id: string
+  event_type: string
+  key: string | null
+  message: string
+}
+
+export type TimelineLogEntry = MessageLogEntry | InferenceLogEntry | StickerLogEntry
+
+export type TimelineLogsPayload = {
+  items: TimelineLogEntry[]
+  total: number
+}
+
+export type TimelineLogFrame = {
+  type: TimelineLogSource
+  item: TimelineLogEntry
+}
+
+export type BlacklistMatch = {
+  kind: "word" | "regex"
+  value: string
+}
+
+export type BlacklistTestResult = {
+  text: string
+  matched: boolean
+  matches: BlacklistMatch[]
+  words: string[]
+  regexes: string[]
+}
+
 export type LogsPayload = {
   logs: LogEntry[]
   path?: string

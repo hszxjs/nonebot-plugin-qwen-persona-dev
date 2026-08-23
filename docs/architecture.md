@@ -109,13 +109,27 @@ pnpm --dir webui test                           # 前端 11 用例
 - **webui**：新增「推理后端」页（实例 CRUD/健康徽章/角色绑定/优先级）与
   「模型管理」页（EventSource 下载进度）
 
+## 第四期交付（已完成）
+
+- **消息溯源**（文档十三节）：`message_logs` 增量表记录 trigger/reply 平台消息 ID，
+  并关联当时生效的角色卡、决策原因与明细、Provider/模型、耗时、贴纸与输入输出预览；
+  环形淘汰条数由 `ai_companion_log_max_records` 配置。发送层改造为
+  `{ok, reply_message_id}` 返回（从 OneBot send 结果提取消息 ID），
+  chat/repeat/pattern 三条回复路径均记录
+- **引用命令**：`/trace`（引用 Bot 回复 → 按 reply_message_id 反查溯源卡片）；
+  `/添加表情 [描述]`（引用图片消息 → 从历史样本或引用本体收录进表情资产）
+- **统一日志时间线**：`GET /api/logs` 跨 message/inference/sticker 三源合并分页查询；
+  `GET /api/logs/stream` SSE 实时增量（心跳保活、可选 max_seconds 有限流、线程安全
+  EventBus）；webui「日志时间线」页 = HTTP 历史 + EventSource 实时前插合并（去重、
+  暂停/重连、来源筛选、明细展开）
+- **黑名单词库页**：词汇/正则增删（经 settings PATCH 持久化）+ 样本文本命中测试
+  端点（`POST /api/blacklist/test` 返回命中规则明细）
+
 ## 后续分期路线（源自总体架构文档，未实施）
 
-- **第四期：observability 增强**。`MessageLog` 记录 trigger/reply 平台消息 ID、
-  `/trace` 引用溯源命令、历史（HTTP）+ 实时（SSE）合并时间线、反拟人化黑名单词库页
 - **第五期：finetune 增强 + 长期记忆**。`LoraAdapter` 角色卡+语种绑定与版本回滚、
   长期结构化记忆（重要度/时效性/衰减，喂给 prompt memory 段）、Alembic 迁移体系、
-  KPI Dashboard 首页
+  KPI Dashboard 首页、会话监控页
 
 ## 已知的现状债务（刻意保留，分期解决）
 

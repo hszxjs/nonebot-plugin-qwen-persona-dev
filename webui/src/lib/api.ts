@@ -5,6 +5,7 @@ import type {
   BackendHealthCheckResult,
   BackendPayload,
   BackendsPayload,
+  BlacklistTestResult,
   ConfigValue,
   DiagnosticsPayload,
   LogsPayload,
@@ -26,6 +27,7 @@ import type {
   SettingsPayload,
   StickerEventsPayload,
   StickerGalleryPayload,
+  TimelineLogsPayload,
   ToolsPayload,
   TrainingActionResult,
 } from "@/lib/types"
@@ -290,4 +292,29 @@ export function deleteLocalModel(modelRef: string) {
 export function modelDownloadEventsUrl() {
   const token = getAdminToken()
   return `/api/models/manage/download/events${token ? `?token=${encodeURIComponent(token)}` : ""}`
+}
+
+export function useLogs(kinds: string, groupId: string, limit = 100) {
+  const params = new URLSearchParams({
+    kinds: kinds || "all",
+    limit: String(limit),
+    offset: "0",
+  })
+  const trimmedGroup = groupId.trim()
+  if (trimmedGroup) params.set("group_id", trimmedGroup)
+  return useSWR<TimelineLogsPayload>(`logs?${params.toString()}`, fetchJson, {
+    revalidateOnFocus: false,
+    revalidateIfStale: false,
+  })
+}
+
+export function logsStreamUrl(maxSeconds = 0) {
+  const token = getAdminToken()
+  const search = new URLSearchParams({ max_seconds: String(maxSeconds) })
+  if (token) search.set("token", token)
+  return `/api/logs/stream?${search.toString()}`
+}
+
+export function testBlacklist(text: string) {
+  return api.post("blacklist/test", { json: { text } }).json<BlacklistTestResult>()
 }

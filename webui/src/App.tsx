@@ -1,4 +1,5 @@
 import {
+  IconActivity,
   IconAdjustments,
   IconDatabase,
   IconHomeStats,
@@ -6,6 +7,7 @@ import {
   IconMoodSmile,
   IconServer2,
   IconShieldCheck,
+  IconShieldOff,
   IconTool,
 } from "@tabler/icons-react"
 import { NavLink, Route, Routes } from "react-router-dom"
@@ -27,7 +29,9 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { BackendsWorkspace } from "@/features/backends/backends-workspace"
+import { BlacklistWorkspace } from "@/features/blacklist/blacklist-workspace"
 import { DiagnosticsWorkspace } from "@/features/diagnostics/diagnostics-workspace"
+import { LogsWorkspace } from "@/features/logs/logs-workspace"
 import { ModelsWorkspace } from "@/features/models/models-workspace"
 import { OperationsDashboard } from "@/features/operations/operations-dashboard"
 import { RoleCardsWorkspace } from "@/features/role-cards/role-cards-workspace"
@@ -42,6 +46,8 @@ const navItems = [
   { to: "/role-cards", label: "角色卡", icon: IconIdBadge2 },
   { to: "/backends", label: "推理后端", icon: IconServer2 },
   { to: "/models", label: "模型管理", icon: IconDatabase },
+  { to: "/logs", label: "日志时间线", icon: IconActivity },
+  { to: "/blacklist", label: "黑名单词库", icon: IconShieldOff },
   { to: "/settings", label: "配置管理", icon: IconAdjustments },
   { to: "/rules", label: "规则过滤", icon: IconShieldCheck },
   { to: "/diagnostics", label: "诊断", icon: IconTool },
@@ -118,6 +124,8 @@ export function App() {
             <Route path="/role-cards" element={<RoleCardsWorkspace />} />
             <Route path="/backends" element={<BackendsWorkspace />} />
             <Route path="/models" element={<ModelsWorkspace />} />
+            <Route path="/logs" element={<LogsWorkspace />} />
+            <Route path="/blacklist" element={<BlacklistWorkspace />} />
             <Route path="/settings" element={<SettingsWorkspace />} />
             <Route path="/rules" element={<RulesWorkspace />} />
             <Route path="/diagnostics" element={<DiagnosticsWorkspace />} />
