@@ -6,6 +6,7 @@ flash 模型，失败时由调用方决定保守策略。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -40,34 +41,67 @@ async def aux_chat(
     max_tokens: int = 512,
     temperature: float = 0.0,
     timeout_seconds: float = 10.0,
+    disable_thinking: bool = True,
 ) -> str:
-    """一次辅助对话调用，返回文本内容；失败抛 AuxLlmError。"""
+    """一次辅助对话调用，返回文本内容；失败抛 AuxLlmError。
+
+    默认关闭思考（thinking: disabled）：辅助任务是轻量判断/结构化提取，
+    思考型模型会把 max_tokens 耗在 reasoning 上导致 content 为空。
+    端点不认识 thinking 字段（400）时自动去参重试一次。
+    """
     endpoint = resolve_aux_endpoint(config)
     if endpoint is None:
         raise AuxLlmError("aux llm endpoint not configured")
     url, key = endpoint
-    try:
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if disable_thinking:
+        payload["thinking"] = {"type": "disabled"}
+
+    async def post(body: dict[str, Any]):
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds)) as client:
-            response = await client.post(
+            return await client.post(
                 url,
                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": max_tokens,
-                    "temperature": temperature,
-                },
+                json=body,
             )
-    except httpx.HTTPError as exc:
-        raise AuxLlmError(f"aux llm request failed: {exc!r}") from exc
+
+    response = None
+    last_transport_error: Exception | None = None
+    for attempt in range(3):  # 传输层瞬时错误（连接抖动等）轻量重试
+        try:
+            response = await post(payload)
+            if disable_thinking and response.status_code == 400:
+                # 端点可能不支持 thinking 字段（如部分 OpenAI 兼容后端）
+                response = await post({k: v for k, v in payload.items() if k != "thinking"})
+            break
+        except httpx.HTTPError as exc:
+            last_transport_error = exc
+            if attempt < 2:
+                await asyncio.sleep(1.0 + attempt)
+    if response is None:
+        raise AuxLlmError(f"aux llm request failed: {last_transport_error!r}") from last_transport_error
     if response.status_code != 200:
         raise AuxLlmError(f"aux llm status {response.status_code}: {response.text[:200]}")
     try:
-        content = str((response.json().get("choices") or [{}])[0].get("message", {}).get("content", ""))
+        choice = (response.json().get("choices") or [{}])[0]
+        message = choice.get("message", {}) or {}
+        content = str(message.get("content") or "")
+        finish_reason = str(choice.get("finish_reason") or "")
+        has_reasoning = bool(message.get("reasoning_content"))
     except ValueError as exc:
         raise AuxLlmError(f"aux llm invalid json: {exc!r}") from exc
     if not content.strip():
-        raise AuxLlmError("aux llm empty content")
+        hint = (
+            "reasoning 耗尽 max_tokens（调大 max_tokens 或关闭思考）"
+            if (has_reasoning or finish_reason == "length")
+            else "模型未返回内容"
+        )
+        raise AuxLlmError(f"aux llm empty content (model={model}, finish={finish_reason}; {hint})")
     return content.strip()
 
 
@@ -84,10 +118,56 @@ def parse_json_object(text: str) -> dict[str, Any]:
     end = body.rfind("}")
     if start >= 0 and end > start:
         body = body[start : end + 1]
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise AuxLlmError(f"aux llm json parse failed: {exc!r}") from exc
-    if not isinstance(data, dict):
-        raise AuxLlmError("aux llm json is not an object")
-    return data
+    last_error: Exception | None = None
+    for candidate in _json_repair_candidates(body):
+        try:
+            data = json.loads(candidate, strict=False)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            continue
+        if isinstance(data, dict):
+            return data
+        last_error = AuxLlmError("aux llm json is not an object")
+    raise AuxLlmError(f"aux llm json parse failed: {last_error!r}")
+
+
+def _json_repair_candidates(body: str) -> list[str]:
+    """按宽松度递增给出可尝试的 JSON 文本（原文 → 去尾逗号）。"""
+    import re
+
+    candidates = [body]
+    without_trailing_commas = re.sub(r",\s*([}\]])", r"\1", body)
+    if without_trailing_commas != body:
+        candidates.append(without_trailing_commas)
+    return candidates
+
+
+async def aux_chat_json(
+    config: AiCompanionConfig,
+    *,
+    prompt: str,
+    model: str,
+    max_tokens: int = 800,
+    temperature: float = 0.0,
+    timeout_seconds: float = 30.0,
+    attempts: int = 2,
+) -> dict[str, Any]:
+    """辅助调用并解析 JSON 对象；偶发的格式瑕疵自动重试一次。"""
+    last_error: Exception | None = None
+    for attempt in range(max(1, int(attempts))):
+        reply = await aux_chat(
+            config,
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_seconds=timeout_seconds,
+        )
+        try:
+            return parse_json_object(reply)
+        except AuxLlmError as exc:
+            last_error = exc
+            if attempt < max(1, int(attempts)) - 1:
+                logger.warning("aux llm json parse failed (%r), retrying", exc)
+    assert last_error is not None
+    raise last_error

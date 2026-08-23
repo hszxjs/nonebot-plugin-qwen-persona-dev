@@ -14,7 +14,7 @@ from typing import Any
 from ..config import AiCompanionConfig
 from ..memory.samples import ChatSampleRepo
 from ..prompt.media_text import context_text_from_sample
-from ..providers.aux_llm import AuxLlmError, aux_chat, parse_json_object
+from ..providers.aux_llm import AuxLlmError, aux_chat_json, parse_json_object
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,8 @@ _STYLE_PROMPT = """下面是群友 {user_id} 的近期群聊消息（每行一�
 
 {messages}
 
-请基于以上真实语料，输出这位群友的语言风格画像，严格输出 JSON（不要多余文字）：
+请基于以上真实语料，输出这位群友的语言风格画像，严格输出 JSON（不要多余文字）。
+字符串值内部不要使用英文双引号，需要引用时用中文引号「」：
 {{
   "summary": "一句话概括这个人说话给人的整体印象",
   "style_tags": ["3-6 个性格/语言风格短标签"],
@@ -77,9 +78,10 @@ async def analyze_user_style(
             raise AuxLlmError(f"data_cleaning provider failed: {exc!r}") from exc
         if not reply:
             raise AuxLlmError("data_cleaning provider empty content")
+        data = parse_json_object(reply)
     else:
-        model = str(getattr(config, "ai_companion_member_mimic_model", "glm-4.5-flash") or "glm-4.5-flash")
-        reply = await aux_chat(
+        model = str(getattr(config, "ai_companion_member_mimic_model", "") or "glm-4.5-flash")
+        data = await aux_chat_json(
             config,
             prompt=prompt,
             model=model,
@@ -87,7 +89,6 @@ async def analyze_user_style(
             temperature=0.2,
             timeout_seconds=30.0,
         )
-    data = parse_json_object(reply)
 
     def _str_list(key: str, cap: int) -> list[str]:
         raw = data.get(key)

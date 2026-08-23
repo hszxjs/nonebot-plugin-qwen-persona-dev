@@ -17,7 +17,7 @@ from ..config import AiCompanionConfig
 from ..memory.db import PersonaDatabase
 from ..memory.samples import ChatSampleRepo
 from ..prompt.media_text import context_text_from_sample
-from ..providers.aux_llm import AuxLlmError, aux_chat, parse_json_object
+from ..providers.aux_llm import AuxLlmError, aux_chat_json, parse_json_object
 
 KINDS: tuple[str, ...] = ("称呼", "偏好", "重要事件", "事实")
 
@@ -28,7 +28,7 @@ _EXTRACT_PROMPT = """下面是群友 {user_id} 的近期消息（每行一条）
 {messages}
 
 请从中提取关于这位群友的长期记忆（称呼、稳定的偏好、重要事件、可靠事实），
-忽略一次性的闲聊内容。严格输出 JSON 数组（没有可提取项则输出 []）：
+忽略一次性的闲聊内容。字符串值内部不要使用英文双引号。严格输出 JSON 数组（没有可提取项则输出 []）：
 [{{"kind": "称呼|偏好|重要事件|事实", "content": "一句话事实", "importance": 1到5}}]
 最多 10 条。"""
 
@@ -198,16 +198,18 @@ async def extract_memories(
     prompt = _EXTRACT_PROMPT.format(user_id=user_id, messages="\n".join(lines[-150:]))
     if data_cleaning_chat is not None:
         reply = str(await data_cleaning_chat(prompt)).strip()
+        data = parse_json_object(reply) if reply.startswith("{") else _parse_json_array(reply)
     else:
-        reply = await aux_chat(
+        # 记忆提取输出是 JSON 数组：包一层对象走 aux_chat_json（含容错解析与一次重试）
+        wrapped = await aux_chat_json(
             config,
-            prompt=prompt,
+            prompt=prompt + '\n请把 JSON 数组包成 {"items": [...]} 对象输出。',
             model=config.ai_companion_member_mimic_model,
             max_tokens=800,
             temperature=0.0,
             timeout_seconds=30.0,
         )
-    data = parse_json_object(reply) if reply.strip().startswith("{") else _parse_json_array(reply)
+        data = wrapped.get("items") if isinstance(wrapped.get("items"), list) else []
     written: list[dict[str, Any]] = []
     for item in data if isinstance(data, list) else []:
         if not isinstance(item, dict):
