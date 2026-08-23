@@ -162,6 +162,8 @@ function CheckboxGroupControl({
   )
 }
 
+const EMPTY_OPTION_SENTINEL = "__empty__"
+
 function SelectControl({
   field,
   onChange,
@@ -172,6 +174,37 @@ function SelectControl({
   const { data } = useModels()
   const models = data?.models ?? []
   const currentValue = String(field.value ?? "")
+
+  // 静态选项（如搜索源 exa/tavily/searxng）优先；仅无静态选项的字段
+  // （如在线模型）才使用动态模型列表。radix 不允许空 value，用哨兵映射。
+  const staticOptions = field.options ?? []
+  if (staticOptions.length > 0) {
+    const options = [...staticOptions]
+    if (currentValue && !options.some((option) => option.value === currentValue)) {
+      options.unshift({ value: currentValue, label: currentValue })
+    }
+    return (
+      <Select
+        value={currentValue === "" ? EMPTY_OPTION_SENTINEL : currentValue}
+        onValueChange={(value) => onChange(field, value === EMPTY_OPTION_SENTINEL ? "" : value)}
+      >
+        <SelectTrigger id={field.name} aria-label={field.name}>
+          <SelectValue placeholder="请选择" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem
+              key={option.value}
+              value={option.value === "" ? EMPTY_OPTION_SENTINEL : option.value}
+            >
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    )
+  }
+
   return (
     <Select value={currentValue} onValueChange={(value) => onChange(field, value)}>
       <SelectTrigger id={field.name} aria-label={field.name}>
