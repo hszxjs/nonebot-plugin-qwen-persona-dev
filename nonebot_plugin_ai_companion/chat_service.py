@@ -824,6 +824,7 @@ class ChatService:
                 group_id=search_group_id,
                 query=query,
                 limit=limit,
+                max_age_hours=int(self.config.ai_companion_relevant_context_max_age_hours or 0),
             )
         except Exception as exc:
             logger.warning(f"ai companion context search failed: {exc!r}")
@@ -844,6 +845,7 @@ class ChatService:
                 group_id=search_group_id,
                 query=query,
                 limit=limit,
+                max_age_hours=int(self.config.ai_companion_relevant_context_max_age_hours or 0),
             )
         except Exception as exc:
             logger.warning(f"ai companion media context search failed: {exc!r}")
@@ -1182,7 +1184,12 @@ class ChatService:
             # vision 不可用/失败/兜底：尝试当前 chat provider 的纯文本选择
             try:
                 text_selection = await select_reply_sticker(self.client, **selector_kwargs)
-                if text_selection is not None and text_selection.key and not text_selection.fallback or selection is None:
+                if (
+                    text_selection is not None
+                    and text_selection.key
+                    and not text_selection.fallback
+                    or selection is None
+                ):
                     selection = text_selection
             except Exception as exc:  # noqa: BLE001 — 文本通道也失败则保留兜底
                 logger.warning(f"ai companion sticker selection text channel failed: {exc!r}")

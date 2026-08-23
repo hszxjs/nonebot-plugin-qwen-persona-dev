@@ -250,12 +250,14 @@ class StickerAssetRepo:
         group_id: str | None,
         query: str,
         limit: int,
+        max_age_hours: int = 0,
     ) -> list[dict[str, Any]]:
         return await asyncio.to_thread(
             self._search_media_assets_sync,
             group_id=group_id,
             query=query,
             limit=limit,
+            max_age_hours=max_age_hours,
         )
 
     def _search_media_assets_sync(
@@ -264,6 +266,7 @@ class StickerAssetRepo:
         group_id: str | None,
         query: str,
         limit: int,
+        max_age_hours: int = 0,
     ) -> list[dict[str, Any]]:
         self.db.ensure_schema()
         terms = context_search_terms(query)
@@ -271,6 +274,8 @@ class StickerAssetRepo:
             return []
         limit = max(1, min(int(limit or 5), 30))
         rows = media_asset_rows(self.db, limit=max(80, limit * 12))
+        min_created_at = time.time() - float(max_age_hours) * 3600.0 if max_age_hours and max_age_hours > 0 else 0.0
+        rows = [row for row in rows if float(row.get("created_at") or 0) >= min_created_at]
         scored: list[tuple[int, float, dict[str, Any]]] = []
         for item in rows:
             metadata = self.db.json_object(item.get("metadata_json"))

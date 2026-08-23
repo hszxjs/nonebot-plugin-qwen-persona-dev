@@ -148,8 +148,12 @@ class PersonaStore:
     async def recent_samples(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
         return await self.samples.recent_samples(group_id=group_id, limit=limit)
 
-    async def search_context_samples(self, *, group_id: str | None, query: str, limit: int) -> list[dict[str, Any]]:
-        return await self.samples.search_context_samples(group_id=group_id, query=query, limit=limit)
+    async def search_context_samples(
+        self, *, group_id: str | None, query: str, limit: int, max_age_hours: int = 0
+    ) -> list[dict[str, Any]]:
+        return await self.samples.search_context_samples(
+            group_id=group_id, query=query, limit=limit, max_age_hours=max_age_hours
+        )
 
     # ---- 表情域：资产与表情 ----
     async def record_media_asset(self, **kwargs: Any) -> dict[str, int]:
@@ -158,8 +162,12 @@ class PersonaStore:
     async def record_sticker_asset(self, **kwargs: Any) -> dict[str, int]:
         return await self.stickers.record_sticker_asset(**kwargs)
 
-    async def search_media_assets(self, *, group_id: str | None, query: str, limit: int) -> list[dict[str, Any]]:
-        return await self.stickers.search_media_assets(group_id=group_id, query=query, limit=limit)
+    async def search_media_assets(
+        self, *, group_id: str | None, query: str, limit: int, max_age_hours: int = 0
+    ) -> list[dict[str, Any]]:
+        return await self.stickers.search_media_assets(
+            group_id=group_id, query=query, limit=limit, max_age_hours=max_age_hours
+        )
 
     async def top_stickers(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:
         return await self.stickers.top_stickers(group_id=group_id, limit=limit)

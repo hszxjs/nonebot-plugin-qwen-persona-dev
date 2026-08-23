@@ -151,6 +151,7 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   { name: "ai_companion_media_relevance_check", label: "图文相关性判断", description: "识别图片后判断是否与文字相关，无关则丢弃图片描述。多一次轻量 API 调用。", section: "anime", control: "switch" },
 
   { name: "ai_companion_enabled_groups", label: "启用群组", description: "留空表示不限制群组。", section: "learning", control: "tokens" },
+  { name: "ai_companion_relevant_context_max_age_hours", label: "相关性检索时效(小时)", description: "「相关历史/历史图片理解」只命中该窗口内的内容，防止陈年图片描述串场。0 表示不限。", section: "learning", control: "number", min: 0, max: 720, step: 6 },
   { name: "ai_companion_enable_learning", label: "学习开关", section: "learning", control: "switch" },
   { name: "ai_companion_enable_reply", label: "回复开关", section: "learning", control: "switch" },
   { name: "ai_companion_learning_priority", label: "学习优先级", section: "learning", control: "number", min: 1, max: 20000, step: 1 },

@@ -17,6 +17,13 @@ from typing import Any
 
 from ..prompt.text import is_command_like, is_training_noise, normalize_text
 
+_SUBSTANTIVE_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9]")
+
+
+def _is_substantive(term: str) -> bool:
+    """检索词必须含 CJK 或字母数字：纯标点（如"？"）会匹配一切疑问句，产生垃圾命中。"""
+    return bool(_SUBSTANTIVE_RE.search(term))
+
 
 def context_search_terms(query: str) -> list[str]:
     raw_terms = [normalize_text(term) for term in re.split(r"\s+", str(query or "")) if normalize_text(term)]
@@ -30,6 +37,8 @@ def context_search_terms(query: str) -> list[str]:
             candidate = candidate.lower()
             if len(candidate) < 1 or candidate in seen:
                 continue
+            if not _is_substantive(candidate):
+                continue  # 标点/表情符号不作为检索词
             seen.add(candidate)
             terms.append(candidate)
     return terms

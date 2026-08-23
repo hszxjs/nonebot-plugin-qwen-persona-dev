@@ -238,3 +238,81 @@ async def test_memories_and_adapters_api(phase5_client, persona_store) -> None:
 
     listing = phase5_client.get("/api/lora-adapters", params={"role_card_id": "c1"})
     assert listing.json()["total"] == 2
+
+
+# ---------------------------------------------------------------------------
+# 上下文管理：标点检索词过滤 + 相关性时效窗口（修复"陈年 dsh 表情包"串场）
+# ---------------------------------------------------------------------------
+def test_context_search_terms_filters_punctuation() -> None:
+    from nonebot_plugin_ai_companion.memory.db import context_search_terms
+
+    assert context_search_terms("？") == []  # 纯标点不再是检索词
+    assert context_search_terms("！！！") == []
+    assert context_search_terms("异环") == ["异环"]
+    assert context_search_terms("dsh 是什么？") == ["dsh", "是什么？"]  # 混合标点的词保留（含 CJK）
+    mixed = context_search_terms("这是什么操作？")
+    assert "这是什么操作？" in mixed and all(t for t in mixed)
+
+
+async def test_media_asset_search_recency_window(persona_store) -> None:
+    import time as _time
+
+    now = _time.time()
+    await persona_store.stickers.record_media_asset(
+        source="admin_approved",
+        source_key="old-asset",
+        uri="file:///tmp/old.png",
+        prompt="描述",
+        answer="陈年的 dsh 大烧货描述",
+    )
+    await persona_store.stickers.record_media_asset(
+        source="admin_approved",
+        source_key="new-asset",
+        uri="file:///tmp/new.png",
+        prompt="描述",
+        answer="新鲜的 dsh 大烧货描述",
+    )
+
+    # 把 old-asset 的时间改到 5 天前
+    def _age_it():
+        with persona_store.db.connection() as conn:
+            conn.execute(
+                "UPDATE media_assets SET created_at = ? WHERE source_key = 'old-asset'",
+                (now - 5 * 86400,),
+            )
+
+    import asyncio as _asyncio
+
+    await _asyncio.to_thread(_age_it)
+
+    fresh_only = await persona_store.stickers.search_media_assets(group_id=None, query="dsh", limit=5, max_age_hours=48)
+    assert [item["source_key"] for item in fresh_only] == ["new-asset"]
+
+    no_window = await persona_store.stickers.search_media_assets(group_id=None, query="dsh", limit=5)
+    assert {item["source_key"] for item in no_window} == {"old-asset", "new-asset"}
+
+
+async def test_sample_search_recency_window(persona_store) -> None:
+    import asyncio as _asyncio
+    import time as _time
+
+    now = _time.time()
+    await persona_store.samples.record_sample(
+        platform="qq",
+        user_id="u1",
+        group_id="g",
+        message_id="old",
+        plain_text="dsh 旧话题",
+        training_text="dsh 旧话题",
+        raw_segments=[],
+        stickers=[],
+        learn_reason="accepted",
+    )
+
+    def _age_it():
+        with persona_store.db.connection() as conn:
+            conn.execute("UPDATE chat_samples SET created_at = ? WHERE message_id = 'old'", (now - 5 * 86400,))
+
+    await _asyncio.to_thread(_age_it)
+    windowed = await persona_store.samples.search_context_samples(group_id="g", query="dsh", limit=5, max_age_hours=48)
+    assert windowed == []

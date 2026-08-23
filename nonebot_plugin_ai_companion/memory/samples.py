@@ -158,12 +158,14 @@ class ChatSampleRepo:
         group_id: str | None,
         query: str,
         limit: int,
+        max_age_hours: int = 0,
     ) -> list[dict[str, Any]]:
         return await asyncio.to_thread(
             self._search_context_samples_sync,
             group_id=group_id,
             query=query,
             limit=limit,
+            max_age_hours=max_age_hours,
         )
 
     def _search_context_samples_sync(
@@ -172,6 +174,7 @@ class ChatSampleRepo:
         group_id: str | None,
         query: str,
         limit: int,
+        max_age_hours: int = 0,
     ) -> list[dict[str, Any]]:
         self.db.ensure_schema()
         terms = context_search_terms(query)
@@ -180,6 +183,7 @@ class ChatSampleRepo:
         limit = max(1, min(int(limit or 5), 30))
         where = "WHERE group_id = ?" if group_id else ""
         params: tuple[Any, ...] = (group_id, max(80, limit * 12)) if group_id else (max(80, limit * 12),)
+        min_created_at = time.time() - float(max_age_hours) * 3600.0 if max_age_hours and max_age_hours > 0 else 0.0
         with self.db.connection() as conn:
             rows = conn.execute(
                 f"""
@@ -191,6 +195,7 @@ class ChatSampleRepo:
                 """,
                 params,
             ).fetchall()
+        rows = [row for row in rows if float(row["created_at"] or 0) >= min_created_at]
 
         scored: list[tuple[int, float, dict[str, Any]]] = []
         for row in rows:

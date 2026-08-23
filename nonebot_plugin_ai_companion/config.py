@@ -211,6 +211,9 @@ class AiCompanionConfig(BaseModel):
     ai_companion_exa_api_key: str = ""
     ai_companion_search_result_limit: int = 3
 
+    # ---- 上下文相关性检索时效窗口（小时；仅命中窗口内的样本/图片描述，防止陈年内容串场）----
+    ai_companion_relevant_context_max_age_hours: int = 48
+
     # ---- 本地推理后端默认端点（Ollama / llama.cpp，可创建多个 DB 实例覆盖）----
     ai_companion_ollama_api_url: str = "http://127.0.0.1:11434"
     ai_companion_llama_cpp_api_url: str = "http://127.0.0.1:8080"
