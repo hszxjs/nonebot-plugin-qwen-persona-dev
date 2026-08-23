@@ -143,3 +143,31 @@ def sanitize_reply(
     if is_command_like(cleaned, prefixes=prefixes, regexes=regexes):
         return ""
     return cleaned
+
+
+_PSEUDO_TOOL_MARKERS = ("调用工具：", "调用工具:", "工具返回：", "工具返回:")
+_PSEUDO_FINAL_MARKER = ("生成最终回复：", "生成最终回复:")
+
+
+def extract_pseudo_tool_reply(text: str) -> str:
+    """提取伪工具调用文本里的真实答案。
+
+    部分模型在提示词含工具描述但未启用 function calling 时，会在文本里
+    "表演"工具调用（调用工具：… 工具返回：… 生成最终回复：真正的答案）。
+    存在表演痕迹时取最后一个「生成最终回复：」之后的内容；无痕迹原样返回。
+    """
+    value = str(text or "").strip()
+    if not any(marker in value for marker in _PSEUDO_TOOL_MARKERS):
+        return value
+    for marker in _PSEUDO_FINAL_MARKER:
+        if marker in value:
+            return value.rsplit(marker, 1)[-1].strip()
+    # 只有表演、没有"生成最终回复"标记：丢弃首个表演段（到句号/换行为止）
+    first_line = value.splitlines()[0] if value else ""
+    for marker in _PSEUDO_TOOL_MARKERS:
+        if marker in first_line:
+            tail = value.split(marker, 1)[1]
+            cut = max(tail.find("。"), tail.find("\n"), tail.find("）"))
+            remainder = tail[cut + 1 :].strip() if cut >= 0 else ""
+            return remainder or value
+    return value

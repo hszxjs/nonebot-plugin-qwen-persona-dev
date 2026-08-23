@@ -65,7 +65,12 @@ def _sticker_lines(ctx: PromptContext) -> list[str]:
 
 def _tools_lines(ctx: PromptContext) -> list[str]:
     description = ctx.tool_registry.describe_for_prompt(ctx.allowed_tools)
-    return ["可用工具：\n" + description] if description else []
+    if not description:
+        return []
+    return [
+        "可用工具（由系统自动执行，你只需要正常说话）：\n" + description,
+        "绝不要在回复文本中描述、假装或演示调用工具；不要输出「调用工具」「工具返回」「生成最终回复」等过程字样。",
+    ]
 
 
 def _memory_lines(ctx: PromptContext) -> list[str]:

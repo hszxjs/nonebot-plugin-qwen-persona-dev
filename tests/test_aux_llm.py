@@ -115,3 +115,42 @@ def test_parse_json_object_variants() -> None:
     assert parse_json_object('{"a": [1, 2,],}') == {"a": [1, 2]}
     with pytest.raises(AuxLlmError, match="json parse failed"):
         parse_json_object("完全不是 JSON")
+
+
+# ---------------------------------------------------------------------------
+# 伪工具调用文本提取（glm 在 FC 关闭时的"表演"输出）
+# ---------------------------------------------------------------------------
+def test_extract_pseudo_tool_reply_full_performance() -> None:
+    from nonebot_plugin_ai_companion.prompt.text import extract_pseudo_tool_reply
+
+    performed = (
+        '**调用工具：memory_query**（query: "异环", limit: 3） '
+        "工具返回：无相关记忆片段。 "
+        "生成最终回复：异环就是NTE嘛，你咋突然想搜这个？"
+    )
+    assert extract_pseudo_tool_reply(performed) == "异环就是NTE嘛，你咋突然想搜这个？"
+
+
+def test_extract_pseudo_tool_reply_passthrough_and_degenerate() -> None:
+    from nonebot_plugin_ai_companion.prompt.text import extract_pseudo_tool_reply
+
+    assert extract_pseudo_tool_reply("普通回复，无表演") == "普通回复，无表演"
+    degenerate = "调用工具：web_search（query: x） 工具返回：y"  # 没有最终回复标记
+    result = extract_pseudo_tool_reply(degenerate)
+    assert isinstance(result, str)
+
+
+def test_tools_prompt_segment_forbids_roleplay() -> None:
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
+    from nonebot_plugin_ai_companion.prompt.builder import PromptContext, build_system_prompt
+    from nonebot_plugin_ai_companion.tools.registry import ToolRegistry
+
+    registry = ToolRegistry()
+
+    @registry.register("memory_query", description="查记忆")
+    async def _tool(_arguments):
+        return []
+
+    prompt = build_system_prompt(PromptContext(config=AiCompanionConfig(), tool_registry=registry, command_prefixes=[]))
+    assert "由系统自动执行" in prompt
+    assert "不要输出「调用工具」" in prompt

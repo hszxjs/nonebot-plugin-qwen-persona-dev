@@ -49,6 +49,7 @@ from .prompt.media_text import (
 from .prompt.meme_gate import build_meme_candidates_from_samples, select_active_memes
 from .prompt.planner import ReplyIntent, ReplyPlan, build_reply_plan
 from .prompt.text import (
+    extract_pseudo_tool_reply,
     is_command_like,
     is_echo_reply,
     is_question_deflection_reply,
@@ -271,6 +272,8 @@ class ChatService:
             )
 
         raw_reply = sanitize_model_reply_media_text(raw_reply)
+        # 模型可能在文本里"表演"工具调用（FC 关闭时）：提取真实答案
+        raw_reply = extract_pseudo_tool_reply(raw_reply)
         reply_text, generated_sticker_keys = parse_sticker_tokens(raw_reply)
         if generated_sticker_keys:
             logger.warning(
@@ -300,11 +303,40 @@ class ChatService:
             if sticker_key:
                 sticker_keys = [sticker_key]
         if not clean_text and not sticker_keys:
+            await self._record_message_log(
+                kind="chat",
+                ids=ids,
+                trigger_reason=reply_decision.reason,
+                decision_detail={"reason": reply_decision.reason, "stage": "skipped_empty_reply"},
+                role_card=active_card,
+                provider=self._provider_label(),
+                latency_seconds=time.perf_counter() - inference_started,
+                status="skipped_empty_reply",
+                input_text=reply_input_text,
+                output_text=raw_reply,
+            )
             return
 
-        sent = await self._send_adapter_reply(
-            bot=bot, event=event, matcher=matcher, text=clean_text, sticker_keys=sticker_keys
-        )
+        try:
+            sent = await self._send_adapter_reply(
+                bot=bot, event=event, matcher=matcher, text=clean_text, sticker_keys=sticker_keys
+            )
+        except Exception as exc:  # noqa: BLE001 — 发送异常留痕，不再无声消失
+            logger.warning(f"ai companion reply send raised: {exc!r}")
+            await self._record_message_log(
+                kind="chat",
+                ids=ids,
+                trigger_reason=reply_decision.reason,
+                decision_detail={"reason": reply_decision.reason, "error": f"{type(exc).__name__}: {exc}"},
+                role_card=active_card,
+                provider=self._provider_label(),
+                latency_seconds=time.perf_counter() - inference_started,
+                status="send_error",
+                input_text=reply_input_text,
+                output_text=clean_text,
+                sticker_keys=sticker_keys,
+            )
+            return
         provider_label = self._provider_label()
         if self.provider_resolver is not None:
             try:
