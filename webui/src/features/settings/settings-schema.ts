@@ -84,7 +84,7 @@ const contextScopeOptions = [
 ]
 
 const inferenceBackendOptions = [
-  { value: "mlx", label: "本地 Qwen MLX", description: "使用本地加载的 MLX 模型推理。" },
+  { value: "mlx", label: "本地 MLX", description: "使用本地加载的 MLX 模型推理。" },
   { value: "glm", label: "GLM 在线", description: "使用 GLM 在线 API 推理（OpenAI 兼容）。" },
 ]
 

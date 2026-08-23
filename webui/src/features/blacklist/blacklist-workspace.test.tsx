@@ -22,7 +22,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 })
 
 const settings: SettingsPayload = {
-  override_file: "/tmp/qwen-persona.toml",
+  override_file: "/tmp/ai-companion.toml",
   values: {
     ai_companion_blacklist_words: ["spam", "广告"],
     ai_companion_blacklist_regexes: ["^(?i)赌博$"],

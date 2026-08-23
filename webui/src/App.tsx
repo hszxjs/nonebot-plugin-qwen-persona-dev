@@ -1,3 +1,5 @@
+import { useEffect } from "react"
+
 import {
   IconActivity,
   IconAdjustments,
@@ -59,7 +61,7 @@ const navItems = [
 function AppSidebar() {
   return (
     <Sidebar>
-      <SidebarHeader>Qwen Persona</SidebarHeader>
+      <SidebarHeader>AI Companion</SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel>Admin</SidebarGroupLabel>
@@ -116,6 +118,9 @@ function OperationsPage() {
 }
 
 export function App() {
+  useEffect(() => {
+    document.title = "AI Companion 管理台"
+  }, [])
   return (
     <SidebarProvider>
       <AppSidebar />

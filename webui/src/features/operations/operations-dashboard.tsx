@@ -280,7 +280,7 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
     try {
       await saveSettingField("ai_companion_inference_backend", value)
       await mutate("operations/overview")
-      toast.success(value === "glm" ? "已切换到 GLM 在线推理" : "已切换到本地 Qwen MLX")
+      toast.success(value === "glm" ? "已切换到 GLM 在线推理" : "已切换到本地 MLX 推理")
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error)
       toast.error(`切换后端失败：${text}`)
@@ -327,7 +327,7 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
             disabled={switchingBackend}
             spacing={1}
           >
-            <ToggleGroupItem value="mlx">本地 Qwen</ToggleGroupItem>
+            <ToggleGroupItem value="mlx">本地 MLX</ToggleGroupItem>
             <ToggleGroupItem value="glm">GLM 在线</ToggleGroupItem>
           </ToggleGroup>
         </CardAction>

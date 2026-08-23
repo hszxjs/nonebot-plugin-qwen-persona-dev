@@ -64,7 +64,7 @@ const stickers: StickerGalleryPayload = {
 }
 
 const settings: SettingsPayload = {
-  override_file: "/tmp/qwen-persona.toml",
+  override_file: "/tmp/ai-companion.toml",
   values: {
     ai_companion_admin_enabled: true,
     ai_companion_command_prefixes: ["/", "!"],
