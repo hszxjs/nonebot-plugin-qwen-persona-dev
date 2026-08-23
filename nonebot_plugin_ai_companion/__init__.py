@@ -134,6 +134,22 @@ async def _proactive_reply(group_id: str) -> str:
     return str((result or {}).get("message_id") or "")
 
 
+async def _auto_deploy_adapter(adapter) -> None:
+    """LoRA 训练后自动部署：激活版本 + 持久化 adapter 路径 + MLX 模式热重载。"""
+    plugin_config.ai_companion_mlx_adapter_path = str(adapter.path)
+    save_config_overrides(plugin_config, config_to_dict(plugin_config))
+    logger.info(
+        f"ai companion lora adapter v{adapter.version} deployed: {adapter.path} "
+        f"({adapter.role_card_id}/{adapter.source_language})"
+    )
+    if plugin_config.ai_companion_inference_backend == "mlx":
+        reload_result = await mlx_runtime.load(force=True)
+        logger.info(
+            "ai companion mlx runtime adapter reload: "
+            f"{reload_result.get('status')}, adapter={reload_result.get('adapter_path')}"
+        )
+
+
 async def _data_cleaning_chat(prompt: str) -> str:
     """data_cleaning 角色实例对话；未绑定回退辅助 LLM（aux_llm）。"""
     from .providers.aux_llm import aux_chat
@@ -158,7 +174,7 @@ role_card_service = RoleCardService(
     samples=store.samples,
     data_cleaning_chat=_data_cleaning_chat,
 )
-trainer = PersonaTrainer(plugin_config, store)
+trainer = PersonaTrainer(plugin_config, store, deploy_callback=_auto_deploy_adapter)
 
 chat_service = ChatService(
     env=env,

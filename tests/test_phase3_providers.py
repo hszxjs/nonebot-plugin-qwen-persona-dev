@@ -37,7 +37,7 @@ def test_ollama_backend_normalizes_base_url_and_defaults() -> None:
     assert backend.model == "qwen3:8b"
     caps = backend.capabilities()
     assert caps.vision and caps.function_calling
-    assert any(preset["value"] == "qwen3:8b" for preset in backend.default_models())
+    assert any(preset["value"] == "qwen3.6:9b" for preset in backend.default_models())
 
     backend2 = OllamaBackend(AiCompanionConfig())  # 走配置默认
     assert backend2.base_url == "http://127.0.0.1:11434/v1"
@@ -421,3 +421,95 @@ def test_model_manager_api_with_sse(persona_store) -> None:
 
             deleted = client.request("DELETE", "/api/models/manage", params={"model_ref": "org/m2"})
             assert deleted.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Exa 搜索 + Qwen3.6 预设 + LoRA 自动部署
+# ---------------------------------------------------------------------------
+async def test_exa_provider_parses_results(monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.tools.search import ExaSearchProvider
+
+    payload = {
+        "results": [
+            {"title": "Exa 结果", "url": "https://exa.ai", "text": "正文片段"},
+            {"title": "无正文", "url": "https://b", "summary": "兜底摘要"},
+        ]
+    }
+    captured = {}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            captured.update({"url": url, "headers": headers, "json": json})
+            return _FakeResponse(payload)
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: _Client())
+    provider = ExaSearchProvider("exa-key")
+    hits = await provider.search("测试", limit=2)
+    assert captured["url"] == "https://api.exa.ai/search"
+    assert captured["headers"]["x-api-key"] == "exa-key"
+    assert captured["json"]["contents"]["text"]["maxCharacters"] > 0
+    assert hits[0].title == "Exa 结果" and hits[0].snippet == "正文片段"
+    assert hits[1].snippet == "兜底摘要"  # text 缺失时回退 summary
+
+
+def test_build_search_provider_exa_gating() -> None:
+    from nonebot_plugin_ai_companion.tools.search import ExaSearchProvider, build_search_provider
+
+    assert build_search_provider(AiCompanionConfig()) is None
+    provider = build_search_provider(
+        AiCompanionConfig(ai_companion_search_provider="exa", ai_companion_exa_api_key="k")
+    )
+    assert isinstance(provider, ExaSearchProvider)
+
+
+def test_local_presets_feature_qwen36_with_vision() -> None:
+    from nonebot_plugin_ai_companion.model_manager.presets import MLX_MODEL_PRESETS
+
+    values = {preset["value"] for preset in MLX_MODEL_PRESETS}
+    assert "mlx-community/Qwen3.6-0.6B-4bit" in values
+    assert "mlx-community/Qwen3.6-9B-4bit" in values
+    assert not any("Qwen3.5" in value for value in values)  # 旧 VL 版本已淘汰
+
+    ollama_values = {preset["value"] for preset in OllamaBackend().default_models()}
+    assert {"qwen3.6:0.6b", "qwen3.6:9b"} <= ollama_values
+    assert OllamaBackend().model == "qwen3.6:9b"
+
+
+async def test_trainer_auto_deploy_activates_and_callbacks(persona_store, monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.finetune.adapters import LoraAdapterRepo
+    from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer, TrainingResult
+
+    config = AiCompanionConfig()  # lora_auto_deploy 默认 True
+    deployed: list = []
+
+    async def fake_deploy(adapter):
+        deployed.append(adapter)
+
+    trainer = PersonaTrainer(persona_store and config, persona_store, deploy_callback=fake_deploy)
+
+    async def fake_run(**_kwargs):
+        return TrainingResult(status="success", sample_count=10, dataset_path="d", output_dir="/runs/adapter-1")
+
+    monkeypatch.setattr(trainer, "_run_training_locked", fake_run)
+    result = await trainer.run_training(reason="test", role_card_id="card1", source_language="zh")
+
+    assert result.adapter_version == 1
+    repo = LoraAdapterRepo(persona_store.db)
+    active = await repo.find_active(role_card_id="card1", source_language="zh")
+    assert active is not None and active.path == "/runs/adapter-1"
+    assert len(deployed) == 1 and deployed[0].active
+
+    # 关闭自动部署：登记但不激活、不回调
+    config_off = AiCompanionConfig(ai_companion_lora_auto_deploy=False)
+    trainer2 = PersonaTrainer(config_off, persona_store, deploy_callback=fake_deploy)
+    monkeypatch.setattr(trainer2, "_run_training_locked", fake_run)
+    result2 = await trainer2.run_training(reason="t2", role_card_id="card2", source_language="zh")
+    assert result2.adapter_version == 1
+    assert await repo.find_active(role_card_id="card2", source_language="zh") is None
+    assert len(deployed) == 1  # 没有新增回调

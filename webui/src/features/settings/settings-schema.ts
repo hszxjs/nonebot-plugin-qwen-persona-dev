@@ -75,6 +75,8 @@ export const DANGER_FIELDS = new Set([
   "ai_companion_after_train_command",
   "ai_companion_lora_helper_api_key",
   "ai_companion_admin_token",
+  "ai_companion_tavily_api_key",
+  "ai_companion_exa_api_key",
 ])
 
 const contextScopeOptions = [
@@ -120,6 +122,21 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   { name: "ai_companion_online_timeout", label: "在线超时(秒)", section: "online", control: "number", min: 5, max: 600, step: 5 },
   { name: "ai_companion_online_multimodal", label: "多模态", description: "开启后图片转 base64 发送。Coding 订阅端点不支持，默认关闭（图片丢弃仅发文字）。", section: "online", control: "switch" },
 
+  { name: "ai_companion_search_provider", label: "网页搜索源", description: "启用 web_search 工具的搜索来源：exa / tavily / searxng。留空表示不启用。", section: "online", control: "select", options: [
+    { value: "", label: "不启用" },
+    { value: "exa", label: "Exa.ai（推荐，免费 1000 次/月）" },
+    { value: "tavily", label: "Tavily" },
+    { value: "searxng", label: "SearxNG（自建）" },
+  ] },
+  { name: "ai_companion_exa_api_key", label: "Exa API Key", description: "exa.ai 控制台获取；搜索源选 exa 时必填。", section: "online", control: "password" },
+  { name: "ai_companion_tavily_api_key", label: "Tavily API Key", description: "搜索源选 tavily 时必填。", section: "online", control: "password" },
+  { name: "ai_companion_searxng_url", label: "SearxNG 地址", description: "如 http://127.0.0.1:8888；搜索源选 searxng 时必填。", section: "online", control: "text" },
+  { name: "ai_companion_search_result_limit", label: "搜索结果条数", section: "online", control: "number", min: 1, max: 10, step: 1 },
+  { name: "ai_companion_enable_tool_calls", label: "工具调用（function calling）", description: "开启后 GLM 在线后端可真实调用已注册工具（搜索/记忆查询/表情）。改后需重启以注册搜索工具。", section: "online", control: "switch" },
+  { name: "ai_companion_tool_max_rounds", label: "工具调用轮次上限", section: "online", control: "number", min: 1, max: 5, step: 1 },
+  { name: "ai_companion_tool_call_timeout_seconds", label: "单次工具超时(秒)", section: "online", control: "number", min: 3, max: 60, step: 1 },
+  { name: "ai_companion_tool_result_max_chars", label: "工具结果回填上限(字符)", section: "online", control: "number", min: 200, max: 4000, step: 100 },
+
   { name: "ai_companion_anime_caption_enabled", label: "动漫图片识别", description: "开启后图片会走多路识别（AI视觉 + SauceNAO + iqdb），结果进 prompt。", section: "anime", control: "switch" },
   { name: "ai_companion_anime_vision_enabled", label: "AI 视觉识图", description: "用 GLM-4.6V-Flash(免费)理解任意图：角色/场景/动作。弥补以图搜源对冷门图命中率低。", section: "anime", control: "switch" },
   { name: "ai_companion_anime_vision_model", label: "视觉模型", description: "glm-4.6v-flash 免费。glm-4.5v 需付费资源包。", section: "anime", control: "text" },
@@ -149,6 +166,9 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   { name: "ai_companion_system_prompt", label: "系统提示词", section: "learning", control: "textarea" },
 
   { name: "ai_companion_enable_training", label: "定时训练", section: "training", control: "switch" },
+  { name: "ai_companion_lora_auto_deploy", label: "训练后自动部署 adapter", description: "训练成功即激活新版本、持久化 adapter 路径，并在 MLX 后端模式下热重载。", section: "training", control: "switch" },
+  { name: "ai_companion_member_mimic_model", label: "风格分析模型", description: "生成/刷新群友模仿卡用的模型；留空默认 glm-4.5-flash。", section: "training", control: "text" },
+  { name: "ai_companion_member_mimic_sample_limit", label: "风格分析取样条数", section: "training", control: "number", min: 20, max: 500, step: 10 },
   { name: "ai_companion_train_times", label: "训练时间", description: "每行一个 HH:MM。", section: "training", control: "tokens" },
   { name: "ai_companion_dataset_limit", label: "数据集上限", section: "training", control: "number", min: 0, max: 20000, step: 100 },
   { name: "ai_companion_dataset_history_window", label: "历史窗口", section: "training", control: "number", min: 0, max: 30, step: 1 },
@@ -193,6 +213,9 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   { name: "ai_companion_media_sticker_fallback_text", label: "表情占位文本", section: "stickers", control: "text" },
 
   { name: "ai_companion_admin_enabled", label: "后台开关", section: "system", control: "switch" },
+  { name: "ai_companion_log_max_records", label: "日志保留条数", description: "推理/表情/溯源日志各自的滚动淘汰上限。", section: "system", control: "number", min: 100, max: 10000, step: 100 },
+  { name: "ai_companion_prompt_segment_order", label: "提示词分段顺序", description: "逗号/换行分隔。默认 identity,selfcheck,naturalness,sticker,tools；加入 memory/scene/motivation 启用对应段（memory 段注入长期记忆）。", section: "system", control: "tokens" },
+  { name: "ai_companion_disabled_prompt_segments", label: "禁用的提示词段", description: "留空即可；填段落名以关闭对应段。", section: "system", control: "tokens" },
   { name: "ai_companion_admin_host", label: "监听地址", section: "system", control: "text" },
   { name: "ai_companion_admin_port", label: "监听端口", section: "system", control: "number", min: 1, max: 65535, step: 1 },
   { name: "ai_companion_admin_token", label: "访问令牌", section: "system", control: "password" },

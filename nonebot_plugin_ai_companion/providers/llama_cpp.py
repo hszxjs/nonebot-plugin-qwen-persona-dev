@@ -23,16 +23,22 @@ LLAMA_CPP_PRESETS: list[dict[str, str]] = [
         "label": "当前 llama-server 已加载模型",
         "description": "model 字段任意，实际用服务端加载的 GGUF",
     },
-    {"value": "Qwen/Qwen3-4B-GGUF:Q4_K_M", "label": "Qwen3 4B Q4_K_M", "description": "轻量 GGUF 量化"},
-    {"value": "Qwen/Qwen3-8B-GGUF:Q4_K_M", "label": "Qwen3 8B Q4_K_M - 推荐", "description": "通用量级 GGUF"},
-    {"value": "Qwen/Qwen3-14B-GGUF:Q4_K_M", "label": "Qwen3 14B Q4_K_M", "description": "中高量级 GGUF"},
+    {
+        "value": "Qwen/Qwen3.6-0.6B-GGUF:Q4_K_M",
+        "label": "Qwen3.6 0.6B Q4_K_M",
+        "description": "最小档位，Qwen3.6 起自带视觉",
+    },
+    {
+        "value": "Qwen/Qwen3.6-9B-GGUF:Q4_K_M",
+        "label": "Qwen3.6 9B Q4_K_M - 推荐",
+        "description": "通用量级 GGUF，自带视觉",
+    },
     {
         "value": "google/gemma-3-4b-it-GGUF:Q4_K_M",
         "label": "Gemma 3 4B（视觉）",
         "description": "llama.cpp 视觉支持（libmtmd）",
     },
-    {"value": "liuhaotian/llava-v1.6-7b-GGUF:Q4_K_M", "label": "LLaVA 1.6 7B（视觉）", "description": "经典视觉模型"},
-    {"value": "openbmb/MiniCPM-V-2.6-GGUF:Q4_K_M", "label": "MiniCPM-V 2.6（视觉）", "description": "端侧视觉"},
+    {"value": "openbmb/MiniCPM-V-2.6-GGUF:Q4_K_M", "label": "MiniCPM-V 2.6（视觉）", "description": "端侧视觉备选"},
 ]
 
 

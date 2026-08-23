@@ -112,6 +112,48 @@ class TavilySearchProvider:
         return hits
 
 
+class ExaSearchProvider:
+    """Exa.ai 搜索（需 API key，免费额度 1000 次/月）。"""
+
+    API_URL = "https://api.exa.ai/search"
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key.strip()
+
+    async def search(self, query: str, *, limit: int = 3) -> list[SearchHit]:
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0)) as client:
+                response = await client.post(
+                    self.API_URL,
+                    headers={"x-api-key": self.api_key, "Content-Type": "application/json"},
+                    json={
+                        "query": query,
+                        "numResults": max(1, int(limit)),
+                        "contents": {"text": {"maxCharacters": 600}},
+                    },
+                )
+        except httpx.HTTPError as exc:
+            raise SearchProviderError(f"exa request failed: {exc!r}") from exc
+        if response.status_code != 200:
+            raise SearchProviderError(f"exa status {response.status_code}: {response.text[:200]}")
+        try:
+            results = response.json().get("results") or []
+        except ValueError as exc:
+            raise SearchProviderError(f"exa invalid json: {exc!r}") from exc
+        hits: list[SearchHit] = []
+        for item in results[: max(1, int(limit))]:
+            if not isinstance(item, dict):
+                continue
+            hits.append(
+                SearchHit(
+                    title=str(item.get("title") or "")[:120],
+                    url=str(item.get("url") or "")[:300],
+                    snippet=str(item.get("text") or item.get("summary") or "")[:300],
+                )
+            )
+        return hits
+
+
 _SEARCH_PROVIDER_FACTORIES: dict[str, Any] = {}
 
 
@@ -130,8 +172,13 @@ def _build_tavily(config: AiCompanionConfig) -> BaseSearchProvider:
     return TavilySearchProvider(config.ai_companion_tavily_api_key)
 
 
+def _build_exa(config: AiCompanionConfig) -> BaseSearchProvider:
+    return ExaSearchProvider(config.ai_companion_exa_api_key)
+
+
 register_search_provider("searxng", _build_searxng)
 register_search_provider("tavily", _build_tavily)
+register_search_provider("exa", _build_exa)
 
 
 def build_search_provider(config: AiCompanionConfig) -> BaseSearchProvider | None:

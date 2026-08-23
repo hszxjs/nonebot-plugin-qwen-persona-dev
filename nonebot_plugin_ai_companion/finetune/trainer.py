@@ -8,6 +8,7 @@ import os
 import re
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -55,9 +56,16 @@ def parse_time_slot(slot: str) -> tuple[int, int]:
 
 
 class PersonaTrainer:
-    def __init__(self, config: AiCompanionConfig, store: PersonaStore) -> None:
+    def __init__(
+        self,
+        config: AiCompanionConfig,
+        store: PersonaStore,
+        *,
+        deploy_callback: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> None:
         self.config = config
         self.store = store
+        self.deploy_callback = deploy_callback
         self._lock = asyncio.Lock()
         self._progress: dict[str, Any] = {
             "stage": "idle",
@@ -95,17 +103,24 @@ class PersonaTrainer:
                 )
                 raise
         if role_card_id and source_language and result.status == "success" and result.output_dir:
-            # 成功后登记为新 adapter 版本（默认不激活，经版本管理页一键切换）
+            # 成功后登记新 adapter 版本；auto_deploy 时激活并回调部署（持久化 + 热重载）
             from .adapters import LoraAdapterRepo
 
-            adapter = await LoraAdapterRepo(self.store.db).register_adapter(
+            repo = LoraAdapterRepo(self.store.db)
+            adapter = await repo.register_adapter(
                 role_card_id=role_card_id,
                 source_language=source_language,
                 path=result.output_dir,
                 note=f"reason={reason}",
+                activate=bool(getattr(self.config, "ai_companion_lora_auto_deploy", True)),
             )
             result.adapter_id = adapter.id
             result.adapter_version = adapter.version
+            if self.deploy_callback is not None and adapter.active:
+                try:
+                    await self.deploy_callback(adapter)
+                except Exception as exc:  # noqa: BLE001 — 部署失败不影响训练结果
+                    logger.warning(f"lora adapter auto deploy failed: {exc!r}")
         return result
 
     def progress_snapshot(self) -> dict[str, Any]:

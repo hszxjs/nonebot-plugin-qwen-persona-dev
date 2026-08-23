@@ -14,19 +14,16 @@ from .openai_compat import OpenAICompatBackend
 from .registry import register
 
 DEFAULT_BASE_URL = "http://127.0.0.1:11434/v1"
-DEFAULT_MODEL = "qwen3:8b"
+DEFAULT_MODEL = "qwen3.6:9b"
 
 OLLAMA_PRESETS: list[dict[str, str]] = [
-    {"value": "qwen3:0.6b", "label": "Qwen3 0.6B - 最小", "description": "极小参数量，低配机器冒烟"},
-    {"value": "qwen3:1.7b", "label": "Qwen3 1.7B - 轻量", "description": "轻量文本对话"},
-    {"value": "qwen3:8b", "label": "Qwen3 8B - 推荐", "description": "通用量级，文本对话主力"},
-    {"value": "qwen3:14b", "label": "Qwen3 14B - 中高", "description": "中高量级，需较大内存"},
-    {"value": "llama3.1:8b", "label": "Llama 3.1 8B", "description": "Meta 开源通用模型"},
-    {"value": "gemma3:4b", "label": "Gemma 3 4B（视觉）", "description": "自带视觉多模态"},
-    {"value": "gemma3:12b", "label": "Gemma 3 12B（视觉）", "description": "中量级视觉多模态"},
-    {"value": "qwen2.5vl:7b", "label": "Qwen2.5-VL 7B（视觉）", "description": "视觉理解主力"},
-    {"value": "minicpm-v:8b", "label": "MiniCPM-V 8B（视觉）", "description": "端侧视觉模型"},
+    {"value": "qwen3.6:0.6b", "label": "Qwen3.6 0.6B - 最小", "description": "最小可用档位，Qwen3.6 起全系自带视觉"},
+    {"value": "qwen3.6:9b", "label": "Qwen3.6 9B - 推荐", "description": "通用量级主力，自带视觉，无需单独的 VL 版本"},
+    {"value": "llama3.1:8b", "label": "Llama 3.1 8B", "description": "Meta 开源通用模型（纯文本）"},
+    {"value": "gemma3:4b", "label": "Gemma 3 4B（视觉）", "description": "轻量视觉多模态备选"},
+    {"value": "gemma3:12b", "label": "Gemma 3 12B（视觉）", "description": "中量级视觉多模态备选"},
     {"value": "deepseek-r1:8b", "label": "DeepSeek-R1 蒸馏 8B", "description": "推理特化蒸馏版"},
+    {"value": "minicpm-v:8b", "label": "MiniCPM-V 8B（视觉）", "description": "端侧视觉模型备选"},
 ]
 
 

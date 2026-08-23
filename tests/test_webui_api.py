@@ -245,7 +245,7 @@ def test_settings_payload_is_value_contract_without_ui_metadata() -> None:
     assert "override_file" in payload
     assert "sections" not in payload
     assert "fields" not in payload
-    assert payload["values"]["ai_companion_mlx_model"] == "mlx-community/Qwen3.5-9B-MLX-4bit"
+    assert payload["values"]["ai_companion_mlx_model"] == "mlx-community/Qwen3.6-9B-4bit"
 
 
 def test_setting_update_rejects_unknown_and_invalid_values() -> None:
@@ -354,7 +354,7 @@ def test_runtime_actions_return_visible_operation_message() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["action"] == "load"
-    assert payload["message"] == "load model 'mlx-community/Qwen3.5-9B-MLX-4bit'"
+    assert payload["message"] == "load model 'mlx-community/Qwen3.6-9B-4bit'"
     assert payload["runtime"]["status"] == "loaded"
 
 

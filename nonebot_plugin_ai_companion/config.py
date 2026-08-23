@@ -20,7 +20,7 @@ class AiCompanionConfig(BaseModel):
             return rewritten
         return data
 
-    ai_companion_mlx_model: str = "mlx-community/Qwen3.5-9B-MLX-4bit"
+    ai_companion_mlx_model: str = "mlx-community/Qwen3.6-9B-4bit"
     ai_companion_mlx_adapter_path: str = ""
     ai_companion_mlx_auto_load: bool = False
     ai_companion_mlx_trust_remote_code: bool = False
@@ -204,10 +204,11 @@ class AiCompanionConfig(BaseModel):
     ai_companion_tool_call_timeout_seconds: float = 15.0
     ai_companion_tool_result_max_chars: int = 1200
 
-    # ---- 网页搜索 Provider（BaseSearchProvider 实现：searxng / tavily）----
+    # ---- 网页搜索 Provider（BaseSearchProvider 实现：searxng / tavily / exa）----
     ai_companion_search_provider: str = ""
     ai_companion_searxng_url: str = ""
     ai_companion_tavily_api_key: str = ""
+    ai_companion_exa_api_key: str = ""
     ai_companion_search_result_limit: int = 3
 
     # ---- 本地推理后端默认端点（Ollama / llama.cpp，可创建多个 DB 实例覆盖）----
@@ -217,6 +218,9 @@ class AiCompanionConfig(BaseModel):
     # ---- 可观测性：持久化日志滚动淘汰上限（inference/sticker/message 各自生效）----
     ai_companion_log_max_records: int = 1000
 
+    # ---- LoRA 训练后自动部署（登记新版本即激活 + 持久化 adapter 路径 + MLX 模式热重载）----
+    ai_companion_lora_auto_deploy: bool = True
+
     # ---- member_mimic 风格分析 ----
     ai_companion_member_mimic_model: str = "glm-4.5-flash"
     ai_companion_member_mimic_sample_limit: int = 120
@@ -225,7 +229,7 @@ class AiCompanionConfig(BaseModel):
 
 
 def effective_mlx_model(config: AiCompanionConfig) -> str:
-    return config.ai_companion_mlx_model.strip() or "mlx-community/Qwen3.5-9B-MLX-4bit"
+    return config.ai_companion_mlx_model.strip() or "mlx-community/Qwen3.6-9B-4bit"
 
 
 def effective_chat_model(config: AiCompanionConfig) -> str:
