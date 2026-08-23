@@ -214,6 +214,9 @@ class AiCompanionConfig(BaseModel):
     ai_companion_ollama_api_url: str = "http://127.0.0.1:11434"
     ai_companion_llama_cpp_api_url: str = "http://127.0.0.1:8080"
 
+    # ---- 可观测性：持久化日志滚动淘汰上限（inference/sticker/message 各自生效）----
+    ai_companion_log_max_records: int = 1000
+
     # ---- member_mimic 风格分析 ----
     ai_companion_member_mimic_model: str = "glm-4.5-flash"
     ai_companion_member_mimic_sample_limit: int = 120

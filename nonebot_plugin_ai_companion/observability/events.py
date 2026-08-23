@@ -1,4 +1,4 @@
-"""可观测性域：推理调用事件与表情事件的环形缓冲持久化（各保留最新 1000 条）。"""
+"""可观测性域：推理调用事件与表情事件的环形缓冲持久化（条数可配置）。"""
 
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ from ..memory.db import PersonaDatabase
 
 
 class InferenceEventRepo:
-    def __init__(self, db: PersonaDatabase) -> None:
+    def __init__(self, db: PersonaDatabase, bus: Any | None = None) -> None:
         self.db = db
+        self.bus = bus
 
     async def record_inference_event(
         self,
@@ -130,7 +131,16 @@ class InferenceEventRepo:
                 )
                 """
             )
+        if self.bus is not None:
+            self.bus.publish({"type": "inference", "item": self._inference_event_row_payload_from_item(item)})
         return item
+
+    @staticmethod
+    def _inference_event_row_payload_from_item(item: dict[str, Any]) -> dict[str, Any]:
+        import time as _time
+
+        created_at = float(item.get("created_at") or 0)
+        return {**item, "time": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime(created_at))}
 
     async def list_inference_events(
         self,
@@ -204,8 +214,9 @@ class InferenceEventRepo:
 
 
 class StickerEventRepo:
-    def __init__(self, db: PersonaDatabase) -> None:
+    def __init__(self, db: PersonaDatabase, bus: Any | None = None) -> None:
         self.db = db
+        self.bus = bus
 
     async def record_sticker_event(
         self,
@@ -302,6 +313,8 @@ class StickerEventRepo:
                 )
                 """
             )
+        if self.bus is not None:
+            self.bus.publish({"type": "sticker", "item": item})
         return item
 
     async def list_sticker_events(

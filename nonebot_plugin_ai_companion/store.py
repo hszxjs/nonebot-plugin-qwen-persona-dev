@@ -19,6 +19,7 @@ from .memory.patterns import ConversationPatternRepo
 from .memory.samples import ChatSampleRepo
 from .memory.stats import StatsRepo
 from .observability.events import InferenceEventRepo, StickerEventRepo
+from .observability.message_log import MessageLogRepo
 from .sticker.assets import StickerAssetRepo
 
 
@@ -36,6 +37,13 @@ class PersonaStore:
         self.training_runs = TrainingRunRepo(self.db)
         self.dataset = SftDatasetExporter(self.db)
         self.stats_repo = StatsRepo(self.db)
+        self.message_logs = MessageLogRepo(self.db)
+
+    def attach_event_bus(self, bus) -> None:
+        """注入事件总线：三个事件仓库写入后实时发布（SSE 时间线用）。"""
+        self.events.bus = bus
+        self.sticker_events.bus = bus
+        self.message_logs.bus = bus
 
     @property
     def db_path(self) -> Path:

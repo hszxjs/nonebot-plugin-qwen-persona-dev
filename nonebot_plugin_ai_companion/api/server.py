@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .auth import make_auth_dependency
-from .routes import backends, misc, operations, role_cards, runtime, settings, stickers, training
+from .routes import backends, logs, misc, operations, role_cards, runtime, settings, stickers, training
 from .routes import model_manager as model_manager_routes
 
 
@@ -46,6 +46,8 @@ def create_admin_app(
     provider_instances: Any | None = None,
     provider_bindings: Any | None = None,
     model_manager: Any | None = None,
+    event_bus: Any | None = None,
+    env: Any | None = None,
     static_dir: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AI Companion Admin", docs_url=None, redoc_url=None)
@@ -79,6 +81,7 @@ def create_admin_app(
     )
     app.include_router(backends.build_router(auth=auth, instances=provider_instances, bindings=provider_bindings))
     app.include_router(model_manager_routes.build_router(auth=auth, model_manager=model_manager))
+    app.include_router(logs.build_router(auth=auth, store=store, event_bus=event_bus, env=env))
 
     @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def static_or_fallback(path: str, request: Request) -> Response:
@@ -113,6 +116,8 @@ class AdminServer:
         provider_instances: Any | None = None,
         provider_bindings: Any | None = None,
         model_manager: Any | None = None,
+        event_bus: Any | None = None,
+        env: Any | None = None,
         static_dir: Path | None = None,
     ) -> None:
         self.config = config
@@ -127,6 +132,8 @@ class AdminServer:
         self.provider_instances = provider_instances
         self.provider_bindings = provider_bindings
         self.model_manager = model_manager
+        self.event_bus = event_bus
+        self.env = env
         self.static_dir = static_dir
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -148,6 +155,8 @@ class AdminServer:
             provider_instances=self.provider_instances,
             provider_bindings=self.provider_bindings,
             model_manager=self.model_manager,
+            event_bus=self.event_bus,
+            env=self.env,
             static_dir=self.static_dir,
         )
         host = str(getattr(self.config, "ai_companion_admin_host", "127.0.0.1"))

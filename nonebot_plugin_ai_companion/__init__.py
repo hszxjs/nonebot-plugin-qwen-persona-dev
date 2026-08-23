@@ -28,6 +28,8 @@ from .finetune.schedule import install_training_schedule
 from .finetune.trainer import PersonaTrainer
 from .learning_service import LearningService
 from .model_manager.manager import ModelManager
+from .observability.bus import EventBus
+from .observability.message_log import MessageLogRepo, format_trace, quoted_message_id
 from .providers.client import QwenClient
 from .providers.instances import (
     InferenceBackendRepo,
@@ -44,6 +46,7 @@ from .runtime_config import (
     load_config_overrides,
     save_config_overrides,
 )
+from .sticker.model import sticker_to_record
 from .sticker.repo_files import cleanup_sticker_repo_manifest
 from .store import PersonaStore
 from .tools.builtins import register_builtin_tools
@@ -87,6 +90,14 @@ conversation_pattern_tracker = ConversationPatternTracker()
 tool_registry = ToolRegistry()
 register_builtin_tools(tool_registry, config=plugin_config, store=store)
 model_manager_service = ModelManager(plugin_config)
+event_bus = EventBus()
+store.attach_event_bus(event_bus)
+store.message_logs.set_max_records(plugin_config.ai_companion_log_max_records)
+message_log_repo = MessageLogRepo(
+    store.db,
+    max_records=plugin_config.ai_companion_log_max_records,
+    bus=event_bus,
+)
 backend_repo = InferenceBackendRepo(store.db)
 provider_binding_repo = RoleProviderBindingRepo(store.db)
 provider_instances = ProviderInstanceManager(backend_repo)
@@ -137,6 +148,7 @@ chat_service = ChatService(
     tool_registry=tool_registry,
     role_card_service=role_card_service,
     provider_resolver=provider_resolver,
+    message_log_repo=message_log_repo,
 )
 learning_service = LearningService(
     env=env,
@@ -169,6 +181,8 @@ admin_server = AdminServer(
     provider_instances=provider_instances,
     provider_bindings=provider_binding_repo,
     model_manager=model_manager_service,
+    event_bus=event_bus,
+    env=env,
 )
 
 _CONFIG_RESTART_REQUIRED = {
@@ -384,6 +398,109 @@ async def _model_status() -> None:
         f"\nAdapter {snapshot.get('adapter_path') or '-'}"
         f"\n错误 {snapshot.get('last_error') or '-'}"
     )
+
+
+persona_trace = on_command(
+    "trace",
+    aliases={"溯源", "消息溯源"},
+    priority=5,
+    block=True,
+)
+
+
+@persona_trace.handle()
+async def _trace_reply(event: Event) -> None:
+    """引用 Bot 的某条回复并发送 /trace：按 reply_message_id 反查溯源（文档十三节）。"""
+    quoted_id = quoted_message_id(event)
+    if not quoted_id:
+        await persona_trace.finish("请引用一条机器人回复后再发送 /trace。")
+    record = await store.message_logs.find_by_reply_message_id(quoted_id)
+    if record is None:
+        await persona_trace.finish("没找到这条回复的溯源记录（可能已滚动淘汰，或不是本插件的回复）。")
+    await persona_trace.finish(format_trace(record))
+
+
+persona_sticker_add = on_command(
+    "添加表情",
+    aliases={"收录表情"},
+    priority=5,
+    block=True,
+)
+
+
+@persona_sticker_add.handle()
+async def _add_quoted_sticker(event: Event, args: Any = CommandArg()) -> None:  # noqa: B008
+    """引用一条含图/表情的消息并发送 /添加表情 [描述]：纳入表情仓库（文档十三节）。"""
+    reply_obj = getattr(event, "reply", None)
+    quoted_id = quoted_message_id(event)
+    if not quoted_id:
+        await persona_sticker_add.finish("请引用一条包含图片或表情的消息后再发送 /添加表情。")
+    samples = await store.samples.recent_samples(group_id=None, limit=2000)
+    sample = next((item for item in samples if str(item.get("message_id") or "") == str(quoted_id)), None)
+    if sample is None:
+        # 引用消息可能未入库（非学习范围）——尝试直接读取被引用消息本体
+        try:
+            reply_message = getattr(reply_obj, "message", None) if reply_obj is not None else None
+        except Exception:
+            reply_message = None
+        if reply_message is None:
+            await persona_sticker_add.finish("没找到被引用消息的记录（该消息未被学习，且无法读取原文）。")
+        from nonebot.adapters.onebot.v11 import Message as ObMessage
+
+        segments = list(reply_message) if not isinstance(reply_message, ObMessage) else list(reply_message)
+        records = []
+        for segment in segments:
+            record = sticker_to_record(
+                {"type": getattr(segment, "type", ""), "data": dict(getattr(segment, "data", {}) or {})},
+                set(plugin_config.ai_companion_sticker_segment_types),
+            )
+            if record is not None:
+                records.append(record)
+        if not records:
+            await persona_sticker_add.finish("被引用消息里没有可收录的图片/表情。")
+        label = (args.extract_plain_text().strip() if args else "")[:80]
+        upserted = 0
+        for record in records:
+            if label:
+                record["summary"] = label
+            result = await store.stickers.record_sticker_asset(
+                sticker=record,
+                group_id=getattr(event, "group_id", None),
+                user_id=getattr(event, "user_id", None),
+                summary=label or str(record.get("summary") or ""),
+                increment_count=True,
+            )
+            upserted += result.get("stickers_upserted", 0) or 0
+        await persona_sticker_add.finish(f"已收录 {len(records)} 个表情（来自被引用消息）。")
+    # 引用消息已入库：从 raw_segments 恢复表情
+    import json as _json
+
+    try:
+        raw_segments = _json.loads(str(sample.get("raw_segments") or "[]"))
+    except _json.JSONDecodeError:
+        raw_segments = []
+    enabled_types = set(plugin_config.ai_companion_sticker_segment_types)
+    records = []
+    for segment in raw_segments if isinstance(raw_segments, list) else []:
+        if not isinstance(segment, dict):
+            continue
+        record = sticker_to_record(segment, enabled_types)
+        if record is not None:
+            records.append(record)
+    if not records:
+        await persona_sticker_add.finish("被引用消息里没有可收录的图片/表情。")
+    label = (args.extract_plain_text().strip() if args else "")[:80]
+    for record in records:
+        if label:
+            record["summary"] = label
+        await store.stickers.record_sticker_asset(
+            sticker=record,
+            group_id=str(sample.get("group_id") or "") or None,
+            user_id=str(sample.get("user_id") or "") or None,
+            summary=label or str(record.get("summary") or ""),
+            increment_count=True,
+        )
+    await persona_sticker_add.finish(f"已收录 {len(records)} 个表情（来自历史消息）。")
 
 
 persona_model_deploy = on_command(

@@ -290,6 +290,33 @@ class PersonaDatabase:
                 "CREATE INDEX IF NOT EXISTS idx_backend_configs_priority "
                 "ON inference_backend_configs(enabled, priority)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS message_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    platform TEXT,
+                    group_id TEXT,
+                    user_id TEXT,
+                    trigger_message_id TEXT,
+                    reply_message_id TEXT,
+                    reply_kind TEXT NOT NULL DEFAULT 'chat',
+                    trigger_reason TEXT NOT NULL DEFAULT '',
+                    decision_detail TEXT NOT NULL DEFAULT '{}',
+                    role_card_id TEXT,
+                    role_card_name TEXT,
+                    provider TEXT NOT NULL DEFAULT '',
+                    model TEXT NOT NULL DEFAULT '',
+                    latency_seconds REAL,
+                    status TEXT NOT NULL DEFAULT 'success',
+                    sticker_keys TEXT NOT NULL DEFAULT '[]',
+                    input_preview TEXT NOT NULL DEFAULT '',
+                    output_preview TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_time ON message_logs(created_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_reply_id ON message_logs(reply_message_id)")
 
     @staticmethod
     def is_noise_text(

@@ -39,6 +39,7 @@ from .memory.ingest import prepare_message_learning
 from .observability.debug_log import append_caption_debug_log
 from .observability.events import safe_record_sticker_event
 from .observability.inference_events import record_inference_event
+from .observability.message_log import MessageLogRepo
 from .prompt.budget import effective_context_message_limit, trim_history_lines_for_context
 from .prompt.builder import PromptContext, build_system_prompt
 from .prompt.media_text import (
@@ -90,6 +91,7 @@ class ChatService:
         tool_registry: ToolRegistry,
         role_card_service: RoleCardService | None = None,
         provider_resolver: ProviderResolver | None = None,
+        message_log_repo: MessageLogRepo | None = None,
     ) -> None:
         self.env = env
         self.config: AiCompanionConfig = env.config
@@ -103,6 +105,7 @@ class ChatService:
         self.tool_registry = tool_registry
         self.role_card_service = role_card_service
         self.provider_resolver = provider_resolver
+        self.message_logs = message_log_repo
         self.background_media_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
@@ -213,6 +216,7 @@ class ChatService:
         )
         inference_started = time.perf_counter()
         raw_reply = ""
+        active_card = None
         if reply_plan.intent != ReplyIntent.STICKER_REQUEST:
             try:
                 allowed_tools: list[str] | None = None
@@ -220,6 +224,7 @@ class ChatService:
                     card, _binding = await self.role_card_service.get_effective_card(
                         group_id=ids.get("group_id"), user_id=ids.get("user_id")
                     )
+                    active_card = card
                     if card is not None and card.allowed_tools:
                         allowed_tools = list(card.allowed_tools)
                 raw_reply = await self._generate_reply(reply_plan, allowed_tools=allowed_tools)
@@ -297,9 +302,32 @@ class ChatService:
         if not clean_text and not sticker_keys:
             return
 
-        if not await self._send_adapter_reply(
+        sent = await self._send_adapter_reply(
             bot=bot, event=event, matcher=matcher, text=clean_text, sticker_keys=sticker_keys
-        ):
+        )
+        provider_label = self._provider_label()
+        if self.provider_resolver is not None:
+            try:
+                _binding = await self.provider_resolver.bindings.get_binding("chat")
+                if _binding and _binding.provider_id:
+                    provider_label = f"instance:{_binding.provider_id}"
+            except Exception as exc:  # noqa: BLE001 — 标签仅供展示
+                logger.debug("provider label resolve skipped: %r", exc)
+        await self._record_message_log(
+            kind="chat",
+            ids=ids,
+            trigger_reason=reply_decision.reason,
+            decision_detail={"reason": reply_decision.reason, "allowed": True},
+            reply_message_id=sent.get("reply_message_id"),
+            role_card=active_card,
+            provider=provider_label,
+            latency_seconds=time.perf_counter() - inference_started,
+            status="success" if sent.get("ok") else "send_failed",
+            input_text=reply_input_text,
+            output_text=clean_text,
+            sticker_keys=sticker_keys,
+        )
+        if not sent.get("ok"):
             return
         self.conversation_pattern_tracker.reset(ids["group_id"])
         matcher.stop_propagation()
@@ -917,9 +945,20 @@ class ChatService:
         reply_text = self.env.remove_blacklisted_reply_lines(candidate.plain_text)
         if not reply_text and not candidate.sticker_keys:
             return False
-        return await self._send_adapter_reply(
+        sent = await self._send_adapter_reply(
             bot=bot, event=event, matcher=matcher, text=reply_text, sticker_keys=candidate.sticker_keys
         )
+        await self._record_message_log(
+            kind="repeat",
+            ids=ids,
+            trigger_reason="repeat",
+            reply_message_id=sent.get("reply_message_id"),
+            status="success" if sent.get("ok") else "send_failed",
+            input_text=candidate.plain_text,
+            output_text=reply_text,
+            sticker_keys=list(candidate.sticker_keys),
+        )
+        return bool(sent.get("ok"))
 
     async def _send_pattern_reply_if_known(
         self,
@@ -969,9 +1008,20 @@ class ChatService:
         if not reply_text and not sticker_keys:
             return False
 
-        if not await self._send_adapter_reply(
+        sent = await self._send_adapter_reply(
             bot=bot, event=event, matcher=matcher, text=reply_text, sticker_keys=sticker_keys
-        ):
+        )
+        await self._record_message_log(
+            kind="pattern",
+            ids=ids,
+            trigger_reason="conversation_pattern",
+            reply_message_id=sent.get("reply_message_id"),
+            status="success" if sent.get("ok") else "send_failed",
+            input_text=plain_text,
+            output_text=reply_text,
+            sticker_keys=sticker_keys,
+        )
+        if not sent.get("ok"):
             return False
         self.conversation_pattern_tracker.reset(ids["group_id"])
         return True
@@ -987,12 +1037,14 @@ class ChatService:
         matcher: Matcher,
         text: str,
         sticker_keys: list[str],
-    ) -> bool:
+    ) -> dict[str, Any]:
+        """发送回复；返回 {ok, reply_message_id}（id 供 MessageLog 溯源）。"""
         delivery = plan_reply_delivery(text, sticker_keys)
         if delivery.use_forward and bot is not None:
-            if await send_onebot_v11_forward_reply(
+            sent = await send_onebot_v11_forward_reply(
                 bot, event, delivery.forward_chunks, self_id=self.env.bot_self_id(bot)
-            ):
+            )
+            if sent is not False and sent is not None:
                 if delivery.trailing_sticker_keys:
                     sticker_reply = await build_sticker_reply_message(
                         event,
@@ -1004,7 +1056,7 @@ class ChatService:
                     )
                     if not (isinstance(sticker_reply, str) and not sticker_reply.strip()):
                         await matcher.send(sticker_reply)
-                return True
+                return {"ok": True, "reply_message_id": _extract_message_id(sent)}
 
         reply = await build_sticker_reply_message(
             event,
@@ -1015,9 +1067,9 @@ class ChatService:
             max_reply_stickers=self.config.ai_companion_max_reply_stickers,
         )
         if isinstance(reply, str) and not reply.strip():
-            return False
-        await matcher.send(reply)
-        return True
+            return {"ok": False, "reply_message_id": None}
+        sent = await matcher.send(reply)
+        return {"ok": True, "reply_message_id": _extract_message_id(sent)}
 
     # ------------------------------------------------------------------
     # 表情选择
@@ -1080,9 +1132,74 @@ class ChatService:
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
+    async def _record_message_log(
+        self,
+        *,
+        kind: str,
+        ids: dict[str, str | None],
+        trigger_reason: str = "",
+        decision_detail: dict[str, Any] | None = None,
+        reply_message_id: str | None = None,
+        role_card: Any = None,
+        provider: str = "",
+        latency_seconds: float | None = None,
+        status: str = "success",
+        input_text: str = "",
+        output_text: str = "",
+        sticker_keys: list[str] | None = None,
+    ) -> None:
+        if self.message_logs is None:
+            return
+        try:
+            await self.message_logs.record(
+                platform=ids.get("platform"),
+                group_id=ids.get("group_id"),
+                user_id=ids.get("user_id"),
+                trigger_message_id=ids.get("message_id"),
+                reply_message_id=reply_message_id,
+                reply_kind=kind,
+                trigger_reason=trigger_reason,
+                decision_detail=decision_detail,
+                role_card_id=getattr(role_card, "id", None),
+                role_card_name=getattr(role_card, "name", None),
+                provider=provider or self._provider_label(),
+                model=self._provider_model_label(),
+                latency_seconds=latency_seconds,
+                status=status,
+                sticker_keys=sticker_keys,
+                input_text=input_text,
+                output_text=output_text,
+            )
+        except Exception as exc:  # noqa: BLE001 — 溯源写入失败不影响回复
+            logger.warning(f"ai companion message log record failed: {exc!r}")
+
+    def _provider_label(self) -> str:
+        """同步可得的 Provider 标签（实例绑定标签由 chat 路径异步补全）。"""
+        try:
+            return str(self.client.active_backend())
+        except Exception:  # noqa: BLE001 — 标签仅供展示
+            return ""
+
+    def _provider_model_label(self) -> str:
+        try:
+            return self.client.active_model_name()
+        except Exception:  # noqa: BLE001
+            return ""
+
     async def shutdown(self) -> None:
         for task in list(self.background_media_tasks):
             task.cancel()
         if self.background_media_tasks:
             await asyncio.gather(*self.background_media_tasks, return_exceptions=True)
             self.background_media_tasks.clear()
+
+
+def _extract_message_id(send_result: Any) -> str | None:
+    """从 matcher.send / call_api 返回值提取平台消息 ID（OneBot v11 dict.message_id）。"""
+    if isinstance(send_result, dict):
+        value = send_result.get("message_id")
+        return None if value is None else str(value)
+    if send_result is None or isinstance(send_result, (str, bool)):
+        return None
+    value = getattr(send_result, "message_id", None)
+    return None if value is None else str(value)

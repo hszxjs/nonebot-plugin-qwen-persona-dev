@@ -100,6 +100,21 @@ class BotEnvironment:
                 continue
         return False
 
+    def blacklist_matches(self, text: str) -> list[dict[str, str]]:
+        """返回文本命中的黑名单规则明细（词库管理页测试用）。"""
+        matches: list[dict[str, str]] = []
+        for word in self.config.ai_companion_blacklist_words:
+            word = str(word).strip()
+            if word and word in text:
+                matches.append({"kind": "word", "value": word})
+        for pattern in self.config.ai_companion_blacklist_regexes:
+            try:
+                if re.search(pattern, text):
+                    matches.append({"kind": "regex", "value": str(pattern)})
+            except re.error:
+                continue
+        return matches
+
     def remove_blacklisted_reply_lines(self, text: str) -> str:
         kept: list[str] = []
         for line in (text or "").splitlines():
