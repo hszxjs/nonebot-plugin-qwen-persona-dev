@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .auth import make_auth_dependency
-from .routes import backends, logs, misc, operations, role_cards, runtime, settings, stickers, training
+from .routes import backends, kpi, logs, memories, misc, operations, role_cards, runtime, settings, stickers, training
 from .routes import model_manager as model_manager_routes
 
 
@@ -48,6 +48,8 @@ def create_admin_app(
     model_manager: Any | None = None,
     event_bus: Any | None = None,
     env: Any | None = None,
+    data_cleaning_chat: Any | None = None,
+    proactive_sender: Any | None = None,
     static_dir: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(title="AI Companion Admin", docs_url=None, redoc_url=None)
@@ -82,6 +84,12 @@ def create_admin_app(
     app.include_router(backends.build_router(auth=auth, instances=provider_instances, bindings=provider_bindings))
     app.include_router(model_manager_routes.build_router(auth=auth, model_manager=model_manager))
     app.include_router(logs.build_router(auth=auth, store=store, event_bus=event_bus, env=env))
+    app.include_router(
+        kpi.build_router(auth=auth, store=store, qwen_client=qwen_client, proactive_sender=proactive_sender)
+    )
+    app.include_router(
+        memories.build_router(auth=auth, store=store, config=config, data_cleaning_chat=data_cleaning_chat)
+    )
 
     @app.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def static_or_fallback(path: str, request: Request) -> Response:
@@ -118,6 +126,8 @@ class AdminServer:
         model_manager: Any | None = None,
         event_bus: Any | None = None,
         env: Any | None = None,
+        data_cleaning_chat: Any | None = None,
+        proactive_sender: Any | None = None,
         static_dir: Path | None = None,
     ) -> None:
         self.config = config
@@ -134,6 +144,8 @@ class AdminServer:
         self.model_manager = model_manager
         self.event_bus = event_bus
         self.env = env
+        self.data_cleaning_chat = data_cleaning_chat
+        self.proactive_sender = proactive_sender
         self.static_dir = static_dir
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
@@ -157,6 +169,8 @@ class AdminServer:
             model_manager=self.model_manager,
             event_bus=self.event_bus,
             env=self.env,
+            data_cleaning_chat=self.data_cleaning_chat,
+            proactive_sender=self.proactive_sender,
             static_dir=self.static_dir,
         )
         host = str(getattr(self.config, "ai_companion_admin_host", "127.0.0.1"))

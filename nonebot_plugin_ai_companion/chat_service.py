@@ -41,7 +41,7 @@ from .observability.events import safe_record_sticker_event
 from .observability.inference_events import record_inference_event
 from .observability.message_log import MessageLogRepo
 from .prompt.budget import effective_context_message_limit, trim_history_lines_for_context
-from .prompt.builder import PromptContext, build_system_prompt
+from .prompt.builder import PromptContext, build_system_prompt, effective_segment_order
 from .prompt.media_text import (
     context_text_from_sample,
     sanitize_model_reply_media_text,
@@ -421,10 +421,12 @@ class ChatService:
                     arguments = _json.loads(function.get("arguments") or "{}")
                 except ValueError:
                     arguments = {}
+                tool_started = time.perf_counter()
                 try:
                     result = await asyncio.wait_for(self.tool_registry.execute(name, arguments), timeout=tool_timeout)
                 except TimeoutError:
                     logger.warning("ai companion tool %s timed out (%.0fs)", name, tool_timeout)
+                    await self._record_tool_call(name, ok=False, latency=time.perf_counter() - tool_started, call=call)
                     conversation.append(
                         {
                             "role": "tool",
@@ -434,6 +436,13 @@ class ChatService:
                     )
                     continue
                 logger.info("ai companion tool call %s ok=%s", name, result.ok)
+                await self._record_tool_call(
+                    name,
+                    ok=result.ok,
+                    latency=time.perf_counter() - tool_started,
+                    call=call,
+                    result=result,
+                )
                 conversation.append(
                     {
                         "role": "tool",
@@ -566,6 +575,7 @@ class ChatService:
         *,
         card: RoleCard | None = None,
         user_nickname: str | None = None,
+        memory_lines: list[str] | None = None,
     ) -> str:
         identity_text = None
         if card is not None and self.role_card_service is not None:
@@ -578,6 +588,7 @@ class ChatService:
                 command_prefixes=self.env.command_start_values(),
                 identity_text=identity_text,
                 allowed_tools=allowed_tools,
+                memory_lines=list(memory_lines or []),
             )
         )
 
@@ -728,6 +739,14 @@ class ChatService:
                 style_memory_lines.append(context_text)
         conversation_lines = trim_history_lines_for_context(conversation_lines, self.config)
         style_memory_lines = trim_history_lines_for_context(style_memory_lines, self.config)
+        # 记忆注入段（文档六/十节）：启用 memory 段时取发送者长期记忆（未衰减 top）
+        memory_lines: list[str] = []
+        if "memory" in effective_segment_order(self.config) and ids.get("user_id"):
+            try:
+                memory_lines = await self.store.long_term_memories.prompt_lines(user_id=str(ids["user_id"]))
+            except Exception as exc:  # noqa: BLE001 — 记忆取数失败不阻塞回复
+                logger.debug("long term memory fetch skipped: %r", exc)
+
         active_memes = select_active_memes(
             build_meme_candidates_from_samples(
                 samples=[*history, *relevant_samples],
@@ -739,7 +758,11 @@ class ChatService:
         )
 
         return build_reply_plan(
-            system_prompt=self._build_system_prompt(card=card, user_nickname=envelope.sender_name),
+            system_prompt=self._build_system_prompt(
+                card=card,
+                user_nickname=envelope.sender_name,
+                memory_lines=memory_lines,
+            ),
             conversation_lines=conversation_lines,
             style_memory_lines=style_memory_lines,
             active_memes=active_memes,
@@ -1172,6 +1195,27 @@ class ChatService:
             )
         except Exception as exc:  # noqa: BLE001 — 溯源写入失败不影响回复
             logger.warning(f"ai companion message log record failed: {exc!r}")
+
+    async def _record_tool_call(
+        self,
+        name: str,
+        *,
+        ok: bool,
+        latency: float,
+        call: dict[str, Any] | None = None,
+        result: Any = None,
+    ) -> None:
+        try:
+            await self.store.tool_call_logs.record(
+                name=name,
+                ok=ok,
+                latency_seconds=latency,
+                group_id=None,
+                arguments=(call or {}).get("function", {}).get("arguments"),
+                result=getattr(result, "payload", None),
+            )
+        except Exception as exc:  # noqa: BLE001 — 日志失败不影响主流程
+            logger.debug("tool call log record failed: %r", exc)
 
     def _provider_label(self) -> str:
         """同步可得的 Provider 标签（实例绑定标签由 chat 路径异步补全）。"""

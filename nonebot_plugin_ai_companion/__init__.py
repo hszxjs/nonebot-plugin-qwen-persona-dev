@@ -110,6 +110,30 @@ provider_resolver = ProviderResolver(
 )
 
 
+async def _proactive_reply(group_id: str) -> str:
+    """会话监控页"手动触发接话"：取该群最近上下文生成一条主动消息并发送。"""
+    from nonebot import get_bot
+
+    bot = get_bot()  # 无在线 bot 时抛 ValueError，由路由转 503
+    samples = await store.recent_samples(group_id=group_id, limit=10)
+    from .prompt.media_text import context_text_from_sample
+
+    history_lines = [context_text_from_sample(item) for item in reversed(samples)]
+    history_lines = [line for line in history_lines if line][-8:]
+    prompt_lines = [
+        "你在群聊中参与对话。下面是最近的群聊记录，请自然地接一句话活跃气氛（不要复述、不要命令、不要提你是 AI）：",
+        *[f"上一句：{line}" for line in history_lines],
+    ]
+    reply = await client.chat([{"role": "user", "content": "\n".join(prompt_lines)}])
+    from .prompt.text import sanitize_reply
+
+    clean = sanitize_reply(reply, prefixes=env.command_start_values())
+    if not clean:
+        raise RuntimeError("generated empty proactive reply")
+    result = await bot.call_api("send_group_msg", group_id=int(group_id), message=clean)
+    return str((result or {}).get("message_id") or "")
+
+
 async def _data_cleaning_chat(prompt: str) -> str:
     """data_cleaning 角色实例对话；未绑定回退辅助 LLM（aux_llm）。"""
     from .providers.aux_llm import aux_chat
@@ -183,6 +207,8 @@ admin_server = AdminServer(
     model_manager=model_manager_service,
     event_bus=event_bus,
     env=env,
+    data_cleaning_chat=_data_cleaning_chat,
+    proactive_sender=_proactive_reply,
 )
 
 _CONFIG_RESTART_REQUIRED = {

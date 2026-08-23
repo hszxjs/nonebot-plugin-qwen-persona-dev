@@ -317,6 +317,53 @@ class PersonaDatabase:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_time ON message_logs(created_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_message_logs_reply_id ON message_logs(reply_message_id)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS lora_adapters (
+                    id TEXT PRIMARY KEY,
+                    role_card_id TEXT NOT NULL,
+                    source_language TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    path TEXT NOT NULL,
+                    note TEXT NOT NULL DEFAULT '',
+                    active INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS long_term_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    importance REAL NOT NULL DEFAULT 1.0,
+                    created_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    decayed INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_long_term_memories_user "
+                "ON long_term_memories(user_id, decayed, importance DESC)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tool_call_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at REAL NOT NULL,
+                    name TEXT NOT NULL,
+                    ok INTEGER NOT NULL,
+                    latency_seconds REAL,
+                    group_id TEXT,
+                    arguments_preview TEXT NOT NULL DEFAULT '',
+                    result_preview TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_call_logs_time ON tool_call_logs(created_at DESC)")
 
     @staticmethod
     def is_noise_text(

@@ -29,13 +29,15 @@ _JSON_FENCE_RE = re.compile(
 )
 
 
-@dataclass(frozen=True)
+@dataclass
 class TrainingResult:
     status: str
     sample_count: int
     dataset_path: str
     output_dir: str
     log: str = ""
+    adapter_id: str = ""
+    adapter_version: int = 0
 
 
 class SafeFormatDict(dict[str, Any]):
@@ -75,11 +77,13 @@ class PersonaTrainer:
         reason: str,
         include_external_corpus: bool | None = None,
         full_external_corpus: bool = False,
+        role_card_id: str | None = None,
+        source_language: str | None = None,
     ) -> TrainingResult:
         async with self._lock:
             self._start_progress(reason=reason)
             try:
-                return await self._run_training_locked(
+                result = await self._run_training_locked(
                     reason=reason,
                     include_external_corpus=include_external_corpus,
                     full_external_corpus=full_external_corpus,
@@ -90,6 +94,19 @@ class PersonaTrainer:
                     log=f"{type(exc).__name__}: {exc}",
                 )
                 raise
+        if role_card_id and source_language and result.status == "success" and result.output_dir:
+            # 成功后登记为新 adapter 版本（默认不激活，经版本管理页一键切换）
+            from .adapters import LoraAdapterRepo
+
+            adapter = await LoraAdapterRepo(self.store.db).register_adapter(
+                role_card_id=role_card_id,
+                source_language=source_language,
+                path=result.output_dir,
+                note=f"reason={reason}",
+            )
+            result.adapter_id = adapter.id
+            result.adapter_version = adapter.version
+        return result
 
     def progress_snapshot(self) -> dict[str, Any]:
         return dict(self._progress)
