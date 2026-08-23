@@ -502,3 +502,121 @@ export type ModelDeleteResult = {
   freed_bytes: number
   freed_display: string
 }
+
+export type KpiReplyReasonStat = {
+  reason: string
+  count: number
+}
+
+export type KpiProviderStat = {
+  model: string
+  total: number
+  avg_latency_seconds: number
+  avg_tps: number
+}
+
+export type KpiToolItem = {
+  name: string
+  total: number
+  ok: number
+  success_rate: number
+  avg_latency_seconds: number
+}
+
+export type KpiToolStats = {
+  total_calls: number
+  overall_success_rate: number | null
+  items: KpiToolItem[]
+}
+
+export type KpiBackendHealth = {
+  healthy: boolean | null
+  model: string
+  backend: string
+}
+
+export type KpiPayload = {
+  window_days: number
+  total_replies: number
+  reply_reasons: KpiReplyReasonStat[]
+  providers: KpiProviderStat[]
+  active_sessions: number
+  learned_messages: number
+  tools: KpiToolStats
+  backend: KpiBackendHealth
+}
+
+export type SessionSummary = {
+  session_key: string
+  count: number
+  latest: MessageLogEntry
+}
+
+export type SessionsPayload = {
+  items: SessionSummary[]
+  total: number
+}
+
+export type SessionPokeResult = {
+  group_id: string
+  sent: boolean
+  reply_message_id: number | string
+}
+
+export type LongTermMemory = {
+  id: number
+  user_id: string
+  kind: string
+  content: string
+  importance: number
+  created_at: number
+  last_seen_at: number
+  decayed: boolean | number
+}
+
+export type MemoriesPayload = {
+  items: LongTermMemory[]
+  total: number
+}
+
+export type MemoryDeleteResult = {
+  deleted: number
+}
+
+export type MemoryExtractResult = {
+  written: string[]
+  count: number
+}
+
+export type MemoryDecayResult = {
+  decayed: number
+  total: number
+}
+
+export type LoraAdapter = {
+  id: string
+  role_card_id: string
+  source_language: string
+  version: number
+  path: string
+  note: string
+  active: boolean
+  created_at: number
+}
+
+export type LoraAdaptersPayload = {
+  items: LoraAdapter[]
+  total: number
+}
+
+export type LoraAdapterPayload = {
+  role_card_id: string
+  source_language: string
+  path: string
+  note?: string
+  activate?: boolean
+}
+
+export type LoraAdapterDeleteResult = {
+  deleted: number
+}

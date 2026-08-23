@@ -125,11 +125,33 @@ pnpm --dir webui test                           # 前端 11 用例
 - **黑名单词库页**：词汇/正则增删（经 settings PATCH 持久化）+ 样本文本命中测试
   端点（`POST /api/blacklist/test` 返回命中规则明细）
 
-## 后续分期路线（源自总体架构文档，未实施）
+## 第五期交付（已完成，全量收官）
 
-- **第五期：finetune 增强 + 长期记忆**。`LoraAdapter` 角色卡+语种绑定与版本回滚、
-  长期结构化记忆（重要度/时效性/衰减，喂给 prompt memory 段）、Alembic 迁移体系、
-  KPI Dashboard 首页、会话监控页
+- **LoraAdapter 版本管理**（文档十一节）：`lora_adapters` 表以「角色卡 + 源语言」为
+  维度维护版本（zh / en / zh-mixed-en 检测见 `detect_language`）；
+  `trainer.run_training(role_card_id=, source_language=)` 成功后自动登记新版本；
+  激活 = 同维度互斥；回滚 = 激活早于当前活跃版本的最新历史版本；webui 运维页
+  提供版本分组、一键激活/回滚/登记
+- **长期结构化记忆**（文档六节）：`long_term_memories` 表（称呼/偏好/重要事件/事实，
+  重要度 1–5）；`extract_memories` 经 data_cleaning 角色产出结构化 JSON（回退辅助
+  LLM）；入库自动去重（字符 2-gram Jaccard ≥ 0.6 合并，取更高重要度并刷新时效）；
+  `decay` 按半衰期衰减重要度、低于阈值标记遗忘；**prompt 记忆注入段的数据源**
+  （memory 段启用时取发送者未衰减 top 记忆）；webui 会话监控页含记忆管理 tab
+- **ToolCallLog + KPI**（文档十三/十四节）：`tool_call_logs` 记录工具名/成败/耗时
+  （环形淘汰）；`GET /api/dashboard/kpi` 聚合消息量、按触发原因拆分的接话统计、
+  按模型拆分的延迟/TPS、后端健康徽章、工具成功率、活跃会话数；运维首页新增
+  KPI 卡片区
+- **会话监控页**（文档十四节）：按会话（群/私聊）聚合的最近回复记录 + 下钻时间线、
+  手动触发接话（`POST /api/sessions/poke`，经在线 bot 生成并发送主动消息）、
+  记忆提取/衰减操作
+- **Alembic 迁移体系**：alembic.ini + migrations/env.py（数据目录可经
+  `AI_COMPANION_DATA_DIR` 覆盖）+ 0001 空基线（存量库 `alembic stamp head` 对齐；
+  运行时 ensure_schema 幂等 DDL 仍作兜底；后续 schema 变更换新 revision）
+
+## 状态
+
+五期路线全部完成。本文档的"后续分期路线"归零；新的增强需求建议从
+`docs/architecture.md` 的领域依赖图出发评估落点。
 
 ## 已知的现状债务（刻意保留，分期解决）
 

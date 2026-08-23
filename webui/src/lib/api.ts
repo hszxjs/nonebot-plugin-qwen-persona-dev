@@ -8,7 +8,16 @@ import type {
   BlacklistTestResult,
   ConfigValue,
   DiagnosticsPayload,
+  KpiPayload,
   LogsPayload,
+  LoraAdapter,
+  LoraAdapterDeleteResult,
+  LoraAdapterPayload,
+  LoraAdaptersPayload,
+  MemoryDecayResult,
+  MemoryDeleteResult,
+  MemoryExtractResult,
+  MemoriesPayload,
   ModelCancelResult,
   ModelDeleteResult,
   ModelDownloadResult,
@@ -24,6 +33,8 @@ import type {
   RoleCardsPayload,
   RuntimeAction,
   RuntimeActionResult,
+  SessionPokeResult,
+  SessionsPayload,
   SettingsPayload,
   StickerEventsPayload,
   StickerGalleryPayload,
@@ -317,4 +328,97 @@ export function logsStreamUrl(maxSeconds = 0) {
 
 export function testBlacklist(text: string) {
   return api.post("blacklist/test", { json: { text } }).json<BlacklistTestResult>()
+}
+
+export function useKpi(days = 7) {
+  return useSWR<KpiPayload>(`dashboard/kpi?days=${days}`, fetchJson, {
+    revalidateOnFocus: false,
+    dedupingInterval: 30_000,
+  })
+}
+
+export function useSessions(limit = 50) {
+  return useSWR<SessionsPayload>(`sessions?limit=${limit}`, fetchJson, {
+    revalidateOnFocus: false,
+  })
+}
+
+export function pokeSession(groupId: string) {
+  return api
+    .post("sessions/poke", { json: { group_id: groupId } })
+    .json<SessionPokeResult>()
+}
+
+// 会话下钻：群会话直接走 group_id 过滤；私聊会话（private:xxx）没有 group_id，
+// 拉取最近的 message 日志后由组件按 user_id 过滤。
+export function useSessionLogs(sessionKey: string, enabled: boolean) {
+  const isPrivate = sessionKey.startsWith("private:")
+  const params = new URLSearchParams({ kinds: "message", limit: "100", offset: "0" })
+  if (!isPrivate) params.set("group_id", sessionKey)
+  return useSWR<TimelineLogsPayload>(
+    enabled ? `logs?${params.toString()}` : null,
+    fetchJson,
+    { revalidateOnFocus: false, revalidateIfStale: false }
+  )
+}
+
+export function useMemories(userId: string, includeDecayed: boolean, limit = 200) {
+  const params = new URLSearchParams({
+    include_decayed: String(includeDecayed),
+    limit: String(limit),
+  })
+  const trimmed = userId.trim()
+  if (trimmed) params.set("user_id", trimmed)
+  return useSWR<MemoriesPayload>(`memories?${params.toString()}`, fetchJson, {
+    revalidateOnFocus: false,
+  })
+}
+
+export function deleteMemory(id: number) {
+  return api.delete(`memories/${id}`).json<MemoryDeleteResult>()
+}
+
+export function extractMemories(userId: string) {
+  return api
+    .post("memories/extract", { json: { user_id: userId } })
+    .json<MemoryExtractResult>()
+}
+
+export function decayMemories(halfLifeDays = 30) {
+  return api
+    .post("memories/decay", { searchParams: { half_life_days: String(halfLifeDays) } })
+    .json<MemoryDecayResult>()
+}
+
+export function useLoraAdapters(roleCardId = "") {
+  const key = roleCardId
+    ? `lora-adapters?role_card_id=${encodeURIComponent(roleCardId)}`
+    : "lora-adapters"
+  return useSWR<LoraAdaptersPayload>(key, fetchJson, {
+    revalidateOnFocus: false,
+  })
+}
+
+export function registerLoraAdapter(payload: LoraAdapterPayload) {
+  return api.post("lora-adapters", { json: payload }).json<{ item: LoraAdapter }>()
+}
+
+export function activateLoraAdapter(id: string) {
+  return api
+    .post(`lora-adapters/${encodeURIComponent(id)}/activate`)
+    .json<{ item: LoraAdapter }>()
+}
+
+export function rollbackLoraAdapter(roleCardId: string, sourceLanguage: string) {
+  return api
+    .post("lora-adapters/rollback", {
+      json: { role_card_id: roleCardId, source_language: sourceLanguage },
+    })
+    .json<{ item: LoraAdapter }>()
+}
+
+export function deleteLoraAdapter(id: string) {
+  return api
+    .delete(`lora-adapters/${encodeURIComponent(id)}`)
+    .json<LoraAdapterDeleteResult>()
 }

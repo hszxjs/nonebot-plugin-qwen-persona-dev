@@ -4,6 +4,7 @@ import {
   IconDatabase,
   IconHomeStats,
   IconIdBadge2,
+  IconMessages,
   IconMoodSmile,
   IconServer2,
   IconShieldCheck,
@@ -36,6 +37,7 @@ import { ModelsWorkspace } from "@/features/models/models-workspace"
 import { OperationsDashboard } from "@/features/operations/operations-dashboard"
 import { RoleCardsWorkspace } from "@/features/role-cards/role-cards-workspace"
 import { RulesWorkspace } from "@/features/rules/rules-workspace"
+import { SessionsWorkspace } from "@/features/sessions/sessions-workspace"
 import { SettingsWorkspace } from "@/features/settings/settings-workspace"
 import { StickersWorkspace } from "@/features/stickers/stickers-workspace"
 import { useOperationsOverview } from "@/lib/api"
@@ -47,6 +49,7 @@ const navItems = [
   { to: "/backends", label: "推理后端", icon: IconServer2 },
   { to: "/models", label: "模型管理", icon: IconDatabase },
   { to: "/logs", label: "日志时间线", icon: IconActivity },
+  { to: "/sessions", label: "会话监控", icon: IconMessages },
   { to: "/blacklist", label: "黑名单词库", icon: IconShieldOff },
   { to: "/settings", label: "配置管理", icon: IconAdjustments },
   { to: "/rules", label: "规则过滤", icon: IconShieldCheck },
@@ -125,6 +128,7 @@ export function App() {
             <Route path="/backends" element={<BackendsWorkspace />} />
             <Route path="/models" element={<ModelsWorkspace />} />
             <Route path="/logs" element={<LogsWorkspace />} />
+            <Route path="/sessions" element={<SessionsWorkspace />} />
             <Route path="/blacklist" element={<BlacklistWorkspace />} />
             <Route path="/settings" element={<SettingsWorkspace />} />
             <Route path="/rules" element={<RulesWorkspace />} />
