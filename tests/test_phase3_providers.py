@@ -679,3 +679,30 @@ async def test_general_reaction_caption_tolerates_vision_failure(monkeypatch) ->
 
     caption = await captioner.caption_media_general({"type": "image", "data": {}})
     assert caption == ""
+
+
+# ---------------------------------------------------------------------------
+# 纯图片消息的回复决策（打趣回复前提）
+# ---------------------------------------------------------------------------
+def test_reply_gate_allows_pure_image_messages() -> None:
+    from nonebot_plugin_ai_companion.decision.gates import should_attempt_reply
+
+    base = dict(
+        enable_reply=True,
+        group_enabled=True,
+        self_event=False,
+        blacklisted=False,
+        command_like=False,
+        force_reply=False,
+        reply_probability=0.7,
+        follow_reply_probability=0.7,
+    )
+    # 纯图（无文字）+ 概率命中 → 允许
+    allowed = should_attempt_reply(has_text=False, random_value=0.5, has_media=True, **base)
+    assert allowed.allowed and allowed.reason in {"random_reply", "follow_reply"}
+    # 纯图 + 概率未命中 → 拒绝（走概率，不是 empty）
+    missed = should_attempt_reply(has_text=False, random_value=0.9, has_media=True, **base)
+    assert not missed.allowed and missed.reason == "probability_miss"
+    # 无文字也无图 → empty
+    empty = should_attempt_reply(has_text=False, random_value=0.5, has_media=False, **base)
+    assert not empty.allowed and empty.reason == "empty"

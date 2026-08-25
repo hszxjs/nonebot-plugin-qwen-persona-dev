@@ -143,6 +143,7 @@ def should_attempt_reply(
     reply_probability: float,
     follow_reply_probability: float,
     random_value: float,
+    has_media: bool = False,
 ) -> ReplyDecision:
     if not enable_reply:
         return ReplyDecision(False, "reply_disabled")
@@ -156,7 +157,7 @@ def should_attempt_reply(
         return ReplyDecision(True, "force_reply")
     if command_like:
         return ReplyDecision(False, "command_like")
-    if not has_text:
+    if not has_text and not has_media:
         return ReplyDecision(False, "empty")
 
     probability = _clamp_probability(reply_probability)

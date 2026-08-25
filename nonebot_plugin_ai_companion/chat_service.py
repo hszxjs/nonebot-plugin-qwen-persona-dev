@@ -164,7 +164,7 @@ class ChatService:
         if await self._send_pattern_reply_if_known(bot, event, ids, message, plain_text, matcher):
             matcher.stop_propagation()
             return
-        reply_decision = self._reply_decision(bot, event, plain_text, ids)
+        reply_decision = self._reply_decision(bot, event, plain_text, ids, media_parts)
         if not reply_decision.allowed:
             return
 
@@ -506,6 +506,7 @@ class ChatService:
         event: Event,
         plain_text: str,
         ids: dict[str, str | None],
+        media_parts: list[dict[str, Any]] | None = None,
     ) -> ReplyDecision:
         private_chat = is_private_chat(event, ids)
         try:
@@ -519,6 +520,8 @@ class ChatService:
             bot_self_id=self.env.bot_self_id(bot),
             to_me=self.env.is_to_me(event, plain_text),
         )
+        # 纯图片消息也算"有内容"（打趣回复的前提）；普通表情(face/mface)不算，避免刷触发
+        has_media = any(str(part.get("type") or "") == "image" for part in (media_parts or []))
         return should_attempt_reply(
             enable_reply=self.config.ai_companion_enable_reply,
             group_enabled=private_chat or self.env.group_enabled(ids["group_id"]),
@@ -530,6 +533,7 @@ class ChatService:
             reply_probability=self.config.ai_companion_reply_probability,
             follow_reply_probability=self.config.ai_companion_follow_reply_probability,
             random_value=random.random(),
+            has_media=has_media,
         )
 
     def _should_schedule_background_media_analysis(
