@@ -123,6 +123,16 @@ class _SauceNaoQuotaExhausted(Exception):
     pass
 
 
+_GENERAL_REACTION_PROMPT = (
+    "这是群聊里出现的一张图，请为回复提供素材。严格按四行输出（每行以标签开头）：\n"
+    "类型：梗图/聊天或博客截图/新闻或热点图/照片/二次元插画/涩图擦边/表情包 之一\n"
+    "文字：把图内出现的关键文字原样摘录（截图和梗图的文字最重要，没有写'无'）\n"
+    "内容：一两句话客观描述画面（能认出的角色/名人/事件/梗顺带点出，不确定就不写）\n"
+    "槽点：这张图最值得打趣的一个点（梗在哪/反差在哪/最戳笑点的地方）\n"
+    "要求：不要编造看不到的内容；涩图擦边只在'类型'和'槽点'点到程度，不要描述裸露细节。"
+)
+
+
 class AnimeCaptioner:
     """动漫图片识别 captioner。无本地状态，可并发，全程容错。"""
 
@@ -176,6 +186,51 @@ class AnimeCaptioner:
         # 写缓存（包括空结果，避免短时间内对同一张失败图反复请求）
         self._cache[content_hash] = (caption, time.time() + _CACHE_TTL)
         # 控制缓存规模
+        if len(self._cache) > 500:
+            now = time.time()
+            self._cache = {k: v for k, v in self._cache.items() if v[1] > now}
+        return caption
+
+    async def caption_media_general(self, part: dict[str, Any]) -> str:
+        """通用图片理解（回复路径用）：任意图 → 类型/图内文字/内容/槽点，供打趣回复。
+
+        vision 优先（一次调用覆盖梗图/截图/热点/博客/二次元/擦边全类型）；
+        仅当识别为二次元角色图且反搜源可用时，附加出处信息作为增强。
+        """
+        if not getattr(self.config, "ai_companion_anime_caption_enabled", True):
+            return ""
+        image_bytes, content_hash = await self._load_image(part)
+        if not image_bytes:
+            return ""
+        cache_key = "general:" + content_hash
+        cached = self._cache.get(cache_key)
+        if cached and cached[1] > time.time():
+            return cached[0]
+
+        vision_bytes = _downscale_for_search(image_bytes, max_size=768)
+        caption = ""
+        try:
+            caption = await asyncio.wait_for(
+                self._vision_describe_image(vision_bytes, prompt_override=_GENERAL_REACTION_PROMPT, max_tokens=600),
+                timeout=30.0,
+            )
+        except Exception as exc:  # noqa: BLE001 — captioner 必须容错，不阻塞主回复
+            _debug_log(f"GENERAL_VISION_ERROR hash={content_hash[:8]} exc={exc!r}")
+            caption = ""
+
+        # 二次元角色图：反搜出处作为增强（best-effort，失败不影响已有描述）
+        if caption and ("二次元" in caption or "动漫" in caption) and self._saucenao_available():
+            try:
+                source_caption = await asyncio.wait_for(
+                    self._search_both(vision_bytes, content_hash, 80.0), timeout=8.0
+                )
+                if source_caption:
+                    caption = f"{caption}\n出处参考：{source_caption[:120]}"
+            except Exception:  # noqa: BLE001 — 增强失败静默（已有描述可用）
+                pass
+
+        _debug_log(f"GENERAL_RESULT hash={content_hash[:8]} caption={caption!r}")
+        self._cache[cache_key] = (caption, time.time() + _CACHE_TTL)
         if len(self._cache) > 500:
             now = time.time()
             self._cache = {k: v for k, v in self._cache.items() if v[1] > now}
@@ -266,10 +321,13 @@ class AnimeCaptioner:
             key = (getattr(self.config, "ai_companion_lora_helper_api_key", "") or "").strip()
         return url, key
 
-    async def _vision_describe_image(self, image_bytes: bytes) -> str:
+    async def _vision_describe_image(
+        self, image_bytes: bytes, *, prompt_override: str = "", max_tokens: int = 1024
+    ) -> str:
         """用 GLM-4.6V-Flash(免费视觉模型)理解图片内容。
 
         能识别任意图片（角色/场景/动作/文字），弥补 SauceNAO 对冷门图命中率低。
+        prompt_override 提供时使用通用提示词（梗图/截图/热点打趣模式）。
         对 1305(服务过载)做退避重试。
         """
         url, key = self._vision_creds()
@@ -291,7 +349,8 @@ class AnimeCaptioner:
                     "content": [
                         {
                             "type": "text",
-                            "text": (
+                            "text": prompt_override
+                            or (
                                 "这是一张二次元/动漫图片。请用一句话描述：1) 如果能认出角色，"
                                 "说角色名和出处作品（不确定就说'不确定角色'）；2) 简述画面"
                                 "（人物外观/场景/动作/有文字则读出关键文字）。不要编造。"
@@ -301,7 +360,7 @@ class AnimeCaptioner:
                     ],
                 }
             ],
-            "max_tokens": 1024,
+            "max_tokens": max_tokens,
             "temperature": 0.2,
         }
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}

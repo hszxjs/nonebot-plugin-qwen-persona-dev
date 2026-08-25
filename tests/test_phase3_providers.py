@@ -603,3 +603,79 @@ async def test_selector_fallback_is_weighted_random_not_always_first() -> None:
         picked.update(selection.selected_keys)
     # 6 个候选、30 次加权随机——不应永远只有第一名
     assert len(picked) >= 2, picked
+
+
+# ---------------------------------------------------------------------------
+# 通用图片理解（打趣回复素材）
+# ---------------------------------------------------------------------------
+async def test_general_reaction_caption_vision_first(monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.anime_captioner import _GENERAL_REACTION_PROMPT, AnimeCaptioner
+
+    captioner = AnimeCaptioner(AiCompanionConfig(ai_companion_anime_caption_enabled=True))
+    calls: list[dict] = []
+
+    async def fake_load(part):
+        return b"fake-image-bytes", "hash123"
+
+    async def fake_vision(image_bytes, *, prompt_override="", max_tokens=1024):
+        calls.append({"prompt": prompt_override, "max_tokens": max_tokens})
+        return "类型：梗图\n文字：'我不玩了'\n内容：一只猫把键盘推下桌\n槽点：猫的报复心"
+
+    async def fake_search_both(*_a, **_k):  # 不应被调用（非二次元）
+        raise AssertionError("reverse search should not run for non-anime")
+
+    monkeypatch.setattr(captioner, "_load_image", fake_load)
+    monkeypatch.setattr(captioner, "_vision_describe_image", fake_vision)
+    monkeypatch.setattr(captioner, "_search_both", fake_search_both)
+
+    caption = await captioner.caption_media_general({"type": "image", "data": {"url": "https://x/1.png"}})
+    assert "类型：梗图" in caption and "槽点" in caption
+    assert calls[0]["prompt"] is _GENERAL_REACTION_PROMPT
+    assert calls[0]["max_tokens"] == 600
+
+
+async def test_general_reaction_caption_anime_enriched_by_search(monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.anime_captioner import AnimeCaptioner
+
+    captioner = AnimeCaptioner(AiCompanionConfig())
+    searched: list = []
+
+    async def fake_load(part):
+        return b"img", "hash456"
+
+    async def fake_vision(image_bytes, *, prompt_override="", max_tokens=1024):
+        return "类型：二次元插画\n文字：无\n内容：蓝发女仆\n槽点：女仆装干活"
+
+    async def fake_search_both(_b, _h, _s):
+        searched.append(1)
+        return "bm77·某作品 第3卷"
+
+    async def fake_available():
+        return True
+
+    monkeypatch.setattr(captioner, "_load_image", fake_load)
+    monkeypatch.setattr(captioner, "_vision_describe_image", fake_vision)
+    monkeypatch.setattr(captioner, "_search_both", fake_search_both)
+    monkeypatch.setattr(captioner, "_saucenao_available", fake_available)
+
+    caption = await captioner.caption_media_general({"type": "image", "data": {}})
+    assert "出处参考：bm77" in caption
+    assert searched
+
+
+async def test_general_reaction_caption_tolerates_vision_failure(monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.anime_captioner import AnimeCaptioner
+
+    captioner = AnimeCaptioner(AiCompanionConfig())
+
+    async def fake_load(part):
+        return b"img", "hash789"
+
+    async def fake_vision(image_bytes, *, prompt_override="", max_tokens=1024):
+        raise RuntimeError("vision down")
+
+    monkeypatch.setattr(captioner, "_load_image", fake_load)
+    monkeypatch.setattr(captioner, "_vision_describe_image", fake_vision)
+
+    caption = await captioner.caption_media_general({"type": "image", "data": {}})
+    assert caption == ""

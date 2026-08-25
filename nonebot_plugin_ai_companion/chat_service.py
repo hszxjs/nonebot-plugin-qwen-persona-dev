@@ -487,10 +487,18 @@ class ChatService:
     # 决策与输入构建
     # ------------------------------------------------------------------
     def _active_reply_captioner(self) -> MediaCaptioner | None:
-        """主回复路径的图片 captioner：优先动漫识别，禁用则返回 None。"""
-        if getattr(self.config, "ai_companion_anime_caption_enabled", True):
-            return self.captioner
-        return None
+        """主回复路径的图片 captioner：通用视觉理解（类型/图内文字/槽点），禁用则 None。"""
+        if not getattr(self.config, "ai_companion_anime_caption_enabled", True):
+            return None
+        captioner: Any = self.captioner
+
+        class _GeneralReactionCaptioner:
+            """MediaCaptioner 适配：走 caption_media_general（打趣素材向）。"""
+
+            async def caption_media(self, part: dict[str, Any]) -> str:
+                return await captioner.caption_media_general(part)
+
+        return _GeneralReactionCaptioner()
 
     def _reply_decision(
         self,
@@ -732,6 +740,8 @@ class ChatService:
                     media_context_text = ""
         if media_context_text:
             conversation_lines.append(media_context_text)
+            # 图内容打趣指引：像群友一样就图吐槽，不要机械复述描述
+            conversation_lines.append("（上面是当前消息图片的理解素材：优先自然地就图内容吐槽/玩梗，别复述描述文字）")
         # 诊断：记录 caption 是否进了 conversation_lines
         append_caption_debug_log(
             f"PROMPT media_context_text={media_context_text!r} conversation_lines_count={len(conversation_lines)}",
