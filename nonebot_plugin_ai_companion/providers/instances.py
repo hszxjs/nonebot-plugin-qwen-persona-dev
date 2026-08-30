@@ -234,6 +234,7 @@ def build_backend_from_config(
                 or "https://api.z.ai/api/coding/paas/v4/chat/completions",
                 ai_companion_online_api_key=settings.get("api_key") or "",
                 ai_companion_online_model=settings.get("model") or "glm-5.2",
+                ai_companion_online_multimodal=bool(settings.get("multimodal", False)),
             )
         )
     raise ProviderNotFoundError(f"no instance builder for backend type {backend_type!r}")

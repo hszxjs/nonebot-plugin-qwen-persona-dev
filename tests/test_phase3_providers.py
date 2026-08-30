@@ -706,3 +706,21 @@ def test_reply_gate_allows_pure_image_messages() -> None:
     # 无文字也无图 → empty
     empty = should_attempt_reply(has_text=False, random_value=0.5, has_media=False, **base)
     assert not empty.allowed and empty.reason == "empty"
+
+
+def test_glm_instance_builder_honors_multimodal() -> None:
+    from nonebot_plugin_ai_companion.providers.instances import build_backend_from_config, new_backend_config
+
+    off = build_backend_from_config(
+        new_backend_config(backend_type="glm", display_name="x", settings={"model": "glm-5.3-flash"})
+    )
+    assert off.capabilities().vision is False  # 未声明多模态 → 图片会被丢弃
+
+    on = build_backend_from_config(
+        new_backend_config(
+            backend_type="glm",
+            display_name="x",
+            settings={"model": "glm-5.3-flash", "multimodal": True},
+        )
+    )
+    assert on.capabilities().vision is True

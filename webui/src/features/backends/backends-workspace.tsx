@@ -131,6 +131,7 @@ type BackendFormState = {
   model: string
   apiKey: string
   priority: string
+  multimodal: boolean
 }
 
 const EMPTY_FORM: BackendFormState = {
@@ -140,6 +141,7 @@ const EMPTY_FORM: BackendFormState = {
   model: "",
   apiKey: "",
   priority: "100",
+  multimodal: false,
 }
 
 function formFromBackend(backend: BackendConfig): BackendFormState {
@@ -149,15 +151,17 @@ function formFromBackend(backend: BackendConfig): BackendFormState {
     baseUrl: typeof backend.settings.base_url === "string" ? backend.settings.base_url : "",
     model: typeof backend.settings.model === "string" ? backend.settings.model : "",
     apiKey: typeof backend.settings.api_key === "string" ? backend.settings.api_key : "",
+    multimodal: backend.settings.multimodal === true,
     priority: String(backend.priority),
   }
 }
 
 function payloadFromForm(form: BackendFormState, enabled: boolean): BackendPayload {
-  const settings: Record<string, string> = {}
+  const settings: Record<string, string | boolean> = {}
   if (form.baseUrl.trim()) settings.base_url = form.baseUrl.trim()
   if (form.model.trim()) settings.model = form.model.trim()
   if (form.apiKey.trim()) settings.api_key = form.apiKey.trim()
+  if (form.multimodal) settings.multimodal = true
   return {
     backend_type: form.backendType,
     display_name: form.displayName.trim(),
@@ -331,6 +335,17 @@ function BackendFormFields({
           onChange={(event) => onChange({ priority: event.target.value })}
         />
         <FieldDescription>同角色存在多个可用后端时按优先级挑选实例。</FieldDescription>
+      </Field>
+      <Field>
+        <FieldLabel htmlFor={`${id}-multimodal`}>多模态（读图）</FieldLabel>
+        <Switch
+          id={`${id}-multimodal`}
+          checked={form.multimodal}
+          onCheckedChange={(checked) => onChange({ multimodal: checked })}
+        />
+        <FieldDescription>
+          模型支持视觉时开启（如 glm-5.3-flash / glm-4.6v）：图片随消息发送，bot 能直接看图回复。
+        </FieldDescription>
       </Field>
     </FieldGroup>
   )
