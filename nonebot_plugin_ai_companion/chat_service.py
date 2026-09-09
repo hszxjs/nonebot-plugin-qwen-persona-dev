@@ -1137,7 +1137,14 @@ class ChatService:
         )
         if isinstance(reply, str) and not reply.strip():
             return {"ok": False, "reply_message_id": None}
-        sent = await matcher.send(reply)
+        try:
+            sent = await matcher.send(reply)
+        except Exception as exc:  # noqa: BLE001 — 表情资源过期（NapCat 下载 400 等）不应连带丢掉文字
+            if sticker_keys and str(text or "").strip():
+                logger.warning(f"ai companion sticker send failed ({type(exc).__name__}: {exc}), retrying text-only")
+                sent = await matcher.send(text)
+            else:
+                raise
         return {"ok": True, "reply_message_id": _extract_message_id(sent)}
 
     # ------------------------------------------------------------------

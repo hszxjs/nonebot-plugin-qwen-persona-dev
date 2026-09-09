@@ -464,3 +464,33 @@ def test_onebot_custom_image_sticker_message_is_sendable() -> None:
 
     assert isinstance(reply, Message)
     assert [part.type for part in reply.parts] == ["image"]
+
+
+def test_sticker_segment_prefers_existing_local_file(tmp_path) -> None:
+    """远程 URL 会过期（NapCat 下载 400）：存在本地副本时优先用本地文件。"""
+    from types import SimpleNamespace
+
+    from nonebot_plugin_ai_companion.sticker.model import build_onebot_v11_sticker_segment
+
+    local = tmp_path / "sticker.webp"
+    local.write_bytes(b"local-bytes")
+
+    used: list = []
+    segment_ns = SimpleNamespace(image=lambda value: used.append(value) or value)
+
+    record = {
+        "key": "image:x",
+        "type": "image",
+        "uri": "https://multimedia.nt.qq.com.cn/download?fileid=expired",
+        "data": {
+            "url": "https://multimedia.nt.qq.com.cn/download?fileid=expired",
+            "_classification": {"label": "sticker_like_image", "sendable": True},
+        },
+    }
+    build_onebot_v11_sticker_segment(segment_ns, record)
+    assert used == ["https://multimedia.nt.qq.com.cn/download?fileid=expired"]  # 无本地副本 → 用远程
+
+    record["uri"] = local.as_uri()
+    used.clear()
+    build_onebot_v11_sticker_segment(segment_ns, record)
+    assert used and used[0] == local.as_uri()  # 有本地副本 → file://（不会过期）

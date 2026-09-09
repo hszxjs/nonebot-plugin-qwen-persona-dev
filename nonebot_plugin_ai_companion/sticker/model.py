@@ -5,6 +5,7 @@ import json
 import logging
 import re
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -211,13 +212,43 @@ def sticker_to_record(
     }
 
 
+def _sticker_local_file_uri(record: dict[str, Any]) -> str | None:
+    """本地仓库文件路径（file://，不会过期）；不存在则返回 None。
+
+    QQ 的 http 图片 URL 带 rkey 会轮换过期（NapCat 下载报 400），
+    发送时优先用 sticker_repo 已下载到本地的副本。
+    """
+    from urllib.parse import unquote, urlparse
+
+    candidates = [record.get("uri"), (record.get("data") or {}).get("url"), (record.get("data") or {}).get("file")]
+    for value in candidates:
+        raw = str(value or "")
+        if not raw:
+            continue
+        path_text = raw
+        if raw.startswith("file://"):
+            path_text = unquote(urlparse(raw).path)
+        elif raw.startswith(("http://", "https://")):
+            continue  # 远程 URL 会过期，不作为本地候选
+        path = Path(path_text).expanduser()
+        if path.is_file():
+            return path.resolve().as_uri()
+    return None
+
+
 def build_onebot_v11_sticker_segment(message_segment: Any, record: dict[str, Any]) -> Any | None:
     segment_type = str(record.get("type") or "")
     data = dict(record.get("data") or {})
     if segment_type == "image":
         if not is_sendable_sticker_record(record):
             return None
-        uri = record.get("uri") or data.get("url") or data.get("file") or data.get("file_id")
+        uri = (
+            _sticker_local_file_uri(record)
+            or record.get("uri")
+            or data.get("url")
+            or data.get("file")
+            or data.get("file_id")
+        )
         return message_segment.image(uri) if uri else None
     if segment_type == "face" and data.get("id") is not None:
         return message_segment.face(int(data["id"]))
