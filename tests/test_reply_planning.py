@@ -161,7 +161,7 @@ async def test_prepare_message_learning_rejects_garbled_caption_summary() -> Non
     assert "Turing" not in learning["training_text"]
 
 
-async def test_selector_uses_short_candidate_id_and_maps_to_sticker_key() -> None:
+async def test_selector_uses_short_candidate_id_and_maps_to_sticker_key(tmp_path) -> None:
     from nonebot_plugin_ai_companion.prompt.planner import ReplyIntent
     from nonebot_plugin_ai_companion.providers.generation_profiles import GenerationPurpose
     from nonebot_plugin_ai_companion.sticker.selector import select_reply_sticker
@@ -182,13 +182,15 @@ async def test_selector_uses_short_candidate_id_and_maps_to_sticker_key() -> Non
 
     runtime = Runtime()
     long_key = "image:" + "very-long-sticker-key-" * 10
+    local_file = tmp_path / "good.gif"
+    local_file.write_bytes(b"GIF89a")
     candidates = [
         {
             "key": long_key,
             "type": "image",
             "summary": "震惊",
-            "uri": "https://example.invalid/good.gif",
-            "data": {"url": "https://example.invalid/good.gif"},
+            "uri": str(local_file),
+            "data": {"url": str(local_file)},
             "count": 10,
         },
         {
@@ -198,6 +200,15 @@ async def test_selector_uses_short_candidate_id_and_maps_to_sticker_key() -> Non
             "uri": "123",
             "data": {"id": "123"},
             "count": 5,
+        },
+        {
+            # 远程-only 候选：QQ http URL 会过期（rkey 轮换），不得作为附图发给后端。
+            "key": "image:remote-only",
+            "type": "image",
+            "summary": "远端",
+            "uri": "https://example.invalid/expired.gif",
+            "data": {"url": "https://example.invalid/expired.gif"},
+            "count": 8,
         },
     ]
 
@@ -212,7 +223,9 @@ async def test_selector_uses_short_candidate_id_and_maps_to_sticker_key() -> Non
     assert selection.key == long_key
     assert len(runtime.calls) == 1
     assert runtime.calls[0]["purpose"] == GenerationPurpose.STICKER_SELECTOR
-    assert len(runtime.calls[0]["media_parts"]) == 1
+    media_parts = runtime.calls[0]["media_parts"]
+    assert len(media_parts) == 1
+    assert media_parts[0]["data"]["url"] == str(local_file)
     prompt = runtime.calls[0]["messages"][1]["content"]
     assert "S1" in prompt
     assert long_key not in prompt

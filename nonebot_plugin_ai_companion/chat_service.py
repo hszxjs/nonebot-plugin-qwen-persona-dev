@@ -1192,27 +1192,24 @@ class ChatService:
 
         selection = None
         selection_error = ""
+        selection_channel = ""
         try:
             selection = await select_reply_sticker(await self._vision_provider(), **selector_kwargs)
+            selection_channel = "vision"
         except Exception as exc:  # noqa: BLE001 — vision 通道异常时降级文本通道
             selection_error = f"{type(exc).__name__}: {exc}"
             logger.warning(f"ai companion sticker selection vision channel failed: {exc!r}")
 
-        if selection is not None and not selection.fallback and selection.key:
-            # vision 通道真实成功（非兜底）——直接采用
-            pass
-        else:
+        if selection is None or selection.fallback or not selection.key:
             # vision 不可用/失败/兜底：尝试当前 chat provider 的纯文本选择
             try:
                 text_selection = await select_reply_sticker(self.client, **selector_kwargs)
-                if (
-                    text_selection is not None
-                    and text_selection.key
-                    and not text_selection.fallback
-                    or selection is None
-                ):
+                text_real = text_selection is not None and text_selection.key and not text_selection.fallback
+                if text_real or selection is None:
                     selection = text_selection
+                    selection_channel = "text"
             except Exception as exc:  # noqa: BLE001 — 文本通道也失败则保留兜底
+                selection_channel = "vision(fallback)"
                 logger.warning(f"ai companion sticker selection text channel failed: {exc!r}")
 
         if selection is None:
@@ -1231,6 +1228,7 @@ class ChatService:
             message=selection.reason if selection else selection_error or "no sticker selected",
             details={
                 "intent": str(getattr(intent, "value", intent)),
+                "channel": selection_channel or "none",
                 "candidate_count": selection.candidate_count if selection else 0,
                 "usable_count": selection.usable_count if selection else 0,
                 "min_count": self.config.ai_companion_min_reply_sticker_count,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +11,7 @@ from ..contracts import StickerSelectionRuntime
 from ..prompt.planner import ReplyIntent
 from ..providers.generation_profiles import GenerationPurpose
 from .classifier import is_sendable_sticker_record
+from .model import _sticker_local_file_uri
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +229,12 @@ def _candidate_media_parts(
     *,
     max_candidate_images: int,
 ) -> list[dict[str, Any]]:
+    """候选表情的附图，只用本地仓库副本。
+
+    QQ 的 http 图片 URL 带 rkey 会过期：远程后端（GLM）拉不到就在服务端整单
+    400，本地 MLX 下载也会失败。没有本地副本的候选仍留在编号文本列表里，
+    选择器靠文字摘要照样能选。
+    """
     parts: list[dict[str, Any]] = []
     limit = max(0, int(max_candidate_images))
     for item in candidates:
@@ -237,12 +245,11 @@ def _candidate_media_parts(
             continue
         if segment_type not in IMAGE_CAPABLE_TYPES:
             continue
-        data = dict(item.get("data") or {})
-        uri = str(item.get("uri") or data.get("url") or data.get("file") or data.get("file_id") or "").strip()
-        if not uri or uri.startswith("base64://"):
+        local_uri = _sticker_local_file_uri(item)
+        if not local_uri:
             continue
-        if not any(str(data.get(field) or "").strip() for field in ("url", "file", "file_id", "uri")):
-            data["url"] = uri
+        data = dict(item.get("data") or {})
+        data["url"] = urllib.parse.unquote(urllib.parse.urlparse(local_uri).path)
         parts.append({"type": segment_type, "data": data})
     return parts
 
