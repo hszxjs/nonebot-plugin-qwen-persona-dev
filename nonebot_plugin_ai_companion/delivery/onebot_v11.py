@@ -143,9 +143,12 @@ async def build_sticker_reply_message(
     get_sticker,
     enable_sending_stickers: bool,
     max_reply_stickers: int,
+    reply_to_message_id: str | None = None,
 ) -> Any:
-    """构造携带表情的消息；非 OneBot v11 或未启用表情发送时原样返回文本。"""
-    if not enable_sending_stickers or not sticker_keys:
+    """构造回复消息：可带表情段与引用段；非 OneBot v11 时原样返回文本。"""
+    want_stickers = bool(enable_sending_stickers and sticker_keys)
+    quote_id = str(reply_to_message_id or "").strip()
+    if not want_stickers and not quote_id:
         return text
 
     try:
@@ -157,11 +160,17 @@ async def build_sticker_reply_message(
         return text
 
     records: list[dict[str, Any]] = []
-    for key in sticker_keys[:max_reply_stickers]:
+    for key in sticker_keys[:max_reply_stickers] if want_stickers else []:
         record = await get_sticker(key)
         if not record:
             logger.warning(f"ai companion sticker key missing: {key}")
             continue
         records.append(record)
 
-    return build_onebot_v11_sticker_message(Message, MessageSegment, text, records)
+    return build_onebot_v11_sticker_message(
+        Message,
+        MessageSegment,
+        text,
+        records,
+        reply_to_message_id=quote_id or None,
+    )

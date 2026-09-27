@@ -57,8 +57,12 @@ class AiCompanionConfig(BaseModel):
     ai_companion_repeat_probability: float = 0.65
     ai_companion_repeat_cooldown_seconds: int = 90
     ai_companion_pattern_reply_threshold: int = 3
+    # 兼容保留：会话时间线现在严格按会话（群 / 私聊）作用域，不再有跨群混合语义。
     ai_companion_context_scope: Literal["group", "global", "mixed"] = "mixed"
-    ai_companion_context_messages: int = 16
+    # 送进提示词的最近对话条数：在线 LLM 用满该值，本地 MLX 按序列长度自动压小。
+    ai_companion_context_messages: int = 40
+    # 回复时引用触发它的那条消息（群里看得出在接谁的话）；长文合并转发无法引用。
+    ai_companion_reply_quote: bool = True
     ai_companion_min_meme_recent_count: int = 2
 
     ai_companion_min_sample_chars: int = 2

@@ -270,8 +270,18 @@ def build_onebot_v11_sticker_message(
     message_segment: Any,
     text: str,
     records: Iterable[dict[str, Any]],
+    *,
+    reply_to_message_id: str | None = None,
 ) -> Any:
     result = message()
+    quoting = bool(str(reply_to_message_id or "").strip())
+    if quoting:
+        # 引用被回复的消息：群里看得出它在接谁的话（不 @，避免抢话）。
+        try:
+            result += message_segment.reply(str(reply_to_message_id))
+        except Exception as exc:
+            logger.warning("ai companion reply segment build failed: %r", exc)
+            quoting = False
     clean_text = str(text or "").strip()
     if clean_text:
         try:
@@ -289,7 +299,7 @@ def build_onebot_v11_sticker_message(
             continue
         result += segment
         has_sticker = True
-    return result if has_sticker else text
+    return result if (has_sticker or quoting) else text
 
 
 def sticker_token(key: str) -> str:

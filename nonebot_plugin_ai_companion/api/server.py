@@ -15,7 +15,20 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .auth import make_auth_dependency
-from .routes import backends, kpi, logs, memories, misc, operations, role_cards, runtime, settings, stickers, training
+from .routes import (
+    backends,
+    conversation,
+    kpi,
+    logs,
+    memories,
+    misc,
+    operations,
+    role_cards,
+    runtime,
+    settings,
+    stickers,
+    training,
+)
 from .routes import model_manager as model_manager_routes
 
 
@@ -82,6 +95,7 @@ def create_admin_app(
         role_cards.build_router(auth=auth, role_card_service=role_card_service, tool_registry=tool_registry)
     )
     app.include_router(backends.build_router(auth=auth, instances=provider_instances, bindings=provider_bindings))
+    app.include_router(conversation.build_router(auth=auth, store=store))
     app.include_router(model_manager_routes.build_router(auth=auth, model_manager=model_manager))
     app.include_router(logs.build_router(auth=auth, store=store, event_bus=event_bus, env=env))
     app.include_router(

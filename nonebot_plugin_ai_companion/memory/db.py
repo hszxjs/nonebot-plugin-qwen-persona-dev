@@ -373,6 +373,47 @@ class PersonaDatabase:
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_call_logs_time ON tool_call_logs(created_at DESC)")
+            # 会话时间线域：每群/每私聊一条时间线，成员与 bot 自己的话都在里面。
+            # session_key 与角色卡绑定同构（group:{id} / private:{user}）；
+            # speaker_name 是写入时的昵称快照，历史渲染不再依赖实时成员接口。
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_turns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_key TEXT NOT NULL,
+                    group_id TEXT,
+                    user_id TEXT,
+                    speaker_kind TEXT NOT NULL DEFAULT 'member',
+                    speaker_name TEXT NOT NULL DEFAULT '',
+                    text TEXT NOT NULL DEFAULT '',
+                    sticker_keys TEXT NOT NULL DEFAULT '[]',
+                    trigger_reason TEXT NOT NULL DEFAULT '',
+                    reply_to_message_id TEXT NOT NULL DEFAULT '',
+                    source_message_id TEXT NOT NULL DEFAULT '',
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversation_turns_session "
+                "ON conversation_turns(session_key, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversation_turns_message "
+                "ON conversation_turns(session_key, source_message_id)"
+            )
+            # 昵称表：群名片优先、其次昵称；(group_id, user_id) 唯一，私聊用空串 group_id。
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS member_names (
+                    group_id TEXT NOT NULL DEFAULT '',
+                    user_id TEXT NOT NULL,
+                    name TEXT NOT NULL DEFAULT '',
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY (group_id, user_id)
+                )
+                """
+            )
 
     @staticmethod
     def is_noise_text(

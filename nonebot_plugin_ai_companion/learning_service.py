@@ -7,6 +7,8 @@ from typing import Any
 from nonebot.adapters import Bot, Event
 
 from .bot_env import BotEnvironment
+from .context.envelope import sender_name_from_event
+from .conversation.model import SPEAKER_MEMBER, session_key_for
 from .decision.gates import should_force_reply, should_learn_text
 from .decision.repeat import ConversationPatternTracker
 from .memory.ingest import filter_training_text_sticker_tokens, prepare_message_learning
@@ -124,6 +126,7 @@ class LearningService:
             stickers=stickers,
             learn_reason=decision.reason,
         )
+        await self._record_conversation_turn(event, ids, plain_text=plain_text, stickers=stickers)
         if not pattern_allowed:
             return
         candidate = self.conversation_pattern_tracker.observe(
@@ -146,6 +149,42 @@ class LearningService:
             response_text=candidate.response.plain_text,
             response_sticker_keys=candidate.response.sticker_keys,
         )
+
+    async def _record_conversation_turn(
+        self,
+        event: Event,
+        ids: dict[str, str | None],
+        *,
+        plain_text: str,
+        stickers: list[dict[str, Any]],
+    ) -> None:
+        """把这条消息写进会话时间线（带说话人 = 昵称快照），并刷新昵称表。
+
+        时间线是回复上下文的唯一来源：只有它同时保留"谁说的"与 bot 自己的话，
+        chat_samples 仍然是训练语料（去重、跳过 bot 自己）。
+        """
+        session_key = session_key_for(group_id=ids["group_id"], user_id=ids["user_id"])
+        speaker_name = sender_name_from_event(event)
+        sticker_keys = [str(item.get("key") or "").strip() for item in stickers if str(item.get("key") or "").strip()]
+        try:
+            await self.store.conversation.record_turn(
+                session_key=session_key,
+                speaker_kind=SPEAKER_MEMBER,
+                text=plain_text,
+                group_id=ids["group_id"],
+                user_id=ids["user_id"],
+                speaker_name=speaker_name,
+                sticker_keys=sticker_keys,
+                source_message_id=str(ids["message_id"] or ""),
+            )
+            if speaker_name and ids["user_id"]:
+                await self.store.member_names.upsert_name(
+                    group_id=ids["group_id"],
+                    user_id=str(ids["user_id"]),
+                    name=speaker_name,
+                )
+        except Exception as exc:  # noqa: BLE001 — 时间线写失败不能影响学习/回复主流程
+            logger.debug("conversation turn record skipped: %r", exc)
 
     async def _record_learning_sticker_events(
         self,

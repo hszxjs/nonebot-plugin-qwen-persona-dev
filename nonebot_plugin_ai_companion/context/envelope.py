@@ -37,7 +37,7 @@ def build_message_context(
     forwarded_texts = _texts_from_forwarded_nodes(message)
     at_targets = _at_targets_from_message(message, at_nicknames or {})
     reply_sender = _reply_sender_from_event(event, reply_nickname)
-    resolved_sender = sender_name or _sender_name_from_event(event)
+    resolved_sender = sender_name or sender_name_from_event(event)
     sources: list[str] = []
     if normalize_text(current_text):
         sources.append("current")
@@ -125,8 +125,8 @@ def _reply_sender_from_event(
     return {"user_id": user_id, "nickname": final_nick}
 
 
-def _sender_name_from_event(event: Any) -> str:
-    """提取当前消息发送者的昵称（群名片优先）。"""
+def sender_name_from_event(event: Any) -> str:
+    """提取当前消息发送者的昵称（群名片优先）。会话时间线的昵称快照也用它。"""
     sender = _get_field(event, "sender", None)
     if isinstance(sender, dict):
         return str(sender.get("card") or sender.get("nickname") or "").strip()

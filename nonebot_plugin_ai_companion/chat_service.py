@@ -21,6 +21,8 @@ from .context.media_parts import message_to_parts
 from .context.nicknames import NicknameResolver
 from .context.relevance import check_media_relevance
 from .contracts import MediaCaptioner
+from .conversation.model import SPEAKER_BOT, session_key_for
+from .conversation.window import collect_user_ids, render_history_lines
 from .decision.gates import (
     ReplyDecision,
     is_private_chat,
@@ -315,9 +317,15 @@ class ChatService:
             )
             return
 
+        quote_target = self._reply_quote_target(ids)
         try:
             sent = await self._send_adapter_reply(
-                bot=bot, event=event, matcher=matcher, text=clean_text, sticker_keys=sticker_keys
+                bot=bot,
+                event=event,
+                matcher=matcher,
+                text=clean_text,
+                sticker_keys=sticker_keys,
+                reply_to_message_id=quote_target,
             )
         except Exception as exc:  # noqa: BLE001 — 发送异常留痕，不再无声消失
             logger.warning(f"ai companion reply send raised: {exc!r}")
@@ -359,6 +367,13 @@ class ChatService:
         )
         if not sent.get("ok"):
             return
+        await self._record_bot_turn(
+            ids=ids,
+            text=clean_text,
+            sticker_keys=sticker_keys,
+            trigger_reason=reply_decision.reason,
+            reply_to_message_id=str(ids.get("message_id") or ""),
+        )
         self.conversation_pattern_tracker.reset(ids["group_id"])
         matcher.stop_propagation()
 
@@ -634,71 +649,6 @@ class ChatService:
             )
         )
 
-    @staticmethod
-    def _sample_fingerprint(item: dict[str, Any]) -> tuple[str, str, str, str, str]:
-        return (
-            str(item.get("created_at") or ""),
-            str(item.get("group_id") or ""),
-            str(item.get("user_id") or ""),
-            str(item.get("plain_text") or ""),
-            str(item.get("training_text") or ""),
-        )
-
-    def _merge_context_samples(
-        self,
-        group_samples: list[dict[str, Any]],
-        global_samples: list[dict[str, Any]],
-        *,
-        group_id: str | None,
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        limit = max(0, int(limit))
-        if limit <= 0:
-            return []
-        merged: list[dict[str, Any]] = list(group_samples[:limit])
-        seen = {self._sample_fingerprint(item) for item in merged}
-        other_group_samples = [
-            item for item in global_samples if str(item.get("group_id") or "") != str(group_id or "")
-        ]
-        for item in other_group_samples:
-            fingerprint = self._sample_fingerprint(item)
-            if fingerprint in seen:
-                continue
-            merged.append(item)
-            seen.add(fingerprint)
-            if len(merged) >= limit:
-                break
-        if len(merged) < limit:
-            for item in global_samples:
-                fingerprint = self._sample_fingerprint(item)
-                if fingerprint in seen:
-                    continue
-                merged.append(item)
-                seen.add(fingerprint)
-                if len(merged) >= limit:
-                    break
-        merged.sort(key=lambda item: float(item.get("created_at") or 0), reverse=True)
-        return merged[:limit]
-
-    async def _recent_context_samples(self, group_id: str | None, limit: int) -> list[dict[str, Any]]:
-        scope = str(getattr(self.config, "ai_companion_context_scope", "mixed") or "mixed")
-        if scope == "group":
-            return await self.store.recent_samples(group_id=group_id, limit=limit)
-        if scope == "global" or not group_id:
-            return await self.store.recent_samples(group_id=None, limit=limit)
-
-        group_limit = max(1, limit // 2)
-        group_samples, global_samples = await asyncio.gather(
-            self.store.recent_samples(group_id=group_id, limit=group_limit),
-            self.store.recent_samples(group_id=None, limit=max(limit * 3, limit + group_limit)),
-        )
-        return self._merge_context_samples(
-            group_samples,
-            global_samples,
-            group_id=group_id,
-            limit=limit,
-        )
-
     def _is_context_noise(self, text: str) -> bool:
         return is_training_noise(text) or is_command_like(
             text,
@@ -717,7 +667,7 @@ class ChatService:
         media_parts: list[dict[str, Any]],
         media_context_text: str = "",
     ) -> ReplyPlan:
-        context_limit = effective_context_message_limit(self.config)
+        context_limit = effective_context_message_limit(self.config, online=self._online_backend_active())
         query_text = self._context_query_text(envelope)
         # 角色卡：会话绑定的卡渲染身份段；切换绑定后短期上下文从 bound_at 重新计。
         card, binding = (
@@ -725,8 +675,23 @@ class ChatService:
             if self.role_card_service is not None
             else (None, None)
         )
-        history, relevant_samples, relevant_media_assets = await asyncio.gather(
-            self._recent_context_samples(group_id, context_limit),
+        # 会话时间线：只取本会话（群 or 私聊）的对话，带说话人；bot 自己的话也在里面。
+        session_key = session_key_for(group_id=group_id, user_id=ids.get("user_id"))
+        history_turns = await self.store.conversation.recent_turns(
+            session_key=session_key,
+            limit=context_limit,
+            since=float(binding.bound_at) if binding is not None and card is not None else None,
+        )
+        history_names = await self.store.member_names.get_names(
+            group_id=group_id,
+            user_ids=collect_user_ids(history_turns),
+        )
+        history_lines = render_history_lines(
+            history_turns,
+            names=history_names,
+            exclude_message_ids=[str(ids.get("message_id") or "")],
+        )
+        relevant_samples, relevant_media_assets = await asyncio.gather(
             self._search_relevant_context_samples(group_id, query_text, max(3, context_limit // 2)),
             self._search_relevant_media_assets(group_id, query_text, max(2, context_limit // 3)),
         )
@@ -763,26 +728,10 @@ class ChatService:
             if answer and not self._is_context_noise(answer):
                 conversation_lines.append(f"历史图片理解：{answer}")
 
-        style_memory_lines: list[str] = []
-        current_message_id = str(ids.get("message_id") or "")
-        bound_at = float(binding.bound_at) if binding is not None else None
-        for item in reversed(history):
-            if current_message_id and str(item.get("message_id") or "") == current_message_id:
-                continue
-            if bound_at is not None and binding is not None and card is not None:
-                try:
-                    if float(item.get("created_at") or 0) < bound_at:
-                        continue  # 切换角色卡前的旧上下文不进新人格的短期记忆
-                except (TypeError, ValueError):
-                    pass
-            context_text = context_text_from_sample(item)
-            context_text, _sticker_keys = parse_sticker_tokens(context_text)
-            if self._is_context_noise(context_text):
-                continue
-            if context_text:
-                style_memory_lines.append(context_text)
-        conversation_lines = trim_history_lines_for_context(conversation_lines, self.config)
-        style_memory_lines = trim_history_lines_for_context(style_memory_lines, self.config)
+        conversation_lines = trim_history_lines_for_context(
+            conversation_lines, self.config, online=self._online_backend_active()
+        )
+        history_lines = trim_history_lines_for_context(history_lines, self.config, online=self._online_backend_active())
         # 记忆注入段（文档六/十节）：启用 memory 段时取发送者长期记忆（未衰减 top）
         memory_lines: list[str] = []
         if "memory" in effective_segment_order(self.config) and ids.get("user_id"):
@@ -793,7 +742,7 @@ class ChatService:
 
         active_memes = select_active_memes(
             build_meme_candidates_from_samples(
-                samples=[*history, *relevant_samples],
+                samples=list(relevant_samples),
                 media_assets=relevant_media_assets,
             ),
             context_text=query_text,
@@ -808,13 +757,20 @@ class ChatService:
                 memory_lines=memory_lines,
             ),
             conversation_lines=conversation_lines,
-            style_memory_lines=style_memory_lines,
+            history_lines=history_lines,
             active_memes=active_memes,
             current_text=envelope.current_text,
             media_parts=media_parts,
             sticker_reply_allowed=sticker_reply_allowed,
             incoming_has_sticker=incoming_has_sticker,
         )
+
+    def _online_backend_active(self) -> bool:
+        """当前是否走在线 LLM 后端（决定上下文条数与字符预算）。"""
+        try:
+            return self.client.active_backend() == "llm"
+        except Exception:  # noqa: BLE001 — 判定失败按本地保守预算
+            return False
 
     @staticmethod
     def _context_query_text(envelope: MessageContextEnvelope) -> str:
@@ -1015,8 +971,20 @@ class ChatService:
         if not reply_text and not candidate.sticker_keys:
             return False
         sent = await self._send_adapter_reply(
-            bot=bot, event=event, matcher=matcher, text=reply_text, sticker_keys=candidate.sticker_keys
+            bot=bot,
+            event=event,
+            matcher=matcher,
+            text=reply_text,
+            sticker_keys=candidate.sticker_keys,
+            reply_to_message_id=self._reply_quote_target(ids),
         )
+        if sent.get("ok"):
+            await self._record_bot_turn(
+                ids=ids,
+                text=reply_text,
+                sticker_keys=list(candidate.sticker_keys),
+                trigger_reason="repeat",
+            )
         await self._record_message_log(
             kind="repeat",
             ids=ids,
@@ -1078,8 +1046,20 @@ class ChatService:
             return False
 
         sent = await self._send_adapter_reply(
-            bot=bot, event=event, matcher=matcher, text=reply_text, sticker_keys=sticker_keys
+            bot=bot,
+            event=event,
+            matcher=matcher,
+            text=reply_text,
+            sticker_keys=sticker_keys,
+            reply_to_message_id=self._reply_quote_target(ids),
         )
+        if sent.get("ok"):
+            await self._record_bot_turn(
+                ids=ids,
+                text=reply_text,
+                sticker_keys=list(sticker_keys),
+                trigger_reason="conversation_pattern",
+            )
         await self._record_message_log(
             kind="pattern",
             ids=ids,
@@ -1098,6 +1078,38 @@ class ChatService:
     # ------------------------------------------------------------------
     # 发送
     # ------------------------------------------------------------------
+    async def _record_bot_turn(
+        self,
+        *,
+        ids: dict[str, str | None],
+        text: str,
+        sticker_keys: list[str],
+        trigger_reason: str,
+        reply_to_message_id: str = "",
+    ) -> None:
+        """把 bot 这条回复写进会话时间线：下一轮它才看得见自己说过什么。"""
+        try:
+            await self.store.conversation.record_turn(
+                session_key=session_key_for(group_id=ids.get("group_id"), user_id=ids.get("user_id")),
+                speaker_kind=SPEAKER_BOT,
+                text=str(text or ""),
+                group_id=ids.get("group_id"),
+                user_id=None,
+                speaker_name="",
+                sticker_keys=[str(key) for key in (sticker_keys or []) if str(key).strip()],
+                trigger_reason=str(trigger_reason or ""),
+                reply_to_message_id=str(reply_to_message_id or ""),
+            )
+        except Exception as exc:  # noqa: BLE001 — 时间线写失败不影响发送结果
+            logger.debug("bot turn record skipped: %r", exc)
+
+    def _reply_quote_target(self, ids: dict[str, str | None]) -> str | None:
+        """引用回复的目标：默认引用触发它的那条消息；开关关闭或 id 不可引用时返回 None。"""
+        if not bool(getattr(self.config, "ai_companion_reply_quote", True)):
+            return None
+        message_id = str(ids.get("message_id") or "").strip()
+        return message_id if message_id.isdigit() else None
+
     async def _send_adapter_reply(
         self,
         *,
@@ -1106,8 +1118,12 @@ class ChatService:
         matcher: Matcher,
         text: str,
         sticker_keys: list[str],
+        reply_to_message_id: str | None = None,
     ) -> dict[str, Any]:
-        """发送回复；返回 {ok, reply_message_id}（id 供 MessageLog 溯源）。"""
+        """发送回复；返回 {ok, reply_message_id}（id 供 MessageLog 溯源）。
+
+        长文合并转发无法挂引用段，那条路径不带引用。
+        """
         delivery = plan_reply_delivery(text, sticker_keys)
         if delivery.use_forward and bot is not None:
             sent = await send_onebot_v11_forward_reply(
@@ -1122,6 +1138,7 @@ class ChatService:
                         get_sticker=self.store.get_sticker,
                         enable_sending_stickers=self.config.ai_companion_enable_sending_stickers,
                         max_reply_stickers=self.config.ai_companion_max_reply_stickers,
+                        reply_to_message_id=reply_to_message_id,
                     )
                     if not (isinstance(sticker_reply, str) and not sticker_reply.strip()):
                         await matcher.send(sticker_reply)
@@ -1134,6 +1151,7 @@ class ChatService:
             get_sticker=self.store.get_sticker,
             enable_sending_stickers=self.config.ai_companion_enable_sending_stickers,
             max_reply_stickers=self.config.ai_companion_max_reply_stickers,
+            reply_to_message_id=reply_to_message_id,
         )
         if isinstance(reply, str) and not reply.strip():
             return {"ok": False, "reply_message_id": None}

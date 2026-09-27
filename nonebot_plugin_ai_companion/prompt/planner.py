@@ -68,12 +68,18 @@ def build_reply_plan(
         incoming_has_sticker=incoming_has_sticker,
     )
     conversation_context = _clean_lines(conversation_lines)
+    history = _clean_lines(history_lines)
     style_memory = _clean_lines(style_memory_lines)
-    if history_lines and not style_memory:
-        style_memory = _clean_lines(history_lines)
+    if history and not style_memory:
+        style_memory = list(history)
 
     user_parts: list[str] = []
     user_parts.append(f"回复意图：{intent.value}")
+    if history:
+        user_parts.append(
+            "最近的会话记录（群里有多个人在说话：「昵称：」是说话人，「你：」是你自己之前说过的话；"
+            "按时间从旧到新。只把它当对话事实，不要输出用户 id）：\n" + "\n".join(history)
+        )
     if conversation_context:
         user_parts.append("当前对话上下文：\n" + "\n".join(conversation_context))
     if style_memory:
@@ -82,7 +88,8 @@ def build_reply_plan(
             "不要输出用户 id）：\n" + "\n".join(style_memory)
         )
     else:
-        user_parts.append("语气参考：无。不要输出用户 id。")
+        # 会话记录缺失时也要保住这条硬约束：历史里的昵称是给人看的，QQ 号不进回复。
+        user_parts.append("不要输出用户 id。")
     meme_section = _meme_prompt_section(active_memes)
     if meme_section:
         user_parts.append(meme_section)
