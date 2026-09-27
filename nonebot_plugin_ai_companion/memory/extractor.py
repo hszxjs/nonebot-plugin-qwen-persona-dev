@@ -155,8 +155,13 @@ async def extract_session_memories(
     data_cleaning_chat: DataCleaningChat,
     chat: DataCleaningChat | None = None,
     max_turns: int = 200,
+    private_user_id: str = "",
 ) -> dict[str, int]:
-    """单会话增量抽取：读取新 turn → 调辅助模型 → 写两张记忆表。"""
+    """单会话增量抽取：读取新 turn → 调辅助模型 → 写两张记忆表。
+
+    private_user_id 非空表示这是私聊会话：只写成员记忆、group_id 记为空串
+    （「私聊里说过的事」独立于任何群），群层面的条目直接丢弃。
+    """
     batch = [turn for turn in turns if not turn.is_bot][-max_turns:]
     if not batch:
         return {"group_saved": 0, "member_saved": 0, "skipped": 0}
@@ -170,6 +175,9 @@ async def extract_session_memories(
     group_saved = member_saved = skipped = 0
     for entry in entries:
         if entry["scope"] == "group":
+            if private_user_id:
+                skipped += 1  # 私聊不是群，不产生群记忆
+                continue
             saved = await memories.add_group_memory(
                 group_id=group_id,
                 kind=str(entry["kind"]),
@@ -185,7 +193,7 @@ async def extract_session_memories(
                 skipped += 1  # 批里没有这个编号：视为幻觉，丢弃
                 continue
             saved = await memories.add_member_memory(
-                group_id=group_id,
+                group_id="" if private_user_id else group_id,
                 user_id=user_id,
                 kind=str(entry["kind"]),
                 content=str(entry["content"]),
@@ -213,10 +221,14 @@ async def run_memory_extraction_round(
     states = await memories.get_extraction_states()
     results: list[dict[str, Any]] = []
     skip = {str(item) for item in (disabled_groups or set())}
-    for group_id in await conversation.list_session_groups():
-        if str(group_id) in skip:
+    sessions = [f"group:{gid}" for gid in await conversation.list_session_groups()]
+    sessions.extend(f"private:{uid}" for uid in await conversation.list_private_users())
+    for session_key in sessions:
+        is_private = session_key.startswith("private:")
+        scope_id = session_key.split(":", 1)[1]
+        # 配置里写的是群号，这里也接受 "group:xxx" 形式，两种都认
+        if session_key in skip or scope_id in skip:
             continue
-        session_key = f"group:{group_id}"
         state = states.get(session_key)
         last_turn_id = state.last_turn_id if state else 0
         pending = await conversation.turns_after(session_key=session_key, after_id=last_turn_id, limit=max_turns)
@@ -226,13 +238,14 @@ async def run_memory_extraction_round(
         if len(pending) < max(1, int(min_new_turns)) and waited < max(60.0, float(interval_seconds)):
             continue
         names = await names_repo.get_names(
-            group_id=group_id,
+            group_id=scope_id if not is_private else None,
             user_ids=[str(turn.user_id or "") for turn in pending if str(turn.user_id or "").strip()],
         )
         try:
             outcome = await extract_session_memories(
                 session_key=session_key,
-                group_id=group_id,
+                group_id="" if is_private else scope_id,
+                private_user_id=scope_id if is_private else "",
                 turns=pending,
                 names=names,
                 memories=memories,

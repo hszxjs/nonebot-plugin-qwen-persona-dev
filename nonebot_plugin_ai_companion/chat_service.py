@@ -22,7 +22,7 @@ from .context.nicknames import NicknameResolver
 from .context.relevance import check_media_relevance
 from .contracts import MediaCaptioner
 from .conversation.model import SPEAKER_BOT, session_key_for
-from .conversation.window import collect_user_ids, render_history_lines
+from .conversation.window import collect_user_ids, render_history_lines, safe_speaker_name
 from .decision.gates import (
     ReplyDecision,
     is_private_chat,
@@ -760,18 +760,18 @@ class ChatService:
     ) -> ReplyPlan:
         context_limit = effective_context_message_limit(self.config, online=self._online_backend_active())
         query_text = self._context_query_text(envelope)
-        # 角色卡：会话绑定的卡渲染身份段；切换绑定后短期上下文从 bound_at 重新计。
+        # 角色卡：会话绑定的卡渲染身份段与工具白名单（不改历史作用域）。
         card, binding = (
             await self.role_card_service.get_effective_card(group_id=group_id, user_id=ids.get("user_id"))
             if self.role_card_service is not None
             else (None, None)
         )
         # 会话时间线：只取本会话（群 or 私聊）的对话，带说话人；bot 自己的话也在里面。
+        # 不再按角色卡绑定时刻砍历史：绑定决定"用哪张卡"，历史是事实（换人格不该失忆）。
         session_key = session_key_for(group_id=group_id, user_id=ids.get("user_id"))
         history_turns = await self.store.conversation.recent_turns(
             session_key=session_key,
             limit=context_limit,
-            since=float(binding.bound_at) if binding is not None and card is not None else None,
         )
         history_names = await self.store.member_names.get_names(
             group_id=group_id,
@@ -783,7 +783,9 @@ class ChatService:
             exclude_message_ids=[str(ids.get("message_id") or "")],
         )
         relevant_samples, relevant_media_assets = await asyncio.gather(
-            self._search_relevant_context_samples(group_id, query_text, max(3, context_limit // 2)),
+            self._search_relevant_context_samples(
+                group_id, query_text, max(3, context_limit // 2), ids_user_id=ids.get("user_id")
+            ),
             self._search_relevant_media_assets(group_id, query_text, max(2, context_limit // 3)),
         )
 
@@ -834,11 +836,18 @@ class ChatService:
             if envelope.reply_sender:
                 member_ids.append(str(envelope.reply_sender.get("user_id") or ""))
             try:
-                memory_lines = await self.store.persona_memory.prompt_lines_for_session(
-                    group_id=group_id,
-                    user_ids=[item for item in member_ids if item],
-                    include_sensitive=group_id is None,
-                )
+                if group_id is None:
+                    # 私聊没有群作用域：聚合这个人在各个群里的成员记忆（含敏感类）
+                    memory_lines = await self.store.persona_memory.prompt_lines_for_private_member(
+                        user_id=str(ids.get("user_id") or ""),
+                        include_sensitive=True,
+                    )
+                else:
+                    memory_lines = await self.store.persona_memory.prompt_lines_for_session(
+                        group_id=group_id,
+                        user_ids=[item for item in member_ids if item],
+                        include_sensitive=False,
+                    )
             except Exception as exc:  # noqa: BLE001 — 记忆取数失败不阻塞回复
                 logger.debug("persona memory fetch skipped: %r", exc)
 
@@ -900,17 +909,20 @@ class ChatService:
         group_id: str | None,
         query: str,
         limit: int,
+        *,
+        ids_user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         if not query:
             return []
-        scope = str(getattr(self.config, "ai_companion_context_scope", "mixed") or "mixed")
-        search_group_id = None if scope == "global" else group_id
+        global_scope = str(getattr(self.config, "ai_companion_context_scope", "") or "") == "global"
         try:
             return await self.store.search_context_samples(
-                group_id=search_group_id,
+                group_id=group_id,
+                user_id=str(ids_user_id or "") or None,
                 query=query,
                 limit=limit,
                 max_age_hours=int(self.config.ai_companion_relevant_context_max_age_hours or 0),
+                global_scope=global_scope,
             )
         except Exception as exc:
             logger.warning(f"ai companion context search failed: {exc!r}")
@@ -924,14 +936,14 @@ class ChatService:
     ) -> list[dict[str, Any]]:
         if not query:
             return []
-        scope = str(getattr(self.config, "ai_companion_context_scope", "mixed") or "mixed")
-        search_group_id = None if scope == "global" else group_id
+        global_scope = str(getattr(self.config, "ai_companion_context_scope", "") or "") == "global"
         try:
             return await self.store.search_media_assets(
-                group_id=search_group_id,
+                group_id=group_id,
                 query=query,
                 limit=limit,
                 max_age_hours=int(self.config.ai_companion_relevant_context_max_age_hours or 0),
+                global_scope=global_scope,
             )
         except Exception as exc:
             logger.warning(f"ai companion media context search failed: {exc!r}")
@@ -944,7 +956,11 @@ class ChatService:
         if envelope.sender_name:
             lines.append(f"说话人：{envelope.sender_name}")
         if envelope.reply_sender:
-            reply_name = envelope.reply_sender.get("nickname") or envelope.reply_sender.get("user_id") or "某人"
+            # 名字永远不回落成 QQ 号：解析不到就用「群友xxxx」，避免数字 id 被复述出来
+            reply_name = safe_speaker_name(
+                str(envelope.reply_sender.get("nickname") or ""),
+                user_id=str(envelope.reply_sender.get("user_id") or ""),
+            )
             for text in envelope.quoted_texts:
                 lines.append(f"回复{reply_name}的消息：{text}")
             if not envelope.quoted_texts:
@@ -953,7 +969,10 @@ class ChatService:
             for text in envelope.quoted_texts:
                 lines.append(f"引用消息：{text}")
         if envelope.at_targets:
-            names = "、".join(t.get("name") or t.get("qq") or "?" for t in envelope.at_targets)
+            names = "、".join(
+                safe_speaker_name(str(target.get("name") or ""), user_id=str(target.get("qq") or ""))
+                for target in envelope.at_targets
+            )
             lines.append(f"当前消息@了：{names}")
         for text in envelope.forwarded_texts:
             lines.append(f"合并转发：{text}")

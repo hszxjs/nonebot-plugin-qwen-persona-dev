@@ -351,3 +351,47 @@ async def test_bot_turn_writer_puts_own_reply_on_timeline(persona_store) -> None
     assert turn.sticker_keys == ["face:smile"]
     assert turn.trigger_reason == "random_reply"
     assert turn.reply_to_message_id == "5001"
+
+
+# ---- P0 回归：提示词不重复、不泄露 QQ、私聊不串群 ----
+
+
+def test_prompt_injects_dialogue_exactly_once() -> None:
+    """同一段对话绝不能被注入两遍（一遍当事实、一遍说"不能当事实"）。"""
+    from nonebot_plugin_ai_companion.prompt.planner import build_reply_plan
+
+    plan = build_reply_plan(
+        system_prompt="你是群友",
+        history_lines=["阿强：这波怎么说", "你：等我两分钟"],
+        current_text="在吗",
+        media_parts=[],
+        sticker_reply_allowed=True,
+        incoming_has_sticker=False,
+    )
+    user_content = plan.messages[1]["content"]
+    assert user_content.count("这波怎么说") == 1
+    assert user_content.count("最近的会话记录") == 1
+    assert "语气参考" not in user_content  # 没有语气示例时不再占位，更不会塞历史
+
+
+def test_prompt_never_contains_full_qq_ids() -> None:
+    """@ 列表与引用发送者都不许把 QQ 号写进提示词。"""
+    from nonebot_plugin_ai_companion.chat_service import ChatService
+    from nonebot_plugin_ai_companion.context.envelope import MessageContextEnvelope
+
+    envelope = MessageContextEnvelope(
+        current_text="看看这个",
+        quoted_texts=["你上次说的那个"],
+        forwarded_texts=[],
+        media_parts=[],
+        sticker_keys=[],
+        forced_by_at=True,
+        context_sources=[],
+        at_targets=[{"qq": "3305167706", "name": ""}],
+        reply_sender={"user_id": "2752330053", "nickname": ""},
+    )
+    lines = ChatService._conversation_lines_from_envelope(envelope)
+    joined = "\n".join(lines)
+    assert "3305167706" not in joined and "2752330053" not in joined
+    assert "群友7706" in joined and "群友0053" in joined
+

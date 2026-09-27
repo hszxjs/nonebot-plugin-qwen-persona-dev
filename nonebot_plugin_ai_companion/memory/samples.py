@@ -159,13 +159,21 @@ class ChatSampleRepo:
         query: str,
         limit: int,
         max_age_hours: int = 0,
+        user_id: str | None = None,
+        global_scope: bool = False,
     ) -> list[dict[str, Any]]:
+        """检索历史样本。默认按会话作用域：群内只搜本群，私聊只搜这个人的私聊。
+
+        global_scope=True 才会跨会话（只有运维显式把 context_scope 设成 global 才走）。
+        """
         return await asyncio.to_thread(
             self._search_context_samples_sync,
             group_id=group_id,
             query=query,
             limit=limit,
             max_age_hours=max_age_hours,
+            user_id=user_id,
+            global_scope=global_scope,
         )
 
     def _search_context_samples_sync(
@@ -175,14 +183,27 @@ class ChatSampleRepo:
         query: str,
         limit: int,
         max_age_hours: int = 0,
+        user_id: str | None = None,
+        global_scope: bool = False,
     ) -> list[dict[str, Any]]:
         self.db.ensure_schema()
         terms = context_search_terms(query)
         if not terms:
             return []
         limit = max(1, min(int(limit or 5), 30))
-        where = "WHERE group_id = ?" if group_id else ""
-        params: tuple[Any, ...] = (group_id, max(80, limit * 12)) if group_id else (max(80, limit * 12),)
+        fetch = max(80, limit * 12)
+        if global_scope:
+            where = ""
+            params: tuple[Any, ...] = (fetch,)
+        elif group_id:
+            where = "WHERE group_id = ?"
+            params = (group_id, fetch)
+        elif user_id:
+            where = "WHERE group_id IS NULL AND user_id = ?"
+            params = (user_id, fetch)
+        else:
+            where = "WHERE group_id IS NULL"
+            params = (fetch,)
         min_created_at = time.time() - float(max_age_hours) * 3600.0 if max_age_hours and max_age_hours > 0 else 0.0
         with self.db.connection() as conn:
             rows = conn.execute(

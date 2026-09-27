@@ -142,8 +142,13 @@ class PersonaMemoryRepo:
         sensitivity: str,
     ) -> bool:
         text = _normalize_content(content)
-        if not text or not group_id or (scope == "member" and not user_id):
+        if not text:
             return False
+        if scope == "group" and not group_id:
+            return False  # 群记忆必须有群号
+        if scope == "member" and not user_id:
+            return False
+        # 注意：成员记忆允许 group_id 为空串——表示「私聊里形成」的记忆，与任何群无关
         clean_kind = str(kind or "").strip()[:12] or "事实"
         clean_sensitivity = sensitivity if sensitivity in SENSITIVITIES else SENSITIVITY_NEUTRAL
         try:
@@ -310,6 +315,46 @@ class PersonaMemoryRepo:
                     ).fetchone()
                     who = str(names["name"]) if names and names["name"] else f"群友{str(row['user_id'])[-4:]}"
                     lines.append(f"{who}的{row['kind']}｜{row['content']}（重要度 {float(row['importance']):.0f}/5）")
+        return lines
+
+    async def prompt_lines_for_private_member(
+        self,
+        *,
+        user_id: str,
+        include_sensitive: bool = True,
+        limit: int = 5,
+    ) -> list[str]:
+        """私聊场景：把这个人跨群的成员记忆聚合出来（私聊才允许情绪/隐私类）。
+
+        成员记忆天然带群号（它是在某个群里形成的），私聊没有群作用域，
+        所以这里按 user_id 跨群取，渲染时带上来源群，避免张冠李戴。
+        """
+        return await asyncio.to_thread(
+            self._prompt_lines_for_private_member_sync, str(user_id or ""), bool(include_sensitive), max(1, int(limit))
+        )
+
+    def _prompt_lines_for_private_member_sync(self, user_id: str, include_sensitive: bool, limit: int) -> list[str]:
+        if not user_id:
+            return []
+        allowed = list(SENSITIVITIES) if include_sensitive else list(GROUP_VISIBLE_SENSITIVITIES)
+        placeholders = ",".join("?" for _ in allowed)
+        self.db.ensure_schema()
+        lines: list[str] = []
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT group_id, kind, content, importance FROM member_memories
+                WHERE user_id = ? AND decayed = 0 AND sensitivity IN ({placeholders})
+                ORDER BY importance DESC, last_seen_at DESC LIMIT ?
+                """,
+                (user_id, *allowed, limit),
+            ).fetchall()
+        for row in rows:
+            origin = str(row["group_id"] or "")
+            if origin:
+                lines.append(f"你在群 {origin} 认识的 TA 的{row['kind']}｜{row['content']}")
+            else:
+                lines.append(f"你们私聊里聊过的 TA 的{row['kind']}｜{row['content']}")
         return lines
 
     # ---- 维护 ----

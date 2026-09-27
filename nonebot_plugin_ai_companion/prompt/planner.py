@@ -69,9 +69,9 @@ def build_reply_plan(
     )
     conversation_context = _clean_lines(conversation_lines)
     history = _clean_lines(history_lines)
+    # 语气参考只接受真正的"语气示例"（角色卡 tone_examples 等）；
+    # 绝不能把 history_lines 再塞一遍：那会让同一段对话同时以"事实"和"不能当事实"出现。
     style_memory = _clean_lines(style_memory_lines)
-    if history and not style_memory:
-        style_memory = list(history)
 
     user_parts: list[str] = []
     user_parts.append(f"回复意图：{intent.value}")

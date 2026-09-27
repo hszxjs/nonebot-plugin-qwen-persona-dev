@@ -134,6 +134,18 @@ class ConversationRepo:
         """时间线里出现过的群号（去重）——昵称回填与统计用。"""
         return await asyncio.to_thread(self._list_session_groups_sync)
 
+    async def list_private_users(self) -> list[str]:
+        """时间线里出现过的私聊对象 QQ（去重）——私聊作用域的记忆抽取用。"""
+        return await asyncio.to_thread(self._list_private_users_sync)
+
+    def _list_private_users_sync(self) -> list[str]:
+        self.db.ensure_schema()
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT user_id FROM conversation_turns WHERE group_id IS NULL AND user_id IS NOT NULL"
+            ).fetchall()
+        return [str(row["user_id"]) for row in rows if str(row["user_id"] or "").strip()]
+
     def _list_session_groups_sync(self) -> list[str]:
         self.db.ensure_schema()
         with self.db.connection() as conn:

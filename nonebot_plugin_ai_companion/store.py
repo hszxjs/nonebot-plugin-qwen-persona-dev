@@ -159,10 +159,22 @@ class PersonaStore:
         return await self.samples.recent_samples(group_id=group_id, limit=limit)
 
     async def search_context_samples(
-        self, *, group_id: str | None, query: str, limit: int, max_age_hours: int = 0
+        self,
+        *,
+        group_id: str | None,
+        query: str,
+        limit: int,
+        max_age_hours: int = 0,
+        user_id: str | None = None,
+        global_scope: bool = False,
     ) -> list[dict[str, Any]]:
         return await self.samples.search_context_samples(
-            group_id=group_id, query=query, limit=limit, max_age_hours=max_age_hours
+            group_id=group_id,
+            query=query,
+            limit=limit,
+            max_age_hours=max_age_hours,
+            user_id=user_id,
+            global_scope=global_scope,
         )
 
     # ---- 表情域：资产与表情 ----
@@ -173,10 +185,20 @@ class PersonaStore:
         return await self.stickers.record_sticker_asset(**kwargs)
 
     async def search_media_assets(
-        self, *, group_id: str | None, query: str, limit: int, max_age_hours: int = 0
+        self,
+        *,
+        group_id: str | None,
+        query: str,
+        limit: int,
+        max_age_hours: int = 0,
+        global_scope: bool = False,
     ) -> list[dict[str, Any]]:
         return await self.stickers.search_media_assets(
-            group_id=group_id, query=query, limit=limit, max_age_hours=max_age_hours
+            group_id=group_id,
+            query=query,
+            limit=limit,
+            max_age_hours=max_age_hours,
+            global_scope=global_scope,
         )
 
     async def top_stickers(self, *, group_id: str | None, limit: int) -> list[dict[str, Any]]:

@@ -84,8 +84,10 @@ async def test_memories_dedup_merges_importance(persona_store) -> None:
 async def test_member_memory_requires_user_and_group(persona_store) -> None:
     repo = persona_store.persona_memory
     assert await repo.add_member_memory(group_id="100", user_id="", kind="偏好", content="喜欢开黑") is False
-    assert await repo.add_member_memory(group_id="", user_id="42", kind="偏好", content="喜欢开黑") is False
+    assert await repo.add_group_memory(group_id="", kind="事实", content="没有群号的群记忆") is False
     assert await repo.add_member_memory(group_id="100", user_id="42", kind="偏好", content="喜欢开黑") is True
+    # 空群号 = 私聊里形成的成员记忆（不属于任何群），允许写入
+    assert await repo.add_member_memory(group_id="", user_id="42", kind="偏好", content="半夜爱点外卖") is True
 
 
 async def test_group_injection_hides_sensitive_memories(persona_store) -> None:
@@ -286,3 +288,66 @@ async def test_memory_keeps_valid_sensitivity(persona_store, sensitivity: str) -
     )
     items = await repo.list_memories(scope="group", group_id="100")
     assert items[0].sensitivity == sensitivity
+
+
+# ---- P0 回归：私聊记忆与检索作用域 ----
+
+
+async def test_private_chat_memories_aggregate_across_groups(persona_store) -> None:
+    repo = persona_store.persona_memory
+    await repo.add_member_memory(group_id="100", user_id="42", kind="偏好", content="喜欢开黑", sensitivity="neutral")
+    await repo.add_member_memory(group_id="200", user_id="42", kind="关系", content="和小红是同学", sensitivity="relation")
+    await repo.add_member_memory(group_id="100", user_id="42", kind="事件", content="最近在闹分手", sensitivity="private")
+    # 私聊作用域（group_id 空串）的条目
+    await repo.add_member_memory(group_id="", user_id="42", kind="偏好", content="半夜爱点外卖", sensitivity="neutral")
+    # 别人的记忆不该混进来
+    await repo.add_member_memory(group_id="100", user_id="77", kind="偏好", content="不关他的事", sensitivity="neutral")
+
+    lines = await repo.prompt_lines_for_private_member(user_id="42", include_sensitive=True)
+    joined = "\n".join(lines)
+    assert "你在群 100 认识的" in joined and "你在群 200 认识的" in joined
+    assert "你们私聊里聊过的" in joined
+    assert "最近在闹分手" in joined  # 私聊允许敏感类
+    assert "不关他的事" not in joined
+
+    # 不过滤敏感度时只有中性/关系
+    conservative = "\n".join(await repo.prompt_lines_for_private_member(user_id="42", include_sensitive=False))
+    assert "最近在闹分手" not in conservative
+
+
+async def test_sample_search_is_session_scoped(persona_store) -> None:
+    """群内只搜本群、私聊只搜自己的私聊，不再出现"私聊里冒出别的群的话"。"""
+    for group_id, text in [("100", "群100的话"), ("200", "群200的话")]:
+        await persona_store.samples.record_sample(
+            platform="qq",
+            user_id="42",
+            group_id=group_id,
+            message_id=f"{group_id}-1",
+            plain_text=text,
+            training_text=text,
+            raw_segments=[],
+            stickers=[],
+            learn_reason="accepted",
+        )
+    await persona_store.samples.record_sample(
+        platform="qq",
+        user_id="42",
+        group_id=None,
+        message_id="dm-1",
+        plain_text="私聊的话",
+        training_text="私聊的话",
+        raw_segments=[],
+        stickers=[],
+        learn_reason="accepted",
+    )
+
+    in_group = await persona_store.search_context_samples(group_id="100", query="的话", limit=10)
+    assert [item["plain_text"] for item in in_group] == ["群100的话"]
+
+    in_private = await persona_store.search_context_samples(group_id=None, user_id="42", query="的话", limit=10)
+    assert [item["plain_text"] for item in in_private] == ["私聊的话"]
+
+    global_hits = await persona_store.search_context_samples(
+        group_id=None, user_id="42", query="的话", limit=10, global_scope=True
+    )
+    assert len(global_hits) == 3  # 运维显式要求跨会话时才允许

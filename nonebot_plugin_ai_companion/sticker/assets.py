@@ -251,12 +251,14 @@ class StickerAssetRepo:
         query: str,
         limit: int,
         max_age_hours: int = 0,
+        global_scope: bool = False,
     ) -> list[dict[str, Any]]:
         return await asyncio.to_thread(
             self._search_media_assets_sync,
             group_id=group_id,
             query=query,
             limit=limit,
+            global_scope=global_scope,
             max_age_hours=max_age_hours,
         )
 
@@ -267,6 +269,7 @@ class StickerAssetRepo:
         query: str,
         limit: int,
         max_age_hours: int = 0,
+        global_scope: bool = False,
     ) -> list[dict[str, Any]]:
         self.db.ensure_schema()
         terms = context_search_terms(query)
@@ -279,8 +282,13 @@ class StickerAssetRepo:
         scored: list[tuple[int, float, dict[str, Any]]] = []
         for item in rows:
             metadata = self.db.json_object(item.get("metadata_json"))
-            if group_id and str(metadata.get("group_id") or "") != str(group_id):
-                continue
+            meta_group = str(metadata.get("group_id") or "")
+            if not global_scope:
+                # 群内只认本群素材；私聊只认私聊来源（group 为空），避免串群
+                if group_id and meta_group != str(group_id):
+                    continue
+                if not group_id and meta_group:
+                    continue
             haystack = self._media_asset_search_haystack(item, metadata)
             score = sum(len(term) for term in terms if term in haystack)
             if score <= 0:

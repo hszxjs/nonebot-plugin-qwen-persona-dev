@@ -40,8 +40,11 @@ class LearningService:
         self.conversation_pattern_tracker = conversation_pattern_tracker
 
     async def handle_learn(self, bot: Bot, event: Event) -> None:
-        if not self.config.ai_companion_enable_learning:
-            return
+        """被动学习 + 会话时间线。
+
+        两者用途不同，门控也分开：时间线是"回复上下文"（命令/黑名单/自己发的除外，
+        短消息与长消息都要），学习语料还额外要过长度与噪声过滤；关掉学习不影响时间线。
+        """
         try:
             message = event.get_message()
         except Exception:
@@ -81,9 +84,15 @@ class LearningService:
             self.conversation_pattern_tracker.reset(ids["group_id"])
             return
 
+        stickers = list(learning["stickers"])
+        # 会话时间线先写：不看学习开关、不看长度阈值（"6""草"这类垫话也是群聊上下文的一部分）
+        await self._record_conversation_turn(event, ids, plain_text=plain_text, stickers=stickers)
+        if not self.config.ai_companion_enable_learning:
+            self.conversation_pattern_tracker.reset(ids["group_id"])
+            return
+
         await self._record_learning_sticker_events(ids, list(learning.get("sticker_events") or []))
 
-        stickers = list(learning["stickers"])
         training_text = str(learning["training_text"])
         decision = should_learn_text(
             training_text,
@@ -126,7 +135,6 @@ class LearningService:
             stickers=stickers,
             learn_reason=decision.reason,
         )
-        await self._record_conversation_turn(event, ids, plain_text=plain_text, stickers=stickers)
         if not pattern_allowed:
             return
         candidate = self.conversation_pattern_tracker.observe(
