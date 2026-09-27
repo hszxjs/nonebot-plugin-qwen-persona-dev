@@ -21,13 +21,14 @@ logger = logging.getLogger(__name__)
 
 SummaryChat = Callable[[str], Awaitable[str]]
 
-SUMMARY_PROMPT = """你在维护一个 QQ 群的「最近话题摘要」，供机器人在群里接话时参考。
+SUMMARY_PROMPT = """你在维护一个 QQ 群的「当前在聊的话题」，供机器人在群里接话时参考。
 
-把「已有摘要」和「新增对话」合并成一段新的摘要，要求：
-1. 只写这个群最近在聊什么、进行到哪一步、有哪些未结的事与约定；不要流水账、不要复述每句话。
-2. 保留仍然有效的信息，丢掉已经过时的；总长不超过 150 字。
-3. 不写机器人自身的运行规则，不写隐私性内容（真实姓名/住址/联系方式/经济状况）。
-4. 只输出摘要正文，不要标题、不要解释、不要引号。
+把「已有摘要」和「新增对话」合并成最新的并行话题列表，要求：
+1. 群里可能同时在聊好几件事：最多输出 3 条，每条一行，各自独立、互不混淆。
+2. 每条只写「在聊什么 + 到哪一步了（未结的事/约定）」，一行不超过 40 字；不要流水账、不要复述每句话。
+3. 保留仍然有效的话题，丢掉已经结束或过时的；只有一件事就只输出一行。
+4. 不写机器人自身的运行规则或表现，不写隐私性内容（真实姓名/住址/联系方式/经济状况）。
+5. 只输出话题本身，每行以「- 」开头，不要标题、不要解释、不要引号。
 
 【已有摘要】
 {previous}
@@ -37,6 +38,7 @@ SUMMARY_PROMPT = """你在维护一个 QQ 群的「最近话题摘要」，供�
 """
 
 MAX_SUMMARY_CHARS = 300
+MAX_SUMMARY_LINES = 3
 
 
 @dataclass
@@ -108,7 +110,12 @@ class GroupSummaryRepo:
         updated_at: float | None = None,
     ) -> None:
         await asyncio.to_thread(
-            self._upsert_sync, str(group_id or ""), str(summary or ""), int(covered_turn_id), int(turns_covered), updated_at
+            self._upsert_sync,
+            str(group_id or ""),
+            str(summary or ""),
+            int(covered_turn_id),
+            int(turns_covered),
+            updated_at,
         )
 
     def _upsert_sync(
@@ -148,13 +155,28 @@ class GroupSummaryRepo:
 
 
 def clean_summary_text(raw: str) -> str:
-    """清洗模型输出：去引号/标题/换行，压成一段。"""
-    text = str(raw or "").strip()
-    for prefix in ("摘要：", "摘要:", "【摘要】", "- "):
-        if text.startswith(prefix):
-            text = text[len(prefix) :].strip()
-    text = " ".join(text.split()).strip('“”"\' ')
-    return text[:MAX_SUMMARY_CHARS]
+    """清洗模型输出：每条一行、最多 3 条并行话题，去掉标题、引号与 bot 元信息。"""
+    from ..memory.bot_meta import looks_like_bot_meta
+
+    lines: list[str] = []
+    for raw_line in str(raw or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        for prefix in ("摘要：", "摘要:", "【摘要】", "- ", "•", "*", "1.", "2.", "3."):
+            if line.startswith(prefix):
+                line = line[len(prefix) :].strip()
+        line = " ".join(line.split()).strip("“”\"' ")
+        if line and looks_like_bot_meta(line):
+            continue  # 摘要不该写"机器人在调试/复读"这类自身机制
+        if line and line not in lines:
+            lines.append(line)
+    return "\n".join(lines[:MAX_SUMMARY_LINES])[:MAX_SUMMARY_CHARS]
+
+
+def summary_lines(summary: str) -> list[str]:
+    """摘要 → 列表（兼容旧的一段式摘要）。"""
+    return [line.strip() for line in str(summary or "").splitlines() if line.strip()]
 
 
 async def update_group_summary(
@@ -237,8 +259,10 @@ __all__ = [
     "GroupSummary",
     "GroupSummaryRepo",
     "MAX_SUMMARY_CHARS",
+    "MAX_SUMMARY_LINES",
     "SUMMARY_PROMPT",
     "clean_summary_text",
     "run_summary_round",
+    "summary_lines",
     "update_group_summary",
 ]

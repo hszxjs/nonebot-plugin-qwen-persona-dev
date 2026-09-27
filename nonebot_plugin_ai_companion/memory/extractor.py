@@ -14,6 +14,7 @@ from typing import Any
 
 from ..conversation.model import ConversationTurn
 from ..conversation.repo import ConversationRepo, MemberNameRepo
+from .bot_meta import looks_like_bot_meta
 from .persona_memory import (
     ALL_KINDS,
     SENSITIVITIES,
@@ -43,12 +44,33 @@ EXTRACT_PROMPT = """你在维护一个 QQ 群的长期记忆库。下面是该�
    群里玩插件或游戏这类只概括成一句「本群在玩什么」，不要写具体命令、参数与机制。
 6. 成员条目的 user_id 只能填对话记录开头给出的说话人编号（M1/M2…），
    不要编造编号，也不要把编号写进 content。
-7. 没有值得记的就返回空数组。
+7. 如果一条新信息其实是在修正/补充下面的「已有记忆」，就填 existing_id 表示更新它，
+   不要再新增一条重复的（同一件事只能有一条记忆）。
+8. 没有值得记的就返回空数组。
 
 只输出 JSON，不要解释。格式：
 {"memories": [{"scope": "group", "kind": "梗", "content": "...", "importance": 3, "sensitivity": "neutral"},
-              {"scope": "member", "user_id": "12345", "kind": "偏好", "content": "...", "importance": 2, "sensitivity": "neutral"}]}
+              {"scope": "member", "user_id": "M1", "kind": "偏好", "content": "...", "importance": 2, "sensitivity": "neutral"},
+              {"scope": "group", "existing_id": 12, "kind": "梗", "content": "（更新后的说法）", "importance": 4, "sensitivity": "neutral"}]}
 """
+
+
+def parse_ok(raw: str) -> bool:
+    """模型是否给出了可解析的 JSON 结构（用来判断"没有记忆"还是"根本没答对"）。"""
+    import json as _json
+
+    text = str(raw or "").strip()
+    if not text:
+        return False
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        return False
+    try:
+        payload = _json.loads(text[start : end + 1])
+    except (_json.JSONDecodeError, ValueError):
+        return False
+    return isinstance(payload, dict) and isinstance(payload.get("memories"), list)
 
 
 def parse_memories(raw: str) -> list[dict[str, Any]]:
@@ -79,8 +101,8 @@ def parse_memories(raw: str) -> list[dict[str, Any]]:
         if scope not in {"group", "member"}:
             continue
         content = " ".join(str(item.get("content") or "").split()).strip()
-        if not content:
-            continue
+        if not content or looks_like_bot_meta(content, scope=scope):
+            continue  # 群层面挡机制描述；成员层面只挡"机器人自己怎么运行"
         kind = str(item.get("kind") or "").strip()[:12]
         if kind not in ALL_KINDS:
             kind = "事实" if scope == "group" else "偏好"
@@ -98,6 +120,14 @@ def parse_memories(raw: str) -> list[dict[str, Any]]:
             "importance": importance,
             "sensitivity": sensitivity,
         }
+        raw_existing = item.get("existing_id")
+        if raw_existing is not None:
+            try:
+                existing_id = int(str(raw_existing).strip())
+                if existing_id > 0:
+                    entry["existing_id"] = existing_id
+            except (TypeError, ValueError):
+                pass
         if scope == "member":
             user_id = str(item.get("user_id") or "").strip()
             if not user_id:
@@ -105,6 +135,26 @@ def parse_memories(raw: str) -> list[dict[str, Any]]:
             entry["user_id"] = user_id
         cleaned.append(entry)
     return cleaned
+
+
+# 失败退避：同一会话连续失败时按 5/10/20…分钟退避，避免每隔几分钟重复烧钱与刷日志
+_FAILURE_BACKOFF: dict[str, tuple[int, float]] = {}
+
+
+def _failure_backoff_until(session_key: str, now: float) -> float:
+    count, until = _FAILURE_BACKOFF.get(session_key, (0, 0.0))
+    return until if count else 0.0
+
+
+def _record_failure(session_key: str, now: float) -> None:
+    count, _until = _FAILURE_BACKOFF.get(session_key, (0, 0.0))
+    count += 1
+    delay = min(3600.0, 300.0 * (2 ** (count - 1)))
+    _FAILURE_BACKOFF[session_key] = (count, now + delay)
+
+
+def _clear_failure(session_key: str) -> None:
+    _FAILURE_BACKOFF.pop(session_key, None)
 
 
 def build_batch_context(
@@ -128,7 +178,9 @@ def build_batch_context(
             continue
         alias = f"M{len(user_by_alias) + 1}"
         user_by_alias[alias] = user_id
-        label_by_user[user_id] = f"{alias}（{safe_speaker_name(turn.speaker_name or names.get(user_id, ''), user_id=user_id)}）"
+        label_by_user[user_id] = (
+            f"{alias}（{safe_speaker_name(turn.speaker_name or names.get(user_id, ''), user_id=user_id)}）"
+        )
 
     lines: list[str] = []
     for turn in turns:
@@ -167,13 +219,52 @@ async def extract_session_memories(
         return {"group_saved": 0, "member_saved": 0, "skipped": 0}
 
     lines, user_by_alias = build_batch_context(batch, names=names)
-    prompt = EXTRACT_PROMPT + "\n\n【对话记录】\n" + "\n".join(lines[-max_turns:])
+
+    # 已有记忆：给模型看 id，让它选择"更新"而不是重复新增（语义去重只有模型做得到）
+    existing_blocks: list[str] = []
+    existing_ids: dict[int, str] = {}
+    if not private_user_id:
+        group_rows = await memories.list_memories(scope="group", group_id=group_id, limit=30)
+        if group_rows:
+            existing_blocks.append("群记忆：")
+            for record in group_rows:
+                existing_ids[record.id] = "group"
+                existing_blocks.append(f"  #{record.id} [{record.kind}] {record.content}")
+    member_ids = list(user_by_alias.values())
+    for user_id in member_ids:
+        rows = await memories.list_memories(
+            scope="member", group_id=("" if private_user_id else group_id), user_id=user_id, limit=20
+        )
+        if not rows:
+            continue
+        alias = next((k for k, v in user_by_alias.items() if v == user_id), user_id)
+        existing_blocks.append(f"{alias} 的成员记忆：")
+        for record in rows:
+            existing_ids[record.id] = "member"
+            existing_blocks.append(f"  #{record.id} [{record.kind}] {record.content}")
+
+    prompt = EXTRACT_PROMPT
+    if existing_blocks:
+        prompt += "\n\n【已有记忆】（重复的请用 existing_id 更新，不要新增）\n" + "\n".join(existing_blocks)
+    prompt += "\n\n【对话记录】\n" + "\n".join(lines[-max_turns:])
     runner = chat or data_cleaning_chat
     raw = await runner(prompt)
     entries = parse_memories(raw)
+    parsed = parse_ok(raw)
 
-    group_saved = member_saved = skipped = 0
+    group_saved = member_saved = skipped = updated = 0
     for entry in entries:
+        existing_id = int(entry.get("existing_id") or 0)
+        if existing_id and existing_ids.get(existing_id):
+            changed = await memories.update_memory(
+                scope=existing_ids[existing_id],
+                memory_id=existing_id,
+                content=str(entry["content"]),
+                importance=float(entry["importance"]),
+                sensitivity=str(entry["sensitivity"]),
+            )
+            updated += 1 if changed else 0
+            continue
         if entry["scope"] == "group":
             if private_user_id:
                 skipped += 1  # 私聊不是群，不产生群记忆
@@ -201,7 +292,13 @@ async def extract_session_memories(
                 sensitivity=str(entry["sensitivity"]),
             )
             member_saved += 1 if saved else 0
-    return {"group_saved": group_saved, "member_saved": member_saved, "skipped": skipped}
+    return {
+        "group_saved": group_saved,
+        "member_saved": member_saved,
+        "updated": updated,
+        "skipped": skipped,
+        "parse_ok": parsed,
+    }
 
 
 async def run_memory_extraction_round(
@@ -241,6 +338,9 @@ async def run_memory_extraction_round(
             group_id=scope_id if not is_private else None,
             user_ids=[str(turn.user_id or "") for turn in pending if str(turn.user_id or "").strip()],
         )
+        backoff_until = _failure_backoff_until(session_key, current)
+        if backoff_until > current:
+            continue  # 上一轮失败：退避期内不重复烧钱
         try:
             outcome = await extract_session_memories(
                 session_key=session_key,
@@ -253,9 +353,17 @@ async def run_memory_extraction_round(
                 max_turns=max_turns,
             )
         except Exception as exc:  # noqa: BLE001 — 抽取失败不影响其它会话，下次再试
+            _record_failure(session_key, current)
             logger.warning(f"memory extraction failed for {session_key}: {exc!r}")
             results.append({"session_key": session_key, "error": f"{type(exc).__name__}: {exc}"})
             continue
+        if not outcome.get("parse_ok", True):
+            # 模型没给出可解析结构：不推进游标，退避后重试同一批（否则这批对话被静默跳过）
+            _record_failure(session_key, current)
+            logger.warning(f"memory extraction unparsable for {session_key}; cursor stays put")
+            results.append({"session_key": session_key, "error": "unparsable output"})
+            continue
+        _clear_failure(session_key)
         await memories.mark_extracted(
             session_key=session_key,
             last_turn_id=int(pending[-1].id or last_turn_id),
@@ -271,6 +379,7 @@ async def run_memory_extraction_round(
 __all__ = [
     "EXTRACT_PROMPT",
     "build_batch_context",
+    "parse_ok",
     "extract_session_memories",
     "parse_memories",
     "run_memory_extraction_round",

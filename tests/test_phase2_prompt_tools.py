@@ -59,12 +59,8 @@ def test_prompt_segments_default_matches_expected_output() -> None:
 def test_prompt_segments_switch_to_assistant_mode() -> None:
     """被点名/私聊时切「助手」段：直给答案，不用群聊口气绕弯。"""
     config = AiCompanionConfig()
-    member_output = build_system_prompt(
-        PromptContext(config=config, tool_registry=ToolRegistry(), mode="member")
-    )
-    assistant_output = build_system_prompt(
-        PromptContext(config=config, tool_registry=ToolRegistry(), mode="assistant")
-    )
+    member_output = build_system_prompt(PromptContext(config=config, tool_registry=ToolRegistry(), mode="member"))
+    assistant_output = build_system_prompt(PromptContext(config=config, tool_registry=ToolRegistry(), mode="assistant"))
     assert "和群友一起聊天" in member_output and "按「助手」口气回复" not in member_output
     assert "按「助手」口气回复" in assistant_output and "和群友一起聊天" not in assistant_output
 

@@ -17,6 +17,7 @@ class MemoryPatchPayload(BaseModel):
     content: str | None = None
     importance: float | None = None
     sensitivity: str | None = None
+    restore: bool = False  # 把已过期的记忆恢复注入
 
 
 class MemoryPurgePayload(BaseModel):
@@ -89,6 +90,7 @@ def build_router(
             content=payload.content,
             importance=payload.importance,
             sensitivity=payload.sensitivity,
+            restore=bool(payload.restore),
         )
         if not updated:
             raise HTTPException(status_code=404, detail="memory not found or nothing to update")
@@ -105,12 +107,30 @@ def build_router(
 
     @router.post("/persona-memories/purge")
     async def purge_member(payload: MemoryPurgePayload) -> dict[str, Any]:
-        """一键清除某成员在本群的记忆（可删可控的兜底手段）。"""
+        """一键清除某成员在本群的痕迹：记忆 + 时间线原话 + 昵称。
+
+        只删记忆是不够的：原话留在时间线里会被下一轮回复当历史注入，
+        抽取也会从同样的内容里把记忆重新长出来。
+        """
         repo = memory_repo()
         if not payload.group_id.strip() or not payload.user_id.strip():
             raise HTTPException(status_code=400, detail="group_id and user_id are required")
         deleted = await repo.purge_member(group_id=payload.group_id, user_id=payload.user_id)
-        return {"ok": True, "deleted": deleted}
+        cleared_turns = 0
+        if store is not None:
+            cleared_turns = await store.conversation.anonymize_user_turns(
+                user_id=payload.user_id, scope_group_id=payload.group_id
+            )
+            await store.member_names.delete_name(group_id=payload.group_id, user_id=payload.user_id)
+            # 抽取进度回退到"已读但无内容"：下次抽取看到的是空文本，不会再长出同样的记忆
+            state = (await repo.get_extraction_states()).get(f"group:{payload.group_id}")
+            if state is not None:
+                await repo.mark_extracted(
+                    session_key=f"group:{payload.group_id}",
+                    last_turn_id=state.last_turn_id,
+                    ran_at=state.last_run_at,
+                )
+        return {"ok": True, "deleted": deleted, "cleared_turns": cleared_turns}
 
     @router.post("/persona-memories/extract")
     async def extract_now(payload: MemoryExtractPayload) -> dict[str, Any]:
@@ -133,10 +153,9 @@ def build_router(
             if payload.force
             else float(getattr(config, "ai_companion_memory_extract_interval_seconds", 1800)),
             max_turns=min(max(50, int(payload.max_turns)), 1000),
-            disabled_groups={target} if not target else set(),
+            # 指定群时只跑该群（其余全部跳过）；不指定时保留禁用名单
+            disabled_groups=({f"group:{target}"} if target else disabled),
         )
-        if target:
-            results = [item for item in results if item.get("session_key") == f"group:{target}"]
         saved = sum(int(item.get("group_saved", 0)) + int(item.get("member_saved", 0)) for item in results)
         failed = [item for item in results if item.get("error")]
         return {"results": results, "saved": saved, "failed": len(failed)}

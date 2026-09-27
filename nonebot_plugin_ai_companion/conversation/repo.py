@@ -55,10 +55,13 @@ class ConversationRepo:
         await asyncio.to_thread(self._insert_sync, turn)
 
     def _insert_sync(self, turn: ConversationTurn) -> None:
+        from .threads import DEFAULT_THREAD_WINDOW_SECONDS, infer_thread
+
         self.db.ensure_schema()
         row = turn.to_row()
+        window_seconds = float(getattr(self, "thread_window_seconds", DEFAULT_THREAD_WINDOW_SECONDS) or 0.0)
         with self.db.connection() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO conversation_turns (
                     session_key, group_id, user_id, speaker_kind, speaker_name, text,
@@ -79,6 +82,41 @@ class ConversationRepo:
                     row["created_at"],
                 ),
             )
+            new_id = int(cursor.lastrowid or 0)
+            if new_id and window_seconds > 0:
+                # 线程推断：显式引用优先，其次"窗口内的上一条"
+                recent_rows = conn.execute(
+                    """
+                    SELECT id, user_id, speaker_kind, source_message_id, thread_id, created_at
+                    FROM conversation_turns
+                    WHERE session_key = ? AND id < ?
+                    ORDER BY id DESC LIMIT ?
+                    """,
+                    (row["session_key"], new_id, 60),
+                ).fetchall()
+                previous = [
+                    {
+                        "id": int(item["id"]),
+                        "user_id": item["user_id"],
+                        "speaker_kind": str(item["speaker_kind"] or ""),
+                        "source_message_id": str(item["source_message_id"] or ""),
+                        "thread_id": int(item["thread_id"] or 0),
+                        "created_at": float(item["created_at"] or 0.0),
+                    }
+                    for item in reversed(recent_rows)
+                ]
+                assignment = infer_thread(
+                    previous,
+                    new_turn_id=new_id,
+                    user_id=row["user_id"],
+                    created_at=float(row["created_at"]),
+                    reply_to_message_id=str(row["reply_to_message_id"] or ""),
+                    window_seconds=window_seconds,
+                )
+                conn.execute(
+                    "UPDATE conversation_turns SET thread_id = ?, reply_to_turn_id = ? WHERE id = ?",
+                    (assignment.thread_id, assignment.reply_to_turn_id, new_id),
+                )
 
     # ---- 读取 ----
     async def recent_turns(
@@ -110,6 +148,80 @@ class ConversationRepo:
             rows = conn.execute(sql, tuple(params)).fetchall()
         return [turn_from_row(row) for row in reversed(rows)]
 
+    async def backfill_threads(self, *, window_seconds: float = 0.0) -> dict[str, int]:
+        """给历史 turn 补线程字段（幂等：thread_id 已有值就跳过整段）。"""
+        return await asyncio.to_thread(self._backfill_threads_sync, float(window_seconds or 0.0))
+
+    def _backfill_threads_sync(self, window_seconds: float) -> dict[str, int]:
+        from .threads import DEFAULT_THREAD_WINDOW_SECONDS, infer_thread
+
+        window = window_seconds or DEFAULT_THREAD_WINDOW_SECONDS
+        self.db.ensure_schema()
+        updated_sessions = updated_rows = 0
+        with self.db.connection() as conn:
+            sessions = [
+                str(row["session_key"])
+                for row in conn.execute("SELECT DISTINCT session_key FROM conversation_turns").fetchall()
+            ]
+            for session_key in sessions:
+                rows = conn.execute(
+                    """
+                    SELECT id, user_id, speaker_kind, source_message_id, thread_id, created_at
+                    FROM conversation_turns WHERE session_key = ? ORDER BY id ASC
+                    """,
+                    (session_key,),
+                ).fetchall()
+                if rows and all(int(row["thread_id"] or 0) for row in rows):
+                    continue  # 已算过
+                previous: list[dict[str, object]] = []
+                touched = 0
+                for row in rows:
+                    turn_id = int(row["id"])
+                    assignment = infer_thread(
+                        previous[-60:],
+                        new_turn_id=turn_id,
+                        user_id=row["user_id"],
+                        created_at=float(row["created_at"] or 0.0),
+                        reply_to_message_id=str(row["source_message_id"] or ""),
+                        window_seconds=window,
+                    )
+                    conn.execute(
+                        "UPDATE conversation_turns SET thread_id = ?, reply_to_turn_id = ? WHERE id = ?",
+                        (assignment.thread_id, assignment.reply_to_turn_id, turn_id),
+                    )
+                    touched += 1
+                    previous.append(
+                        {
+                            "id": turn_id,
+                            "user_id": row["user_id"],
+                            "speaker_kind": str(row["speaker_kind"] or ""),
+                            "source_message_id": str(row["source_message_id"] or ""),
+                            "thread_id": assignment.thread_id,
+                            "created_at": float(row["created_at"] or 0.0),
+                        }
+                    )
+                updated_sessions += 1
+                updated_rows += touched
+        logger.info(f"conversation thread backfill: sessions={updated_sessions} rows={updated_rows}")
+        return {"sessions": updated_sessions, "rows": updated_rows}
+
+    async def recent_thread_turns(self, *, session_key: str, thread_id: int, limit: int = 12) -> list[ConversationTurn]:
+        """取某条线程最近的若干 turn（正序）。"""
+        return await asyncio.to_thread(self._recent_thread_turns_sync, session_key, int(thread_id), int(limit))
+
+    def _recent_thread_turns_sync(self, session_key: str, thread_id: int, limit: int) -> list[ConversationTurn]:
+        self.db.ensure_schema()
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM conversation_turns
+                WHERE session_key = ? AND thread_id = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (session_key, thread_id, max(1, int(limit))),
+            ).fetchall()
+        return [turn_from_row(row) for row in reversed(rows)]
+
     async def turns_after(self, *, session_key: str, after_id: int, limit: int = 200) -> list[ConversationTurn]:
         """增量读取：id 大于 after_id 的 turn（旧 → 新），记忆抽取用。"""
         return await asyncio.to_thread(self._turns_after_sync, session_key, int(after_id), max(1, int(limit)))
@@ -126,6 +238,34 @@ class ConversationRepo:
                 (session_key, after_id, limit),
             ).fetchall()
         return [turn_from_row(row) for row in rows]
+
+    async def anonymize_user_turns(self, *, user_id: str, scope_group_id: str | None = None) -> int:
+        """抹掉某成员在时间线里的发言内容（保留行结构，避免线程断裂）。
+
+        "一键清除某人的记忆"必须连原话一起清：否则下一轮回复还会把他的原话
+        当作历史注入，抽取也会从同样的内容里重新长出记忆。
+        """
+        return await asyncio.to_thread(self._anonymize_user_turns_sync, str(user_id or ""), scope_group_id)
+
+    def _anonymize_user_turns_sync(self, user_id: str, scope_group_id: str | None) -> int:
+        if not user_id:
+            return 0
+        self.db.ensure_schema()
+        with self.db.connection() as conn:
+            if scope_group_id:
+                cursor = conn.execute(
+                    """
+                    UPDATE conversation_turns SET text = '', sticker_keys = '[]'
+                    WHERE user_id = ? AND group_id = ?
+                    """,
+                    (user_id, scope_group_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "UPDATE conversation_turns SET text = '', sticker_keys = '[]' WHERE user_id = ?",
+                    (user_id,),
+                )
+            return int(cursor.rowcount or 0)
 
     async def count_turns(self, *, session_key: str | None = None) -> int:
         return await asyncio.to_thread(self._count_turns_sync, session_key)
@@ -289,6 +429,20 @@ class MemberNameRepo:
                 (group_id, *user_ids),
             ).fetchall()
         return {str(row["user_id"]): str(row["name"] or "") for row in rows if str(row["name"] or "").strip()}
+
+    async def delete_name(self, *, group_id: str, user_id: str) -> bool:
+        return await asyncio.to_thread(self._delete_name_sync, str(group_id or ""), str(user_id or ""))
+
+    def _delete_name_sync(self, group_id: str, user_id: str) -> bool:
+        if not user_id:
+            return False
+        self.db.ensure_schema()
+        with self.db.connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM member_names WHERE user_id = ? AND group_id IN (?, '')",
+                (user_id, group_id),
+            )
+            return bool(cursor.rowcount)
 
     async def list_names(self, *, group_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._list_names_sync, (group_id or "") if group_id is not None else None, limit)

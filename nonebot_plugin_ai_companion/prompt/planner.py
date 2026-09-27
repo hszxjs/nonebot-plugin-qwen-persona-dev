@@ -54,6 +54,8 @@ def build_reply_plan(
     *,
     system_prompt: str,
     history_lines: list[str] | None = None,
+    current_thread_lines: list[str] | None = None,
+    current_thread_participants: list[str] | None = None,
     conversation_lines: list[str] | None = None,
     style_memory_lines: list[str] | None = None,
     active_memes: list[dict[str, Any]] | None = None,
@@ -73,8 +75,18 @@ def build_reply_plan(
     # 绝不能把 history_lines 再塞一遍：那会让同一段对话同时以"事实"和"不能当事实"出现。
     style_memory = _clean_lines(style_memory_lines)
 
+    thread_lines = _clean_lines(current_thread_lines)
+    thread_people = [str(item).strip() for item in (current_thread_participants or []) if str(item).strip()]
+
     user_parts: list[str] = []
     user_parts.append(f"回复意图：{intent.value}")
+    if thread_lines:
+        who = "、".join(thread_people[:6]) if thread_people else "群里几个人"
+        user_parts.append(
+            f"你正准备接的这条话题（参与者：{who}）：\n"
+            + "\n".join(thread_lines)
+            + "\n只回这一条线，不要同时回其他人；引用里已经指向你回应的那条消息。"
+        )
     if history:
         user_parts.append(
             "最近的会话记录（群里有多个人在说话：「昵称：」是说话人，「你：」是你自己之前说过的话；"

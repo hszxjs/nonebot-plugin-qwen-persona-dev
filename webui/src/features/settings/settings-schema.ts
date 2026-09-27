@@ -276,6 +276,23 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
     control: "switch",
   },
   {
+    name: "ai_companion_thread_enabled",
+    label: "话题线程",
+    description: "把消息串成「谁在接谁的话」，历史里渲染成「阿强 → 小红：…」，回复时聚焦一条线。",
+    section: "learning",
+    control: "switch",
+  },
+  {
+    name: "ai_companion_thread_window_seconds",
+    label: "线程推断窗口（秒）",
+    description: "没有引用/@ 时，多久内的上一条消息算作「在接这句话」。",
+    section: "learning",
+    control: "number",
+    min: 30,
+    max: 3600,
+    step: 30,
+  },
+  {
     name: "ai_companion_reply_quote",
     label: "回复引用",
     description: "回复时引用触发它的那条消息，群里看得出在接谁的话；长文合并转发无法引用。",

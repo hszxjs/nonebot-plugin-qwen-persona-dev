@@ -61,6 +61,9 @@ class AiCompanionConfig(BaseModel):
     ai_companion_context_scope: Literal["group", "global", "mixed"] = "mixed"
     # 送进提示词的最近对话条数：在线 LLM 用满该值，本地 MLX 按序列长度自动压小。
     ai_companion_context_messages: int = 40
+    # 话题线程：把消息串成「谁在接谁的话」（显式引用优先，其次窗口内的上一条）。
+    ai_companion_thread_enabled: bool = True
+    ai_companion_thread_window_seconds: int = 300
     # 回复时引用触发它的那条消息（群里看得出在接谁的话）；长文合并转发无法引用。
     ai_companion_reply_quote: bool = True
     # ---- 长期记忆（群记忆 / 成员记忆）：批量增量抽取 + 敏感度分级注入 ----

@@ -22,6 +22,8 @@ from .context.nicknames import NicknameResolver
 from .context.relevance import check_media_relevance
 from .contracts import MediaCaptioner
 from .conversation.model import SPEAKER_BOT, session_key_for
+from .conversation.summary import summary_lines
+from .conversation.threads import current_thread_digest
 from .conversation.window import collect_user_ids, render_history_lines, safe_speaker_name
 from .decision.gates import (
     ReplyDecision,
@@ -111,11 +113,8 @@ class ChatService:
         self.provider_resolver = provider_resolver
         self.message_logs = message_log_repo
         self.background_media_tasks: set[asyncio.Task[None]] = set()
-        self.interjection_limiter = InterjectionLimiter(
-            cooldown_seconds=float(getattr(self.config, "ai_companion_group_cooldown_seconds", 45)),
-            hourly_limit=int(getattr(self.config, "ai_companion_group_hourly_limit", 20)),
-            heat_window_seconds=float(getattr(self.config, "ai_companion_heat_window_seconds", 120)),
-        )
+        # 传 config：阈值热读，改配置立即生效（不必重启）
+        self.interjection_limiter = InterjectionLimiter(config=self.config)
 
     # ------------------------------------------------------------------
     # 入口
@@ -426,15 +425,19 @@ class ChatService:
             return None
         try:
             if str(runtime.status_snapshot().get("state") or "") != "loaded":
-                logger.warning(f"ai companion online backend failed ({error!r}); local mlx not loaded, skipping fallback")
+                logger.warning(
+                    f"ai companion online backend failed ({error!r}); local mlx not loaded, skipping fallback"
+                )
                 return None
         except Exception:  # noqa: BLE001 — 状态取不到就按未加载处理
             return None
         timeout = float(getattr(self.config, "ai_companion_fallback_timeout_seconds", 120.0) or 120.0)
         logger.warning(f"ai companion online backend failed ({error!r}); falling back to local MLX")
+        # 本地模型上下文小得多：把在线预算拼出来的消息截到本地能吃的长度
+        messages = _trim_messages_for_local(reply_plan.messages)
         try:
             return await asyncio.wait_for(
-                runtime.chat(reply_plan.messages, media_parts=reply_plan.media_parts),
+                runtime.chat(messages, media_parts=reply_plan.media_parts),
                 timeout=timeout,
             )
         except Exception as fallback_exc:  # noqa: BLE001 — 兜底也失败就向上抛原始错误
@@ -594,10 +597,12 @@ class ChatService:
         group_id = ids.get("group_id")
         if group_id:
             self.interjection_limiter.observe_message(group_id=group_id, user_id=str(ids.get("user_id") or ""))
+        if group_id and force_reply:
+            self.interjection_limiter.mark_addressed(group_id=group_id)
         weighted = weighted_probability(
             InterjectionInput(
                 base_probability=float(self.config.ai_companion_reply_probability),
-                addressed_recently=False,
+                addressed_recently=self.interjection_limiter.was_addressed_recently(group_id=group_id or ""),
                 heat_messages=self.interjection_limiter.heat_messages(group_id=group_id or ""),
                 heat_min_messages=int(getattr(self.config, "ai_companion_heat_min_messages", 5)),
                 same_speaker_as_last_reply=self.interjection_limiter.same_speaker_as_last_reply(
@@ -702,8 +707,14 @@ class ChatService:
     # ------------------------------------------------------------------
     # 提示词计划
     # ------------------------------------------------------------------
-    def _reply_mode(self, *, group_id: str | None, envelope: MessageContextEnvelope) -> str:
-        """成员模式 vs 助手模式：私聊、被 @、被回复 → 助手口气；群里未被叫 → 成员口气。"""
+    def _reply_mode(self, *, group_id: str | None, envelope: MessageContextEnvelope, has_card: bool = False) -> str:
+        """成员模式 vs 助手模式。
+
+        绑了人格卡时一律走成员段：人格怎么说话由卡决定（绑了大肥鱼就该咕噜咕噜），
+        代码只负责在没绑卡的会话里给一个稳妥的默认口气。
+        """
+        if has_card:
+            return "member"
         if group_id is None:
             return "assistant"
         if envelope.forced_by_at:
@@ -828,8 +839,13 @@ class ChatService:
         # 记忆注入：群记忆 + 在场成员（说话人 / 被@ / 被引用）的记忆，按敏感度分级。
         # 群聊是公开场合：即使被 @ 也只注入 neutral/relation；私聊才注入情绪与隐私类。
         memory_lines: list[str] = []
-        if "memory" in effective_segment_order(self.config) and bool(
-            getattr(self.config, "ai_companion_memory_enabled", True)
+        memory_disabled = group_id is not None and str(group_id) in {
+            str(item) for item in getattr(self.config, "ai_companion_memory_disabled_groups", [])
+        }
+        if (
+            not memory_disabled
+            and "memory" in effective_segment_order(self.config)
+            and bool(getattr(self.config, "ai_companion_memory_enabled", True))
         ):
             member_ids = [str(ids.get("user_id") or "")]
             member_ids.extend(str(target.get("qq") or "") for target in envelope.at_targets)
@@ -853,15 +869,46 @@ class ChatService:
 
         # 滚动摘要：跨小时的话题背景（scene 段）
         scene_lines: list[str] = []
-        if group_id and "scene" in effective_segment_order(self.config) and bool(
-            getattr(self.config, "ai_companion_summary_enabled", True)
+        if (
+            group_id
+            and not memory_disabled
+            and "scene" in effective_segment_order(self.config)
+            and bool(getattr(self.config, "ai_companion_summary_enabled", True))
         ):
             try:
                 summary_record = await self.store.group_summaries.get(group_id=str(group_id))
-                if summary_record and summary_record.summary.strip():
-                    scene_lines = [f"本群最近话题摘要：{summary_record.summary.strip()}"]
+                topics = summary_lines(summary_record.summary) if summary_record else []
+                if topics:
+                    scene_lines = ["本群当前在聊的话题："] + [f"- {topic}" for topic in topics]
             except Exception as exc:  # noqa: BLE001 — 摘要取不到不阻塞回复
                 logger.debug("group summary fetch skipped: %r", exc)
+
+        # 当前话题（线程）：把 bot 即将接的那条线单独拎出来，并点明参与者
+        thread_lines: list[str] = []
+        thread_participants: list[str] = []
+        if bool(getattr(self.config, "ai_companion_thread_enabled", True)):
+            try:
+                thread_id = next(
+                    (
+                        int(turn.thread_id or 0)
+                        for turn in reversed(history_turns)
+                        if str(turn.source_message_id or "") == str(ids.get("message_id") or "")
+                    ),
+                    int(history_turns[-1].thread_id or 0) if history_turns else 0,
+                )
+                if thread_id:
+                    thread_turns = await self.store.conversation.recent_thread_turns(
+                        session_key=session_key, thread_id=thread_id, limit=10
+                    )
+                    digest = current_thread_digest(
+                        [{"thread_id": int(turn.thread_id or 0), "turn": turn} for turn in thread_turns],
+                        thread_id=thread_id,
+                        names=history_names,
+                    )
+                    thread_lines = digest.lines
+                    thread_participants = digest.participants
+            except Exception as exc:  # noqa: BLE001 — 线程取不到不影响回复
+                logger.debug("thread digest skipped: %r", exc)
 
         active_memes = select_active_memes(
             build_meme_candidates_from_samples(
@@ -879,10 +926,12 @@ class ChatService:
                 user_nickname=envelope.sender_name,
                 memory_lines=memory_lines,
                 scene_lines=scene_lines,
-                mode=self._reply_mode(group_id=group_id, envelope=envelope),
+                mode=self._reply_mode(group_id=group_id, envelope=envelope, has_card=card is not None),
             ),
             conversation_lines=conversation_lines,
             history_lines=history_lines,
+            current_thread_lines=thread_lines,
+            current_thread_participants=thread_participants,
             active_memes=active_memes,
             current_text=envelope.current_text,
             media_parts=media_parts,
@@ -1478,6 +1527,25 @@ class ChatService:
         if self.background_media_tasks:
             await asyncio.gather(*self.background_media_tasks, return_exceptions=True)
             self.background_media_tasks.clear()
+
+
+LOCAL_FALLBACK_CHARS = 2000
+
+
+def _trim_messages_for_local(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """降级到本地模型时压缩上下文：系统提示词保留，user 消息只留尾部。
+
+    在线后端按 6000 字符预算拼消息，本地 MLX 的窗口小得多，直接丢过去会被截断在
+    任意位置（甚至截掉末尾的当前消息）。这里显式保留最后一段。
+    """
+    trimmed: list[dict[str, Any]] = []
+    for message in messages:
+        content = str(message.get("content") or "")
+        if message.get("role") != "user" or len(content) <= LOCAL_FALLBACK_CHARS:
+            trimmed.append(dict(message))
+            continue
+        trimmed.append({**message, "content": "（更早的上下文略）\n" + content[-LOCAL_FALLBACK_CHARS:]})
+    return trimmed
 
 
 def _extract_message_id(send_result: Any) -> str | None:

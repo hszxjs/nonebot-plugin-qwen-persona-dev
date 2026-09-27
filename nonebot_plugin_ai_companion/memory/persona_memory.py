@@ -32,7 +32,7 @@ GROUP_VISIBLE_SENSITIVITIES = (SENSITIVITY_NEUTRAL, SENSITIVITY_RELATION)
 
 DEFAULT_HALF_LIFE_DAYS = 30.0
 DEFAULT_DECAY_FLOOR = 0.4
-DEDUP_SIMILARITY = 0.6
+DEDUP_SIMILARITY = 0.5
 
 
 @dataclass(frozen=True)
@@ -80,13 +80,20 @@ def _normalize_content(text: str) -> str:
     return " ".join(str(text or "").split()).strip()
 
 
+SIMILARITY_STOP_GRAM = frozenset("的了是在有和与及指代叫说个我你他她它群里本这那")
+
+
 def _similar(left: str, right: str) -> float:
-    """字符 2-gram Jaccard 相似度（沿用长期记忆的去重口径，中文短句够用）。"""
-    a = _normalize_content(left)
-    b = _normalize_content(right)
+    """中文短句相似度：2-gram Jaccard + 包含式重合（真实改写往往只有 0.2-0.4 的 Jaccard）。
+
+    - "「雷雷」指《战争雷霆》" vs "群内用「雷雷」指代战争雷霆游戏"：字面只重合一部分；
+    - 取两者最大值：Jaccard 与"较短句有多少比例被较长句包含"。
+    """
+    a = _normalize_content(left).replace(" ", "")
+    b = _normalize_content(right).replace(" ", "")
     if not a or not b:
         return 0.0
-    if a == b:
+    if a == b or a in b or b in a:
         return 1.0
     if len(a) < 2 or len(b) < 2:
         return 0.0
@@ -94,7 +101,14 @@ def _similar(left: str, right: str) -> float:
     gram_b = {b[i : i + 2] for i in range(len(b) - 1)}
     if not gram_a or not gram_b:
         return 0.0
-    return len(gram_a & gram_b) / len(gram_a | gram_b)
+    intersection = gram_a & gram_b
+    jaccard = len(intersection) / len(gram_a | gram_b)
+    containment = len(intersection) / min(len(gram_a), len(gram_b))
+    # 只有实词 2-gram 才算数：全是"的了是在"这类虚词时不算重复
+    substantive = {gram for gram in intersection if any(ch not in SIMILARITY_STOP_GRAM for ch in gram)}
+    if len(intersection) >= 2 and not substantive:
+        return 0.0
+    return max(jaccard, containment * 0.75)
 
 
 class PersonaMemoryRepo:
@@ -162,9 +176,10 @@ class PersonaMemoryRepo:
         where = "group_id = ?" if scope == "group" else "group_id = ? AND user_id = ?"
         params: tuple[Any, ...] = (group_id,) if scope == "group" else (group_id, user_id)
         with self.db.connection() as conn:
+            # 跨类别比较：同一件事实常被抽成不同 kind（"梗" vs "事实"），分桶会漏掉重复
             rows = conn.execute(
-                f"SELECT id, content, importance FROM {table} WHERE {where} AND kind = ? AND decayed = 0",
-                (*params, clean_kind),
+                f"SELECT id, content, importance FROM {table} WHERE {where} AND decayed = 0",
+                params,
             ).fetchall()
             for row in rows:
                 if _similar(str(row["content"]), text) >= DEDUP_SIMILARITY:
@@ -376,6 +391,7 @@ class PersonaMemoryRepo:
         content: str | None,
         importance: float | None,
         sensitivity: str | None,
+        restore: bool = False,
     ) -> bool:
         updates: dict[str, Any] = {}
         if content is not None:
@@ -392,6 +408,11 @@ class PersonaMemoryRepo:
             if sensitivity not in SENSITIVITIES:
                 return False
             updates["sensitivity"] = sensitivity
+        if restore:
+            updates["decayed"] = 0
+        if updates:
+            # 人工编辑/恢复即视为"重新见到"：刷新 last_seen，避免刚改完就被衰减掉
+            updates["last_seen_at"] = time.time()
         if not updates:
             return False
         table = "group_memories" if scope == "group" else "member_memories"

@@ -24,21 +24,34 @@ def safe_speaker_name(name: str, *, user_id: str | None = None) -> str:
     return f"{FALLBACK_NAME_PREFIX}{tail}" if tail else "群友"
 
 
+def _display_name(turn: ConversationTurn, names: Mapping[str, str] | None, *, bot_label: str) -> str:
+    if turn.is_bot:
+        return bot_label
+    name_map = names or {}
+    name = turn.speaker_name or name_map.get(str(turn.user_id or ""), "")
+    return safe_speaker_name(name, user_id=turn.user_id)
+
+
 def render_turn_line(
     turn: ConversationTurn,
     *,
     names: Mapping[str, str] | None = None,
     bot_label: str = "你",
+    reply_to_name: str | None = None,
 ) -> str:
-    """单条时间线 → 提示词行。bot 自己的话用「你：」开头。"""
+    """单条时间线 → 提示词行。
+
+    bot 自己的话用「你：」；在接别人的话时渲染成「阿强 → 小红：内容」，
+    让模型看得出谁在对谁说（自己接着说自己的那条线时不加箭头）。
+    """
     body = build_training_text(turn.text, turn.sticker_keys)
     if not body.strip():
         return ""
-    if turn.is_bot:
-        return f"{bot_label}：{body}"
-    name_map = names or {}
-    name = turn.speaker_name or name_map.get(str(turn.user_id or ""), "")
-    return f"{safe_speaker_name(name, user_id=turn.user_id)}：{body}"
+    speaker = _display_name(turn, names, bot_label=bot_label)
+    target = str(reply_to_name or "").strip()
+    if target and target != speaker:
+        return f"{speaker} → {target}：{body}"
+    return f"{speaker}：{body}"
 
 
 def render_history_lines(
@@ -54,11 +67,15 @@ def render_history_lines(
     max_lines > 0 时只保留最后 max_lines 行（贴近"最近几轮"语义）。
     """
     excluded = {str(item) for item in (exclude_message_ids or []) if str(item).strip()}
+    items = list(turns)
+    by_id = {int(turn.id): turn for turn in items if turn.id is not None}
     lines: list[str] = []
-    for turn in turns:
+    for turn in items:
         if excluded and str(turn.source_message_id or "") in excluded:
             continue
-        line = render_turn_line(turn, names=names, bot_label=bot_label)
+        antecedent = by_id.get(int(turn.reply_to_turn_id or 0))
+        reply_to_name = _display_name(antecedent, names, bot_label=bot_label) if antecedent is not None else None
+        line = render_turn_line(turn, names=names, bot_label=bot_label, reply_to_name=reply_to_name)
         if line:
             lines.append(line)
     if max_lines > 0:

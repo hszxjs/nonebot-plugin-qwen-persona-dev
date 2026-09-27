@@ -36,6 +36,8 @@ class ConversationTurn:
     trigger_reason: str = ""
     reply_to_message_id: str = ""
     source_message_id: str = ""
+    thread_id: int = 0
+    reply_to_turn_id: int = 0
     created_at: float = field(default_factory=time.time)
     id: int | None = None
 
@@ -55,8 +57,18 @@ class ConversationTurn:
             "trigger_reason": self.trigger_reason,
             "reply_to_message_id": self.reply_to_message_id,
             "source_message_id": self.source_message_id,
+            "thread_id": int(self.thread_id or 0),
+            "reply_to_turn_id": int(self.reply_to_turn_id or 0),
             "created_at": float(self.created_at),
         }
+
+
+def _row_int(row: Any, column: str) -> int:
+    """老库行可能没有新列（迁移前读到的数据），缺失按 0 处理。"""
+    try:
+        return int(row[column] or 0)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return 0
 
 
 def turn_from_row(row: Any) -> ConversationTurn:
@@ -82,5 +94,7 @@ def turn_from_row(row: Any) -> ConversationTurn:
         trigger_reason=str(row["trigger_reason"] or ""),
         reply_to_message_id=str(row["reply_to_message_id"] or ""),
         source_message_id=str(row["source_message_id"] or ""),
+        thread_id=_row_int(row, "thread_id"),
+        reply_to_turn_id=_row_int(row, "reply_to_turn_id"),
         created_at=float(row["created_at"] or 0.0),
     )

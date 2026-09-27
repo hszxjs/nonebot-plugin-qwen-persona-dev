@@ -31,9 +31,7 @@ def test_weighted_probability_applies_multipliers() -> None:
     )
     assert abs(both.probability - 0.15) < 1e-9  # 0.2 × 1.5 × 0.5
 
-    clamped = weighted_probability(
-        InterjectionInput(base_probability=0.9, addressed_recently=True, heat_messages=99)
-    )
+    clamped = weighted_probability(InterjectionInput(base_probability=0.9, addressed_recently=True, heat_messages=99))
     assert clamped.probability == 1.0
 
     # 概率为 0 时不做加权（配置关掉主动搭话就别加）
@@ -74,11 +72,27 @@ def test_interjection_limiter_heat_counts_recent_messages() -> None:
 # ---- 滚动摘要 ----
 
 
-def test_clean_summary_text_strips_wrappers() -> None:
-    from nonebot_plugin_ai_companion.conversation.summary import clean_summary_text
+def test_clean_summary_text_splits_parallel_topics() -> None:
+    from nonebot_plugin_ai_companion.conversation.summary import clean_summary_text, summary_lines
 
-    assert clean_summary_text("摘要：群里在打战争雷霆，约了今晚开黑") == "群里在打战争雷霆，约了今晚开黑"
-    assert clean_summary_text('“  两行\n文字  ”') == "两行 文字"
+    text = clean_summary_text(
+        """摘要：
+- 群里在打战争雷霆，约了今晚开黑
+• 有人在问 NeoForge 1.21.1 的 mod
+- 有人在问 NeoForge 1.21.1 的 mod
+- 第三条独立话题：周末聚餐
+- 第四条应当被截掉"""
+    )
+    lines = summary_lines(text)
+    assert lines == [
+        "群里在打战争雷霆，约了今晚开黑",
+        "有人在问 NeoForge 1.21.1 的 mod",
+        "第三条独立话题：周末聚餐",
+    ]
+    assert "第四条" not in text
+
+    # 旧的一段式摘要仍然可用
+    assert summary_lines("群里在聊新版本") == ["群里在聊新版本"]
     assert clean_summary_text("") == ""
 
 

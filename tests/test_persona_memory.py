@@ -92,9 +92,15 @@ async def test_member_memory_requires_user_and_group(persona_store) -> None:
 
 async def test_group_injection_hides_sensitive_memories(persona_store) -> None:
     repo = persona_store.persona_memory
-    await repo.add_group_memory(group_id="100", kind="事实", content="本群周末打本", importance=4, sensitivity="neutral")
-    await repo.add_group_memory(group_id="100", kind="事件", content="群主上周失恋了", importance=5, sensitivity="emotion")
-    await repo.add_group_memory(group_id="100", kind="关系", content="阿强和小红常互怼", importance=3, sensitivity="relation")
+    await repo.add_group_memory(
+        group_id="100", kind="事实", content="本群周末打本", importance=4, sensitivity="neutral"
+    )
+    await repo.add_group_memory(
+        group_id="100", kind="事件", content="群主上周失恋了", importance=5, sensitivity="emotion"
+    )
+    await repo.add_group_memory(
+        group_id="100", kind="关系", content="阿强和小红常互怼", importance=3, sensitivity="relation"
+    )
     await repo.add_member_memory(
         group_id="100", user_id="42", kind="偏好", content="喜欢开黑", importance=3, sensitivity="neutral"
     )
@@ -134,7 +140,9 @@ async def test_decay_marks_old_low_importance_memories(persona_store) -> None:
     import time
 
     repo = persona_store.persona_memory
-    await repo.add_group_memory(group_id="100", kind="事实", content="很久以前的小事", importance=1, sensitivity="neutral")
+    await repo.add_group_memory(
+        group_id="100", kind="事实", content="很久以前的小事", importance=1, sensitivity="neutral"
+    )
     # 手动改老时间：半衰期 1 天 + 重要度 1 → 200 天后必然低于阈值
     with persona_store.db.connection() as conn:
         old = time.time() - 200 * 86400
@@ -189,7 +197,7 @@ async def test_extract_session_saves_and_guards_hallucinated_members(persona_sto
         memories=persona_store.persona_memory,
         data_cleaning_chat=fake_chat,
     )
-    assert result == {"group_saved": 1, "member_saved": 1, "skipped": 2}
+    assert result == {"group_saved": 1, "member_saved": 1, "updated": 0, "skipped": 2, "parse_ok": True}
     assert len(await persona_store.persona_memory.list_memories(scope="group", group_id="100")) == 1
     member_items = await persona_store.persona_memory.list_memories(scope="member", group_id="100")
     # M1 映射回真实 QQ，且提示词里只出现编号
@@ -296,8 +304,12 @@ async def test_memory_keeps_valid_sensitivity(persona_store, sensitivity: str) -
 async def test_private_chat_memories_aggregate_across_groups(persona_store) -> None:
     repo = persona_store.persona_memory
     await repo.add_member_memory(group_id="100", user_id="42", kind="偏好", content="喜欢开黑", sensitivity="neutral")
-    await repo.add_member_memory(group_id="200", user_id="42", kind="关系", content="和小红是同学", sensitivity="relation")
-    await repo.add_member_memory(group_id="100", user_id="42", kind="事件", content="最近在闹分手", sensitivity="private")
+    await repo.add_member_memory(
+        group_id="200", user_id="42", kind="关系", content="和小红是同学", sensitivity="relation"
+    )
+    await repo.add_member_memory(
+        group_id="100", user_id="42", kind="事件", content="最近在闹分手", sensitivity="private"
+    )
     # 私聊作用域（group_id 空串）的条目
     await repo.add_member_memory(group_id="", user_id="42", kind="偏好", content="半夜爱点外卖", sensitivity="neutral")
     # 别人的记忆不该混进来
@@ -351,3 +363,129 @@ async def test_sample_search_is_session_scoped(persona_store) -> None:
         group_id=None, user_id="42", query="的话", limit=10, global_scope=True
     )
     assert len(global_hits) == 3  # 运维显式要求跨会话时才允许
+
+
+async def test_extraction_prefers_updating_existing_memory(persona_store) -> None:
+    """同一条事实的说法变了：应当更新已有记忆，而不是不断新增（语义去重）。"""
+    import json as _json
+
+    from nonebot_plugin_ai_companion.conversation.model import SPEAKER_MEMBER
+    from nonebot_plugin_ai_companion.memory.extractor import extract_session_memories
+
+    repo = persona_store.persona_memory
+    await repo.add_group_memory(group_id="100", kind="梗", content="「雷雷」指《战争雷霆》", importance=3)
+    existing = await repo.list_memories(scope="group", group_id="100")
+    existing_id = existing[0].id
+
+    await persona_store.conversation.record_turn(
+        session_key="group:100",
+        speaker_kind=SPEAKER_MEMBER,
+        text="雷雷出新版本了",
+        group_id="100",
+        user_id="42",
+        speaker_name="阿强",
+        created_at=100.0,
+    )
+    turns = await persona_store.conversation.recent_turns(session_key="group:100", limit=10)
+
+    prompts: list[str] = []
+
+    async def fake_chat(prompt: str) -> str:
+        prompts.append(prompt)
+        return _json.dumps(
+            {
+                "memories": [
+                    {
+                        "scope": "group",
+                        "existing_id": existing_id,
+                        "kind": "梗",
+                        "content": "「雷雷」指《战争雷霆》，已出新版本",
+                        "importance": 4,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    result = await extract_session_memories(
+        session_key="group:100",
+        group_id="100",
+        turns=turns,
+        names={"42": "阿强"},
+        memories=repo,
+        data_cleaning_chat=fake_chat,
+    )
+    assert result["updated"] == 1 and result["group_saved"] == 0
+    items = await repo.list_memories(scope="group", group_id="100")
+    assert len(items) == 1  # 没有新增重复行
+    assert items[0].content.endswith("已出新版本") and items[0].importance == 4.0
+    # 提示词里带上了已有记忆的编号
+    assert f"#{existing_id}" in prompts[0]
+
+
+async def test_unparsable_extraction_keeps_cursor_and_backs_off(persona_store) -> None:
+    """模型答非所问时不能推进游标：这批对话要等退避后重试，不能被静默跳过。"""
+    from nonebot_plugin_ai_companion.memory.extractor import run_memory_extraction_round
+
+    for index in range(2):
+        await persona_store.conversation.record_turn(
+            session_key="group:100",
+            speaker_kind="member",
+            text=f"第{index}句",
+            group_id="100",
+            user_id="42",
+            created_at=100.0 + index,
+        )
+
+    calls = 0
+
+    async def garbage_chat(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return "我不想输出 JSON，今天不聊这个"
+
+    first = await run_memory_extraction_round(
+        conversation=persona_store.conversation,
+        memories=persona_store.persona_memory,
+        names_repo=persona_store.member_names,
+        data_cleaning_chat=garbage_chat,
+        min_new_turns=1,
+        interval_seconds=0.0,
+        now=1000.0,
+    )
+    assert first and first[0]["error"] == "unparsable output"
+    assert calls == 1
+    # 游标没有推进：同样的对话还在待抽取队列里
+    state = (await persona_store.persona_memory.get_extraction_states()).get("group:100")
+    assert state is None or state.last_turn_id == 0
+
+    # 退避期内不再重复调用模型
+    second = await run_memory_extraction_round(
+        conversation=persona_store.conversation,
+        memories=persona_store.persona_memory,
+        names_repo=persona_store.member_names,
+        data_cleaning_chat=garbage_chat,
+        min_new_turns=1,
+        interval_seconds=0.0,
+        now=1100.0,
+    )
+    assert second == [] and calls == 1
+
+    # 退避过后重试成功 → 游标推进
+    async def good_chat(_prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        return '{"memories": [{"scope": "group", "kind": "事实", "content": "聊了两句"}]}'
+
+    third = await run_memory_extraction_round(
+        conversation=persona_store.conversation,
+        memories=persona_store.persona_memory,
+        names_repo=persona_store.member_names,
+        data_cleaning_chat=good_chat,
+        min_new_turns=1,
+        interval_seconds=0.0,
+        now=1400.0,
+    )
+    assert third and third[0]["group_saved"] == 1
+    state = (await persona_store.persona_memory.get_extraction_states()).get("group:100")
+    assert state is not None and state.last_turn_id > 0

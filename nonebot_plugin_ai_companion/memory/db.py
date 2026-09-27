@@ -10,6 +10,7 @@ import asyncio
 import json
 import re
 import sqlite3
+import threading
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -48,6 +49,9 @@ class PersonaDatabase:
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
         self.db_path = data_dir / "persona.sqlite3"
+        # 建表只需一次：每次调用都跑 40 条 DDL 会让一次回复多开十几个连接
+        self._schema_ready = False
+        self._schema_lock = threading.Lock()
 
     async def init(self) -> None:
         await asyncio.to_thread(self.ensure_schema)
@@ -94,6 +98,15 @@ class PersonaDatabase:
         return data if isinstance(data, list) else []
 
     def ensure_schema(self) -> None:
+        if self._schema_ready:
+            return
+        with self._schema_lock:
+            if self._schema_ready:
+                return
+            self._ensure_schema_locked()
+            self._schema_ready = True
+
+    def _ensure_schema_locked(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         with self.connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -373,6 +386,7 @@ class PersonaDatabase:
                 """
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_call_logs_time ON tool_call_logs(created_at DESC)")
+            self._ensure_columns(conn)
             # 会话时间线域：每群/每私聊一条时间线，成员与 bot 自己的话都在里面。
             # session_key 与角色卡绑定同构（group:{id} / private:{user}）；
             # speaker_name 是写入时的昵称快照，历史渲染不再依赖实时成员接口。
@@ -390,6 +404,8 @@ class PersonaDatabase:
                     trigger_reason TEXT NOT NULL DEFAULT '',
                     reply_to_message_id TEXT NOT NULL DEFAULT '',
                     source_message_id TEXT NOT NULL DEFAULT '',
+                    thread_id INTEGER NOT NULL DEFAULT 0,
+                    reply_to_turn_id INTEGER NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL
                 )
                 """
@@ -478,6 +494,26 @@ class PersonaDatabase:
                 )
                 """
             )
+
+    def _ensure_columns(self, conn: sqlite3.Connection) -> None:
+        """给已存在的表补新列（CREATE TABLE IF NOT EXISTS 不会改动老表）。
+
+        幂等：只在缺列时 ALTER，重复启动无副作用。
+        """
+        additions: dict[str, dict[str, str]] = {
+            "conversation_turns": {
+                "thread_id": "INTEGER NOT NULL DEFAULT 0",
+                "reply_to_turn_id": "INTEGER NOT NULL DEFAULT 0",
+            },
+        }
+        for table, columns in additions.items():
+            existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+            if not existing:
+                continue
+            for name, ddl in columns.items():
+                if name in existing:
+                    continue
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
 
     @staticmethod
     def is_noise_text(

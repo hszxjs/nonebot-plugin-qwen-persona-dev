@@ -161,8 +161,9 @@ async def test_history_rendering_has_speakers_and_never_leaks_qq(persona_store) 
     lines = render_history_lines(turns)
 
     assert lines[0] == "阿强：这波怎么说"
-    assert lines[1] == "群友4321：我先开一把"  # 无昵称时用「群友+尾号」，绝不落 QQ 全号
-    assert lines[2] == "你：等我两分钟"
+    # 紧接着上一句 → 渲染成接话；无昵称时用「群友+尾号」，绝不落 QQ 全号
+    assert lines[1] == "群友4321 → 阿强：我先开一把"
+    assert lines[2] == "你 → 群友4321：等我两分钟"
     assert all("1234567890" not in line and "987654321" not in line for line in lines)
     assert collect_user_ids(turns) == ["1234567890", "987654321"]
 
@@ -394,4 +395,3 @@ def test_prompt_never_contains_full_qq_ids() -> None:
     joined = "\n".join(lines)
     assert "3305167706" not in joined and "2752330053" not in joined
     assert "群友7706" in joined and "群友0053" in joined
-
