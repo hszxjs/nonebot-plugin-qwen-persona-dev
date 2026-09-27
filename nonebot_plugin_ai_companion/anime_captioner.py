@@ -362,6 +362,9 @@ class AnimeCaptioner:
             ],
             "max_tokens": max_tokens,
             "temperature": 0.2,
+            # 思考型模型会把 max_tokens 烧在 reasoning 上导致 content 为空；
+            # 端点不认识 thinking 字段时下面按 400 去参重试。
+            "thinking": {"type": "disabled"},
         }
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
 
@@ -379,6 +382,11 @@ class AnimeCaptioner:
                             continue
                         _debug_log(f"VISION_429 code={code} body={response.text[:100]!r}")
                         return ""
+                    if response.status_code == 400 and "thinking" in payload:
+                        # 端点不认识 thinking 字段（部分 OpenAI 兼容后端）：去参重试
+                        payload.pop("thinking", None)
+                        _debug_log("VISION_THINKING_UNSUPPORTED retry without thinking")
+                        continue
                     response.raise_for_status()
                     data = response.json()
                     content = _extract_chat_content(data)

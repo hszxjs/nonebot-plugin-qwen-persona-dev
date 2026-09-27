@@ -225,6 +225,29 @@ class GlmBackend:
             headers["Authorization"] = f"Bearer {key}"
         return headers
 
+    async def _post_chat_payload(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+        timeout: float,
+    ) -> dict[str, Any]:
+        """提交对话载荷，默认关闭思考。
+
+        思考型模型（deepseek-flash / glm-5.x 等）先把预算烧在 reasoning 上，
+        群聊短回复白等一轮且 content 可能为空。端点不认识 thinking 字段
+        （400）时去参重试一次，兼容其他 OpenAI 兼容后端。
+        """
+        body = {**payload, "thinking": {"type": "disabled"}}
+        try:
+            return await self._post_with_retry(url, headers, body, timeout)
+        except httpx.HTTPStatusError as exc:
+            if exc.response is None or exc.response.status_code != 400:
+                raise
+            logger.info("glm_backend: endpoint rejected thinking param, retrying without it")
+            body.pop("thinking", None)
+            return await self._post_with_retry(url, headers, body, timeout)
+
     async def chat_with_tools(
         self,
         messages: list[dict[str, Any]],
@@ -249,7 +272,9 @@ class GlmBackend:
             "tool_choice": tool_choice,
         }
         timeout = float(self.config.ai_companion_online_timeout or 90.0)
-        data = await self._post_with_retry(url, self._headers(), payload, timeout)
+        data = await self._post_chat_payload(url, self._headers(), payload, timeout)
+        self._healthy = True
+        self._last_error = ""
         message = (data.get("choices") or [{}])[0].get("message", {}) or {}
         content = str(message.get("content") or "")
         tool_calls = [dict(call) for call in message.get("tool_calls") or [] if isinstance(call, dict)]
@@ -291,7 +316,7 @@ class GlmBackend:
 
         started = utc_timestamp()
         elapsed_wall = asyncio.get_event_loop().time()
-        data = await self._post_with_retry(url, headers, payload, timeout)
+        data = await self._post_chat_payload(url, headers, payload, timeout)
         content = _extract_chat_content(data)
         elapsed = asyncio.get_event_loop().time() - elapsed_wall
         self._record_metric(

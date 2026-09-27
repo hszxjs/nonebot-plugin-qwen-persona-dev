@@ -708,6 +708,114 @@ def test_reply_gate_allows_pure_image_messages() -> None:
     assert not empty.allowed and empty.reason == "empty"
 
 
+class _QueueResponse:
+    """带 raise_for_status 的响应：400 时抛 HTTPStatusError（模拟端点拒绝字段）。"""
+
+    def __init__(self, status_code: int, payload: dict | None = None) -> None:
+        self.status_code = status_code
+        self._payload = payload or {}
+        self.text = json.dumps(self._payload)
+        self.request = httpx.Request("POST", "https://example.invalid/chat/completions")
+
+    def json(self) -> dict:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError("bad status", request=self.request, response=self)
+
+
+class _QueueClient:
+    """按顺序返回响应，并记录每次请求体。"""
+
+    def __init__(self, responses: list[_QueueResponse], posted: list[dict]) -> None:
+        self._responses = list(responses)
+        self._posted = posted
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return False
+
+    async def post(self, _url, *, json=None, **_kw):
+        self._posted.append(dict(json or {}))
+        return self._responses.pop(0)
+
+
+async def test_glm_chat_disables_thinking(monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.providers.glm_backend import GlmBackend
+
+    posted: list[dict] = []
+    client = _QueueClient([_QueueResponse(200, {"choices": [{"message": {"content": "你好"}}]})], posted)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: client)
+
+    backend = GlmBackend(
+        AiCompanionConfig(
+            ai_companion_online_api_url="https://api.deepseek.com/v1/chat/completions",
+            ai_companion_online_api_key="k",
+            ai_companion_online_model="deepseek-flash",
+        )
+    )
+    assert await backend.chat([{"role": "user", "content": "hi"}]) == "你好"
+    # 思考型模型会先烧 reasoning 预算：主对话必须显式关闭思考
+    assert posted[0]["thinking"] == {"type": "disabled"}
+    assert posted[0]["model"] == "deepseek-flash"
+
+
+async def test_glm_chat_retries_without_thinking_on_400(monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.providers.glm_backend import GlmBackend
+
+    posted: list[dict] = []
+    client = _QueueClient(
+        [
+            _QueueResponse(400, {"error": {"message": "unknown field thinking"}}),
+            _QueueResponse(200, {"choices": [{"message": {"content": "收到"}}]}),
+        ],
+        posted,
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: client)
+
+    backend = GlmBackend(
+        AiCompanionConfig(
+            ai_companion_online_api_url="https://api.example.invalid/v1/chat/completions",
+            ai_companion_online_api_key="k",
+            ai_companion_online_model="m",
+        )
+    )
+    assert await backend.chat([{"role": "user", "content": "hi"}]) == "收到"
+    assert len(posted) == 2 and posted[0]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in posted[1]
+    # 去参重试成功后不得留下"HTTP 400"（否则运维台会误报后端异常）
+    snapshot = backend.status_snapshot()
+    assert snapshot["healthy"] is True and not snapshot["last_error"]
+
+
+async def test_caption_vision_disables_thinking_and_drops_it_on_400(monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.anime_captioner import AnimeCaptioner
+
+    posted: list[dict] = []
+    client = _QueueClient(
+        [
+            _QueueResponse(400, {"error": {"message": "unknown field thinking"}}),
+            _QueueResponse(200, {"choices": [{"message": {"content": "类型：梗图"}}]}),
+        ],
+        posted,
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: client)
+
+    captioner = AnimeCaptioner(
+        AiCompanionConfig(
+            ai_companion_anime_vision_api_url="https://api.deepseek.com/v1/chat/completions",
+            ai_companion_anime_vision_api_key="k",
+            ai_companion_anime_vision_model="deepseek-flash",
+        )
+    )
+    assert await captioner._vision_describe_image(b"img") == "图片内容：类型：梗图"
+    assert len(posted) == 2 and posted[0]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in posted[1]
+
+
 def test_glm_instance_builder_honors_multimodal() -> None:
     from nonebot_plugin_ai_companion.providers.instances import build_backend_from_config, new_backend_config
 
