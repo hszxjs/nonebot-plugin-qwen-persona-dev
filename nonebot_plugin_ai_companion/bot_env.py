@@ -17,6 +17,8 @@ from .prompt.text import is_command_like
 
 
 class BotEnvironment:
+    _cached_self_id: str = ""
+
     def __init__(self, driver_config: Any, config: AiCompanionConfig) -> None:
         self.driver_config = driver_config
         self.config = config
@@ -46,7 +48,19 @@ class BotEnvironment:
     @staticmethod
     def bot_self_id(bot: Bot) -> str | None:
         value = str(getattr(bot, "self_id", "") or "")
+        if value:
+            BotEnvironment.cache_self_id(value)
         return value or None
+
+    @staticmethod
+    def cache_self_id(value: str) -> None:
+        """记住自己的 QQ：判断"这条消息是在回复我"用（无 bot 句柄的路径）。"""
+        if value:
+            BotEnvironment._cached_self_id = str(value)
+
+    @staticmethod
+    def cached_self_id() -> str:
+        return str(getattr(BotEnvironment, "_cached_self_id", "") or "")
 
     def is_self_event(self, bot: Bot, ids: dict[str, str | None]) -> bool:
         self_id = self.bot_self_id(bot)

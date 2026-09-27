@@ -30,6 +30,7 @@ from .decision.gates import (
     should_force_reply,
     should_use_sticker_reply,
 )
+from .decision.interjection import InterjectionInput, InterjectionLimiter, weighted_probability
 from .decision.repeat import (
     ConversationPatternTracker,
     RepeatTracker,
@@ -110,6 +111,11 @@ class ChatService:
         self.provider_resolver = provider_resolver
         self.message_logs = message_log_repo
         self.background_media_tasks: set[asyncio.Task[None]] = set()
+        self.interjection_limiter = InterjectionLimiter(
+            cooldown_seconds=float(getattr(self.config, "ai_companion_group_cooldown_seconds", 45)),
+            hourly_limit=int(getattr(self.config, "ai_companion_group_hourly_limit", 20)),
+            heat_window_seconds=float(getattr(self.config, "ai_companion_heat_window_seconds", 120)),
+        )
 
     # ------------------------------------------------------------------
     # 入口
@@ -374,6 +380,10 @@ class ChatService:
             trigger_reason=reply_decision.reason,
             reply_to_message_id=str(ids.get("message_id") or ""),
         )
+        if ids.get("group_id"):
+            self.interjection_limiter.observe_reply(
+                group_id=str(ids["group_id"]), user_id=str(ids.get("user_id") or "")
+            )
         self.conversation_pattern_tracker.reset(ids["group_id"])
         matcher.stop_propagation()
 
@@ -388,6 +398,50 @@ class ChatService:
     # 推理（含工具调用回路，配置默认关闭）
     # ------------------------------------------------------------------
     async def _generate_reply(
+        self,
+        reply_plan: ReplyPlan,
+        *,
+        allowed_tools: list[str] | None,
+    ) -> str:
+        try:
+            return await self._generate_reply_online(reply_plan, allowed_tools=allowed_tools)
+        except Exception as exc:  # noqa: BLE001 — 在线端点失败：按配置降级到本地 MLX
+            fallback = await self._fallback_to_local(reply_plan, error=exc)
+            if fallback is None:
+                raise
+            return fallback
+
+    async def _fallback_to_local(self, reply_plan: ReplyPlan, *, error: Exception) -> str | None:
+        """在线端点挂了（429/超时/断链）时用本地 MLX 兜底；未加载/超时则放弃。
+
+        不主动拉起大模型（首次加载要几分钟，会把回复队列卡死），
+        只给已经加载好的运行时机会；超时上限由配置控制。
+        """
+        if not bool(getattr(self.config, "ai_companion_fallback_to_local", True)):
+            return None
+        if not self._online_backend_active():
+            return None
+        runtime = self.mlx_runtime
+        if runtime is None or not hasattr(runtime, "chat"):
+            return None
+        try:
+            if str(runtime.status_snapshot().get("state") or "") != "loaded":
+                logger.warning(f"ai companion online backend failed ({error!r}); local mlx not loaded, skipping fallback")
+                return None
+        except Exception:  # noqa: BLE001 — 状态取不到就按未加载处理
+            return None
+        timeout = float(getattr(self.config, "ai_companion_fallback_timeout_seconds", 120.0) or 120.0)
+        logger.warning(f"ai companion online backend failed ({error!r}); falling back to local MLX")
+        try:
+            return await asyncio.wait_for(
+                runtime.chat(reply_plan.messages, media_parts=reply_plan.media_parts),
+                timeout=timeout,
+            )
+        except Exception as fallback_exc:  # noqa: BLE001 — 兜底也失败就向上抛原始错误
+            logger.warning(f"ai companion local fallback failed: {fallback_exc!r}")
+            return None
+
+    async def _generate_reply_online(
         self,
         reply_plan: ReplyPlan,
         *,
@@ -537,19 +591,40 @@ class ChatService:
         )
         # 纯图片消息也算"有内容"（打趣回复的前提）；普通表情(face/mface)不算，避免刷触发
         has_media = any(str(part.get("type") or "") == "image" for part in (media_parts or []))
-        return should_attempt_reply(
+        group_id = ids.get("group_id")
+        if group_id:
+            self.interjection_limiter.observe_message(group_id=group_id, user_id=str(ids.get("user_id") or ""))
+        weighted = weighted_probability(
+            InterjectionInput(
+                base_probability=float(self.config.ai_companion_reply_probability),
+                addressed_recently=False,
+                heat_messages=self.interjection_limiter.heat_messages(group_id=group_id or ""),
+                heat_min_messages=int(getattr(self.config, "ai_companion_heat_min_messages", 5)),
+                same_speaker_as_last_reply=self.interjection_limiter.same_speaker_as_last_reply(
+                    group_id=group_id or "", user_id=str(ids.get("user_id") or "")
+                ),
+            )
+        )
+        decision = should_attempt_reply(
             enable_reply=self.config.ai_companion_enable_reply,
-            group_enabled=private_chat or self.env.group_enabled(ids["group_id"]),
+            group_enabled=private_chat or self.env.group_enabled(group_id),
             self_event=self.env.is_self_event(bot, ids),
-            blacklisted=self.env.is_blacklisted(ids["user_id"], ids["group_id"], plain_text),
+            blacklisted=self.env.is_blacklisted(ids["user_id"], group_id, plain_text),
             command_like=self.env.is_command_message(plain_text),
             force_reply=force_reply,
             has_text=bool(str(plain_text or "").strip()) or force_reply,
-            reply_probability=self.config.ai_companion_reply_probability,
+            reply_probability=weighted.probability,
             follow_reply_probability=self.config.ai_companion_follow_reply_probability,
             random_value=random.random(),
             has_media=has_media,
         )
+        if decision.allowed and group_id and not force_reply:
+            # 主动插话受限流约束：冷却期内 / 超过每小时上限就闭嘴（被叫的不受限制）
+            blocked = self.interjection_limiter.block_reason(group_id=group_id)
+            if blocked:
+                return ReplyDecision(False, f"rate_limited:{blocked}")
+            decision = ReplyDecision(True, f"{decision.reason}[{weighted.describe()}]")
+        return decision
 
     def _should_schedule_background_media_analysis(
         self,
@@ -627,12 +702,26 @@ class ChatService:
     # ------------------------------------------------------------------
     # 提示词计划
     # ------------------------------------------------------------------
+    def _reply_mode(self, *, group_id: str | None, envelope: MessageContextEnvelope) -> str:
+        """成员模式 vs 助手模式：私聊、被 @、被回复 → 助手口气；群里未被叫 → 成员口气。"""
+        if group_id is None:
+            return "assistant"
+        if envelope.forced_by_at:
+            return "assistant"
+        reply_sender = envelope.reply_sender or {}
+        self_id = self.env.cached_self_id()
+        if reply_sender and self_id and str(reply_sender.get("user_id") or "") == self_id:
+            return "assistant"
+        return "member"
+
     def _build_system_prompt(
         self,
         *,
         card: RoleCard | None = None,
         user_nickname: str | None = None,
         memory_lines: list[str] | None = None,
+        scene_lines: list[str] | None = None,
+        mode: str = "member",
     ) -> str:
         identity_text = None
         if card is not None and self.role_card_service is not None:
@@ -646,6 +735,8 @@ class ChatService:
                 identity_text=identity_text,
                 allowed_tools=allowed_tools,
                 memory_lines=list(memory_lines or []),
+                scene_lines=list(scene_lines or []),
+                mode=str(mode or "member"),
             )
         )
 
@@ -751,6 +842,18 @@ class ChatService:
             except Exception as exc:  # noqa: BLE001 — 记忆取数失败不阻塞回复
                 logger.debug("persona memory fetch skipped: %r", exc)
 
+        # 滚动摘要：跨小时的话题背景（scene 段）
+        scene_lines: list[str] = []
+        if group_id and "scene" in effective_segment_order(self.config) and bool(
+            getattr(self.config, "ai_companion_summary_enabled", True)
+        ):
+            try:
+                summary_record = await self.store.group_summaries.get(group_id=str(group_id))
+                if summary_record and summary_record.summary.strip():
+                    scene_lines = [f"本群最近话题摘要：{summary_record.summary.strip()}"]
+            except Exception as exc:  # noqa: BLE001 — 摘要取不到不阻塞回复
+                logger.debug("group summary fetch skipped: %r", exc)
+
         active_memes = select_active_memes(
             build_meme_candidates_from_samples(
                 samples=list(relevant_samples),
@@ -766,6 +869,8 @@ class ChatService:
                 card=card,
                 user_nickname=envelope.sender_name,
                 memory_lines=memory_lines,
+                scene_lines=scene_lines,
+                mode=self._reply_mode(group_id=group_id, envelope=envelope),
             ),
             conversation_lines=conversation_lines,
             history_lines=history_lines,

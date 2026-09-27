@@ -455,6 +455,18 @@ class PersonaDatabase:
                 "CREATE INDEX IF NOT EXISTS idx_member_memories_member "
                 "ON member_memories(group_id, user_id, decayed, importance DESC)"
             )
+            # 滚动话题摘要：每群一份，跨小时接上话题用（注入 scene 段）。
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS group_summaries (
+                    group_id TEXT PRIMARY KEY,
+                    summary TEXT NOT NULL DEFAULT '',
+                    covered_turn_id INTEGER NOT NULL DEFAULT 0,
+                    turns_covered INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
             # 增量抽取进度：每个会话已抽取到哪条 turn。
             conn.execute(
                 """

@@ -14,8 +14,17 @@ from dataclasses import dataclass, field
 from ..config import AiCompanionConfig
 from ..tools.registry import ToolRegistry
 
-DEFAULT_SEGMENT_ORDER: tuple[str, ...] = ("identity", "selfcheck", "naturalness", "sticker", "tools", "memory")
-KNOWN_SEGMENTS: tuple[str, ...] = DEFAULT_SEGMENT_ORDER + ("scene", "motivation")
+DEFAULT_SEGMENT_ORDER: tuple[str, ...] = (
+    "identity",
+    "mode",
+    "selfcheck",
+    "naturalness",
+    "sticker",
+    "tools",
+    "memory",
+    "scene",
+)
+KNOWN_SEGMENTS: tuple[str, ...] = DEFAULT_SEGMENT_ORDER + ("motivation",)
 
 MOTIVATION_LINES: tuple[str, ...] = (
     "只有存在明确话头才主动展开新话题；没有天然话头时优先简短呼应或提出小问题，而非表演式发言。",
@@ -35,10 +44,25 @@ class PromptContext:
     allowed_tools: list[str] | None = None  # 角色卡工具白名单（None = 全部）
     memory_lines: list[str] = field(default_factory=list)  # 记忆注入段（长期记忆/画像摘要）
     scene_lines: list[str] = field(default_factory=list)  # 场景感知段（群/私聊、话题摘要等）
+    mode: str = "member"  # member = 群里一起聊；assistant = 被点名/私聊，直给答案
 
 
 def _identity_lines(ctx: PromptContext) -> list[str]:
     return [ctx.identity_text if ctx.identity_text is not None else ctx.config.ai_companion_system_prompt]
+
+
+MEMBER_MODE_LINES: tuple[str, ...] = (
+    "你现在在群里和群友一起聊天：可以接梗、互损、短句插话，不确定就少说。",
+    "不要像客服或助手那样逐条回答，也不要每句都提自己是 AI；真要答问题就直说答案。",
+)
+ASSISTANT_MODE_LINES: tuple[str, ...] = (
+    "现在有人点名或在私聊问你，按「助手」口气回复：先直接给答案，再补一句闲聊。",
+    "不要用语气词绕开问题，不要用鱼话/梗糊弄事实；不确定就说不确定。",
+)
+
+
+def _mode_lines(ctx: PromptContext) -> list[str]:
+    return list(ASSISTANT_MODE_LINES if str(ctx.mode or "member") == "assistant" else MEMBER_MODE_LINES)
 
 
 def _selfcheck_lines(ctx: PromptContext) -> list[str]:
@@ -96,6 +120,7 @@ _SEGMENT_BUILDERS: dict[str, Callable[[PromptContext], list[str]]] = {
     "memory": _memory_lines,
     "scene": _scene_lines,
     "motivation": _motivation_lines,
+    "mode": _mode_lines,
 }
 
 

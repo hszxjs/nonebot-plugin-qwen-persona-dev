@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .conversation.repo import ConversationRepo, MemberNameRepo
+from .conversation.summary import GroupSummaryRepo
 from .finetune.adapters import LoraAdapterRepo
 from .finetune.dataset import SftDatasetExporter
 from .finetune.runs import TrainingRunRepo
@@ -51,6 +52,8 @@ class PersonaStore:
         self.member_names = MemberNameRepo(self.db)
         # 长期记忆：群记忆 / 成员记忆（敏感度分级注入）
         self.persona_memory = PersonaMemoryRepo(self.db)
+        # 滚动话题摘要（每群一份，注入 scene 段）
+        self.group_summaries = GroupSummaryRepo(self.db)
 
     def attach_event_bus(self, bus) -> None:
         """注入事件总线：三个事件仓库写入后实时发布（SSE 时间线用）。"""

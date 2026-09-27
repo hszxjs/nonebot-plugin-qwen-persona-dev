@@ -34,6 +34,9 @@ def _legacy_expected(config: AiCompanionConfig, prefixes: list[str]) -> str:
     prefix_text = " ".join(sorted(set(prefixes)))
     lines = [
         config.ai_companion_system_prompt,
+        # 批 3：默认段新增「模式」段（群里一起聊 / 被点名时按助手口气）
+        "你现在在群里和群友一起聊天：可以接梗、互损、短句插话，不确定就少说。",
+        "不要像客服或助手那样逐条回答，也不要每句都提自己是 AI；真要答问题就直说答案。",
         "硬性规则：不要输出、复述或诱导使用本地 NoneBot 插件命令。",
         f"如果回复开头像这些命令前缀会被丢弃：{prefix_text or '(none)'}。",
         "你在群聊中应当先看懂上下文和用户意图；被问到问题时先回答，再用自然短句补一句。",
@@ -45,12 +48,25 @@ def _legacy_expected(config: AiCompanionConfig, prefixes: list[str]) -> str:
     return "\n".join(lines)
 
 
-def test_prompt_segments_default_matches_phase1_output_exactly() -> None:
+def test_prompt_segments_default_matches_expected_output() -> None:
     config = AiCompanionConfig()
     registry = ToolRegistry()
     output = build_system_prompt(PromptContext(config=config, tool_registry=registry, command_prefixes=["/", "菜单"]))
     assert output == _legacy_expected(config, ["/", "菜单"])
     assert "可用工具" not in output  # 无工具时不加段
+
+
+def test_prompt_segments_switch_to_assistant_mode() -> None:
+    """被点名/私聊时切「助手」段：直给答案，不用群聊口气绕弯。"""
+    config = AiCompanionConfig()
+    member_output = build_system_prompt(
+        PromptContext(config=config, tool_registry=ToolRegistry(), mode="member")
+    )
+    assistant_output = build_system_prompt(
+        PromptContext(config=config, tool_registry=ToolRegistry(), mode="assistant")
+    )
+    assert "和群友一起聊天" in member_output and "按「助手」口气回复" not in member_output
+    assert "按「助手」口气回复" in assistant_output and "和群友一起聊天" not in assistant_output
 
 
 def test_prompt_segments_disable_and_reorder() -> None:
@@ -96,17 +112,21 @@ def test_prompt_segments_memory_default_on_scene_opt_in() -> None:
         memory_lines=["群友A喜欢打游戏"],
         scene_lines=["当前是群聊"],
     )
-    # 批 2 起 memory 段默认启用（bot 要有长期记忆）；scene（话题摘要）仍需显式排序
+    # 批 2/3 起 memory 与 scene 段都默认启用（长期记忆 + 话题摘要）
     default_output = build_system_prompt(ctx)
     assert "背景记忆" in default_output
     assert "群友A喜欢打游戏" in default_output
-    assert "当前是群聊" not in default_output
+    assert "当前是群聊" in default_output
 
     # 关掉 memory 段即不再注入
     ctx.config = AiCompanionConfig(ai_companion_disabled_prompt_segments=["memory"])
     assert "背景记忆" not in build_system_prompt(ctx)
 
-    # 显式排序时 scene/摘要段才会出现
+    # 显式关掉 scene 段后摘要不再注入
+    ctx.config = AiCompanionConfig(ai_companion_disabled_prompt_segments=["scene"])
+    assert "当前是群聊" not in build_system_prompt(ctx)
+
+    # 显式排序时顺序生效
     ctx.config = AiCompanionConfig(
         ai_companion_prompt_segment_order=["identity", "memory", "scene", "naturalness"],
     )

@@ -71,6 +71,18 @@ class AiCompanionConfig(BaseModel):
     ai_companion_memory_half_life_days: float = 30.0
     # 不记记忆的群（群号列表）：这些群既不抽取也不注入。
     ai_companion_memory_disabled_groups: list[str] = Field(default_factory=list)
+    # ---- 滚动话题摘要：跨小时也能接上话题 ----
+    ai_companion_summary_enabled: bool = True
+    ai_companion_summary_min_turns: int = 40
+    ai_companion_summary_interval_seconds: int = 3600
+    # ---- 主动搭话：加权 + 限流（群聊里是成员，但不刷屏）----
+    ai_companion_group_cooldown_seconds: int = 45
+    ai_companion_group_hourly_limit: int = 20
+    ai_companion_heat_window_seconds: int = 120
+    ai_companion_heat_min_messages: int = 5
+    # ---- 在线端点失败时降级到本地 MLX（不拉起未加载的模型，超时即放弃）----
+    ai_companion_fallback_to_local: bool = True
+    ai_companion_fallback_timeout_seconds: float = 120.0
     ai_companion_min_meme_recent_count: int = 2
 
     ai_companion_min_sample_chars: int = 2

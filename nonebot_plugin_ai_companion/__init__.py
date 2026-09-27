@@ -350,11 +350,28 @@ def _start_memory_extraction_loop() -> None:
 
 
 async def _memory_extraction_loop() -> None:
+    from .conversation.summary import run_summary_round
     from .memory.extractor import run_memory_extraction_round
 
     while True:
         try:
             await asyncio.sleep(max(60, int(plugin_config.ai_companion_memory_extract_check_seconds or 300)))
+            if plugin_config.ai_companion_summary_enabled:
+                try:
+                    summaries = await run_summary_round(
+                        conversation=store.conversation,
+                        names_repo=store.member_names,
+                        repo=store.group_summaries,
+                        chat=_data_cleaning_chat,
+                        min_new_turns=int(plugin_config.ai_companion_summary_min_turns),
+                        interval_seconds=float(plugin_config.ai_companion_summary_interval_seconds),
+                        disabled_groups={str(item) for item in plugin_config.ai_companion_memory_disabled_groups},
+                    )
+                    for item in summaries:
+                        if item.get("error"):
+                            logger.warning(f"ai companion summary skipped {item.get('group_id')}: {item['error']}")
+                except Exception as exc:  # noqa: BLE001 — 摘要失败不影响记忆抽取
+                    logger.warning(f"ai companion summary round failed: {exc!r}")
             if not plugin_config.ai_companion_memory_enabled:
                 continue
             results = await run_memory_extraction_round(
