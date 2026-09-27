@@ -24,7 +24,6 @@ DEFAULT_SEGMENT_ORDER: tuple[str, ...] = (
     "memory",
     "scene",
 )
-KNOWN_SEGMENTS: tuple[str, ...] = DEFAULT_SEGMENT_ORDER + ("motivation",)
 
 MOTIVATION_LINES: tuple[str, ...] = (
     "只有存在明确话头才主动展开新话题；没有天然话头时优先简短呼应或提出小问题，而非表演式发言。",

@@ -82,24 +82,6 @@ class GroupSummaryRepo:
             updated_at=float(row["updated_at"] or 0.0),
         )
 
-    async def list_all(self) -> list[GroupSummary]:
-        return await asyncio.to_thread(self._list_all_sync)
-
-    def _list_all_sync(self) -> list[GroupSummary]:
-        self.db.ensure_schema()
-        with self.db.connection() as conn:
-            rows = conn.execute("SELECT * FROM group_summaries ORDER BY updated_at DESC").fetchall()
-        return [
-            GroupSummary(
-                group_id=str(row["group_id"]),
-                summary=str(row["summary"] or ""),
-                covered_turn_id=int(row["covered_turn_id"] or 0),
-                turns_covered=int(row["turns_covered"] or 0),
-                updated_at=float(row["updated_at"] or 0.0),
-            )
-            for row in rows
-        ]
-
     async def upsert(
         self,
         *,

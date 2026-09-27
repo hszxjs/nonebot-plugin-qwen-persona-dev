@@ -267,9 +267,6 @@ class ConversationRepo:
                 )
             return int(cursor.rowcount or 0)
 
-    async def count_turns(self, *, session_key: str | None = None) -> int:
-        return await asyncio.to_thread(self._count_turns_sync, session_key)
-
     async def list_session_groups(self) -> list[str]:
         """时间线里出现过的群号（去重）——昵称回填与统计用。"""
         return await asyncio.to_thread(self._list_session_groups_sync)
@@ -443,35 +440,6 @@ class MemberNameRepo:
                 (user_id, group_id),
             )
             return bool(cursor.rowcount)
-
-    async def list_names(self, *, group_id: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
-        return await asyncio.to_thread(self._list_names_sync, (group_id or "") if group_id is not None else None, limit)
-
-    def _list_names_sync(self, group_id: str | None, limit: int) -> list[dict[str, Any]]:
-        self.db.ensure_schema()
-        with self.db.connection() as conn:
-            if group_id is None:
-                rows = conn.execute(
-                    "SELECT group_id, user_id, name, updated_at FROM member_names ORDER BY updated_at DESC LIMIT ?",
-                    (max(1, int(limit)),),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT group_id, user_id, name, updated_at FROM member_names
-                    WHERE group_id = ? ORDER BY updated_at DESC LIMIT ?
-                    """,
-                    (group_id, max(1, int(limit))),
-                ).fetchall()
-        return [
-            {
-                "group_id": str(row["group_id"]),
-                "user_id": str(row["user_id"]),
-                "name": str(row["name"]),
-                "updated_at": float(row["updated_at"] or 0.0),
-            }
-            for row in rows
-        ]
 
 
 __all__ = ["MAX_WINDOW_TURNS", "SPEAKER_BOT", "SPEAKER_MEMBER", "ConversationRepo", "MemberNameRepo"]

@@ -595,15 +595,17 @@ class ChatService:
         # 纯图片消息也算"有内容"（打趣回复的前提）；普通表情(face/mface)不算，避免刷触发
         has_media = any(str(part.get("type") or "") == "image" for part in (media_parts or []))
         group_id = ids.get("group_id")
-        if group_id:
-            self.interjection_limiter.observe_message(group_id=group_id, user_id=str(ids.get("user_id") or ""))
         if group_id and force_reply:
             self.interjection_limiter.mark_addressed(group_id=group_id)
+        # 先算热度（只数之前那几条），再把当前这条计入窗口，避免"自己算一个热度"
+        heat = self.interjection_limiter.heat_messages(group_id=group_id or "")
+        if group_id:
+            self.interjection_limiter.observe_message(group_id=group_id, user_id=str(ids.get("user_id") or ""))
         weighted = weighted_probability(
             InterjectionInput(
                 base_probability=float(self.config.ai_companion_reply_probability),
                 addressed_recently=self.interjection_limiter.was_addressed_recently(group_id=group_id or ""),
-                heat_messages=self.interjection_limiter.heat_messages(group_id=group_id or ""),
+                heat_messages=heat,
                 heat_min_messages=int(getattr(self.config, "ai_companion_heat_min_messages", 5)),
                 same_speaker_as_last_reply=self.interjection_limiter.same_speaker_as_last_reply(
                     group_id=group_id or "", user_id=str(ids.get("user_id") or "")
