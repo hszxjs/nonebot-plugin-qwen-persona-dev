@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -34,18 +35,21 @@ EXTRACT_PROMPT = """你在维护一个 QQ 群的长期记忆库。下面是该�
 - 成员层面（scope=member）：某个成员的称呼/外号、稳定偏好、群内身份、与其他成员的关系、他身上的重要事件。
 
 规则：
-1. 忽略闲聊噪声、临时情绪、一次性玩笑；只记以后还用得上的。
+1. 只记**稳定特征**：长期偏好、身份/职业、称呼外号、人际关系、群规与群梗。
+   临时状态（"这周在拉货""最近没回家""今天在忙"）只在明确会持续一段时间时记为 kind=事件，
+   不要记成偏好或身份；一次性玩笑、流水账、情绪波动都不记。
 2. 不记真实姓名/住址/电话/单位/经济状况等隐私信息；不记负面评价与八卦评判。
 3. 每条 content 用一句话、20 字以内、自带主语（成员条目前面不用写名字），只写人话层面的事实，
    例如「喜欢在周末开黑」；不要写成「该成员经常使用某指令」这类机制描述。
 4. importance 取 1-5（5=长期稳定且重要）。sensitivity 取：
    neutral（中性事实/梗/约定）、relation（成员之间的关系）、emotion（情绪与心理状态）、private（敏感隐私）。
 5. 不要记录：机器人自身的运行规则/概率/触发方式、插件命令的用法与参数、以及"谁说了什么"的一次性流水。
+   成员条目的主语必须是这个人本身：像"群友常约一起打本"这种是群层面事实，应记为 scope=group，不要挂在个人名下。
    群里玩插件或游戏这类只概括成一句「本群在玩什么」，不要写具体命令、参数与机制。
 6. 成员条目的 user_id 只能填对话记录开头给出的说话人编号（M1/M2…），
    不要编造编号，也不要把编号写进 content。
 7. 如果一条新信息其实是在修正/补充下面的「已有记忆」，就填 existing_id 表示更新它，
-   不要再新增一条重复的（同一件事只能有一条记忆）。
+   不要再新增一条重复的（同一件事只能有一条记忆，也不要同一事实既记"事实"又记"梗"）。
 8. 没有值得记的就返回空数组。
 
 只输出 JSON，不要解释。格式：
@@ -53,6 +57,14 @@ EXTRACT_PROMPT = """你在维护一个 QQ 群的长期记忆库。下面是该�
               {"scope": "member", "user_id": "M1", "kind": "偏好", "content": "...", "importance": 2, "sensitivity": "neutral"},
               {"scope": "group", "existing_id": 12, "kind": "梗", "content": "（更新后的说法）", "importance": 4, "sensitivity": "neutral"}]}
 """
+
+
+_GROUP_SUBJECT_RE = re.compile(r"^(本群|群内|群里|群友|群中|群里的人)|(^群[^友]?[的是在])")
+
+
+def _looks_like_group_fact(content: str) -> bool:
+    """判断一条"成员记忆"其实是不是群层面事实（主语是群而不是这个人）。"""
+    return bool(_GROUP_SUBJECT_RE.search(" ".join(str(content or "").split())))
 
 
 def parse_ok(raw: str) -> bool:
@@ -132,6 +144,8 @@ def parse_memories(raw: str) -> list[dict[str, Any]]:
             user_id = str(item.get("user_id") or "").strip()
             if not user_id:
                 continue
+            if _looks_like_group_fact(content):
+                continue  # "群友常约…"这类主语是群，不该挂在个人名下
             entry["user_id"] = user_id
         cleaned.append(entry)
     return cleaned

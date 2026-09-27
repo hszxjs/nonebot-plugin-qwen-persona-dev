@@ -74,6 +74,9 @@ class AiCompanionConfig(BaseModel):
     ai_companion_memory_half_life_days: float = 30.0
     # 不记记忆的群（群号列表）：这些群既不抽取也不注入。
     ai_companion_memory_disabled_groups: list[str] = Field(default_factory=list)
+    # 容量上限：超出后按"重要度 + 最近提起时间"软淘汰（标记过期，可在记忆页恢复）
+    ai_companion_memory_member_limit: int = 12
+    ai_companion_memory_group_limit: int = 20
     # ---- 滚动话题摘要：跨小时也能接上话题 ----
     ai_companion_summary_enabled: bool = True
     ai_companion_summary_min_turns: int = 40

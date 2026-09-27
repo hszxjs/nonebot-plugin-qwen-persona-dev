@@ -489,3 +489,59 @@ async def test_unparsable_extraction_keeps_cursor_and_backs_off(persona_store) -
     assert third and third[0]["group_saved"] == 1
     state = (await persona_store.persona_memory.get_extraction_states()).get("group:100")
     assert state is not None and state.last_turn_id > 0
+
+
+async def test_event_memories_decay_faster_than_stable_facts(persona_store) -> None:
+    """临时状态（事件）比稳定特征衰减快：半衰期只有 1/4。"""
+    import time
+
+    repo = persona_store.persona_memory
+    await repo.add_member_memory(group_id="100", user_id="42", kind="身份", content="跑长途拉货", importance=3)
+    await repo.add_member_memory(group_id="100", user_id="42", kind="事件", content="这周在拉芒果", importance=2)
+    age = time.time() - 20 * 86400  # 20 天前提到的
+    with persona_store.db.connection() as conn:
+        conn.execute("UPDATE member_memories SET created_at = ?, last_seen_at = ?", (age, age))
+
+    await repo.decay(half_life_days=30.0, floor=0.4)
+    items = await repo.list_memories(scope="member", group_id="100", user_id="42")
+    contents = [item.content for item in items]
+    # 20 天 / 30 天半衰期 → 身份类仍在线；20 天 / 7.5 天 → 事件类已过期
+    assert "跑长途拉货" in contents
+    assert "这周在拉芒果" not in contents
+
+
+async def test_member_memory_capacity_retires_lowest(persona_store) -> None:
+    """容量上限：超出的按重要度+新鲜度软淘汰（标过期，不删数据）。"""
+    from nonebot_plugin_ai_companion.memory.persona_memory import PersonaMemoryRepo
+
+    repo = PersonaMemoryRepo(persona_store.db, member_limit=3, group_limit=3)
+    for index, content in enumerate(["喜欢周末开黑", "养了两只猫", "在准备考研", "讨厌吃香菜", "收藏机械键盘"]):
+        await repo.add_member_memory(
+            group_id="100",
+            user_id="42",
+            kind="偏好",
+            content=content,
+            importance=1.0 + index * 0.5,
+            sensitivity="neutral",
+        )
+    active = await repo.list_memories(scope="member", group_id="100", user_id="42")
+    assert len(active) == 3
+    # 留下的是重要度最高的三条
+    assert sorted(item.content for item in active) == sorted(["在准备考研", "讨厌吃香菜", "收藏机械键盘"])
+    all_rows = await repo.list_memories(scope="member", group_id="100", user_id="42", include_decayed=True)
+    assert len(all_rows) == 5  # 被淘汰的只是标记过期，数据还在，可恢复
+
+
+def test_member_entries_that_are_group_facts_are_dropped() -> None:
+    """归属纠偏："群友常约一起打本"是群事实，不该挂到个人名下。"""
+    from nonebot_plugin_ai_companion.memory.extractor import parse_memories
+
+    items = parse_memories(
+        '{"memories": ['
+        '{"scope": "member", "user_id": "M1", "kind": "身份", "content": "群友常约一起打本"},'
+        '{"scope": "member", "user_id": "M1", "kind": "偏好", "content": "喜欢在周末开黑"},'
+        '{"scope": "group", "kind": "约定", "content": "群友常约一起打本"}'
+        "]}"
+    )
+    assert [item["content"] for item in items] == ["喜欢在周末开黑", "群友常约一起打本"]
+    assert items[1]["scope"] == "group"

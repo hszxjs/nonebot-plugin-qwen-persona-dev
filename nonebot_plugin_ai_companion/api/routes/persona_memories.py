@@ -160,6 +160,22 @@ def build_router(
         failed = [item for item in results if item.get("error")]
         return {"results": results, "saved": saved, "failed": len(failed)}
 
+    @router.post("/persona-memories/consolidate")
+    async def consolidate(persona_chat: Any | None = None) -> dict[str, Any]:
+        """一次性整理：合并近义重复、淘汰临时状态噪声（软淘汰，可恢复）。"""
+        if store is None or data_cleaning_chat is None:
+            raise HTTPException(status_code=503, detail="store unavailable")
+        from ...memory.consolidate import consolidate_all
+
+        reports = await consolidate_all(
+            repo=store.persona_memory,
+            chat=data_cleaning_chat,
+            conversation=store.conversation,
+        )
+        merged = sum(int(item.get("merged", 0)) for item in reports.values())
+        retired = sum(int(item.get("retired", 0)) for item in reports.values())
+        return {"groups": len(reports), "merged": merged, "retired": retired, "details": reports}
+
     @router.post("/persona-memories/decay")
     async def decay_memories(payload: MemoryDecayPayload | None = None) -> dict[str, Any]:
         repo = memory_repo()

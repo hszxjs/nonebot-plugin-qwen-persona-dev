@@ -114,8 +114,16 @@ def _similar(left: str, right: str) -> float:
 class PersonaMemoryRepo:
     """群记忆 / 成员记忆的统一仓库（两表共享一套去重、衰减、注入逻辑）。"""
 
-    def __init__(self, db: PersonaDatabase) -> None:
+    def __init__(
+        self,
+        db: PersonaDatabase,
+        *,
+        member_limit: int = 12,
+        group_limit: int = 20,
+    ) -> None:
         self.db = db
+        self.member_limit = max(1, int(member_limit))
+        self.group_limit = max(1, int(group_limit))
 
     # ---- 写入 ----
     async def add_group_memory(
@@ -198,6 +206,7 @@ class PersonaMemoryRepo:
                     """,
                     (group_id, user_id, clean_kind, text, importance_value, clean_sensitivity, now, now),
                 )
+                self._enforce_limit(conn, table, self.member_limit, "group_id = ? AND user_id = ?", (group_id, user_id))
             else:
                 conn.execute(
                     """
@@ -207,7 +216,32 @@ class PersonaMemoryRepo:
                     """,
                     (group_id, clean_kind, text, importance_value, clean_sensitivity, now, now),
                 )
+                self._enforce_limit(conn, table, self.group_limit, "group_id = ?", (group_id,))
         return True
+
+    @staticmethod
+    def _enforce_limit(
+        conn: Any,
+        table: str,
+        limit: int,
+        where: str,
+        params: tuple[Any, ...],
+    ) -> int:
+        """超出容量时把"最不重要且最久没被提起"的条目标记过期（软淘汰，可恢复）。
+
+        只标 decayed：行还在，运维能在记忆页看到并恢复；不删数据。
+        """
+        rows = conn.execute(
+            f"SELECT id, importance, last_seen_at FROM {table} WHERE {where} AND decayed = 0",
+            params,
+        ).fetchall()
+        if len(rows) <= limit:
+            return 0
+        ordered = sorted(rows, key=lambda row: (float(row["importance"] or 1.0), float(row["last_seen_at"] or 0.0)))
+        retired = ordered[: max(0, len(rows) - limit)]
+        for row in retired:
+            conn.execute(f"UPDATE {table} SET decayed = 1 WHERE id = ?", (int(row["id"]),))
+        return len(retired)
 
     # ---- 查询 ----
     async def list_memories(
@@ -425,6 +459,17 @@ class PersonaMemoryRepo:
             )
             return bool(cursor.rowcount)
 
+    async def retire_memory(self, *, scope: str, memory_id: int) -> bool:
+        """软淘汰：标记 expired（不注入、可在记忆页看到并恢复），不物理删除。"""
+        return await asyncio.to_thread(self._retire_sync, scope, int(memory_id))
+
+    def _retire_sync(self, scope: str, memory_id: int) -> bool:
+        table = "group_memories" if scope == "group" else "member_memories"
+        self.db.ensure_schema()
+        with self.db.connection() as conn:
+            cursor = conn.execute(f"UPDATE {table} SET decayed = 1 WHERE id = ?", (memory_id,))
+            return bool(cursor.rowcount)
+
     async def delete_memory(self, *, scope: str, memory_id: int) -> bool:
         return await asyncio.to_thread(self._delete_sync, scope, int(memory_id))
 
@@ -456,23 +501,26 @@ class PersonaMemoryRepo:
 
     def _decay_sync(self, half_life_days: float, floor: float) -> dict[str, int]:
         half_life_seconds = max(3600.0, half_life_days * 86400.0)
+        # 事件类（临时状态）半衰期只有稳定特征的 1/4：知道"他最近在拉货"有用，但不该长期留着
+        event_half_life_seconds = max(3600.0, half_life_seconds / 4.0)
         now = time.time()
         touched = decayed_total = 0
         self.db.ensure_schema()
         with self.db.connection() as conn:
             for table in ("group_memories", "member_memories"):
                 rows = conn.execute(
-                    f"SELECT id, importance, created_at, last_seen_at FROM {table} WHERE decayed = 0"
+                    f"SELECT id, kind, importance, created_at, last_seen_at FROM {table} WHERE decayed = 0"
                 ).fetchall()
                 for row in rows:
                     created_at = float(row["created_at"] or now)
                     last_seen_at = float(row["last_seen_at"] or created_at)
-                    age = max(0.0, now - created_at)
-                    decayed_value = float(row["importance"] or 1.0) * (0.5 ** (age / half_life_seconds))
-                    fresh_value = float(row["importance"] or 1.0) * (
-                        0.5 ** (max(0.0, now - last_seen_at) / half_life_seconds)
+                    # 以"最近一次出现"为准（而不是创建时间）：常被提起的事不该被衰减掉；
+                    # 事件类（临时状态）半衰期只有稳定特征的 1/4。
+                    age = max(0.0, now - last_seen_at)
+                    per_row_half_life = (
+                        event_half_life_seconds if str(row["kind"] or "") == "事件" else half_life_seconds
                     )
-                    value = max(decayed_value, fresh_value)
+                    value = float(row["importance"] or 1.0) * (0.5 ** (age / per_row_half_life))
                     if value < floor:
                         conn.execute(f"UPDATE {table} SET decayed = 1 WHERE id = ?", (int(row["id"]),))
                         decayed_total += 1

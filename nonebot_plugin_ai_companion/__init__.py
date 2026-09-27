@@ -205,6 +205,10 @@ def _save_admin_config(values: dict[str, Any]) -> dict[str, Any]:
     save_config_overrides(plugin_config, config_to_dict(plugin_config))
     mlx_runtime.reconfigure(plugin_config)
     client.reconfigure(plugin_config)
+    store.apply_memory_limits(
+        member_limit=plugin_config.ai_companion_memory_member_limit,
+        group_limit=plugin_config.ai_companion_memory_group_limit,
+    )
     restart_required = [name for name in changed if name in _CONFIG_RESTART_REQUIRED]
     return {"changed": changed, "restart_required": restart_required}
 
@@ -253,6 +257,10 @@ _memory_loop_started = False
 @driver.on_startup
 async def _startup() -> None:
     await store.init()
+    store.apply_memory_limits(
+        member_limit=plugin_config.ai_companion_memory_member_limit,
+        group_limit=plugin_config.ai_companion_memory_group_limit,
+    )
     try:
         empty_cleanup = await store.cleanup_empty_chat_artifacts()
         if empty_cleanup.get("samples_deleted") or empty_cleanup.get("patterns_deleted"):

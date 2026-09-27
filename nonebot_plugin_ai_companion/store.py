@@ -55,6 +55,11 @@ class PersonaStore:
         # 滚动话题摘要（每群一份，注入 scene 段）
         self.group_summaries = GroupSummaryRepo(self.db)
 
+    def apply_memory_limits(self, *, member_limit: int, group_limit: int) -> None:
+        """容量上限来自配置：初始化与配置保存时都调用，避免写死在仓库里。"""
+        self.persona_memory.member_limit = max(1, int(member_limit))
+        self.persona_memory.group_limit = max(1, int(group_limit))
+
     def attach_event_bus(self, bus) -> None:
         """注入事件总线：三个事件仓库写入后实时发布（SSE 时间线用）。"""
         self.events.bus = bus
