@@ -43,7 +43,7 @@
 | `__init__.py`（1611 行） | `__init__.py`（368 行）+ `chat_service.py` + `learning_service.py` + `bot_env.py` + `prompt/builder.py` + `context/relevance.py` + `delivery/onebot_v11.py` + `finetune/schedule.py` + `observability/debug_log.py` |
 | `admin_server.py`（658 行） | `api/{auth,helpers,server}.py` + `api/routes/{operations,runtime,training,stickers,settings,misc}.py` |
 | `qwen_client.py` | `providers/client.py`（经注册表构建） |
-| `mlx_backend.py` / `mlx_runtime.py` / `glm_backend.py` | `providers/` 同名模块（已注册 local/remote 类型） |
+| `mlx_backend.py` / `mlx_runtime.py` / `llm_backend.py` | `providers/` 同名模块（已注册 local/remote 类型） |
 | `filters.py` | `prompt/text.py`（文本工具）+ `decision/gates.py`（门控） |
 | `media.py` | `context/media_parts.py` + `memory/ingest.py` + `prompt/media_text.py` |
 | `message_context.py` / `forward_resolver.py` / `nickname_resolver.py` | `context/envelope.py` / `context/forward.py` / `context/nicknames.py` |
@@ -78,7 +78,7 @@ pnpm --dir webui test                           # 前端 11 用例
 - **role_card 域**：`RoleCard` 统一抽象（`bot_persona` / `member_mimic` 共享字段），
   增量表 `role_cards` / `session_role_bindings`（按惯例先备份 persona.sqlite3）；
   会话绑定切换后短期上下文从 `bound_at` 重新计（长期检索不受影响）
-- **member_mimic**：`style_analyzer` 用辅助 LLM（providers/aux_llm.py，glm-4.5-flash）
+- **member_mimic**：`style_analyzer` 用辅助 LLM（providers/aux_llm.py，默认在线模型）
   从该群友近期样本增量提炼口头禅/语气/话题偏好/情绪基线，支持一键"刷新语言风格"
 - **提示词分段**（文档十节）：identity/selfcheck/naturalness/sticker/tools 默认段
   与一期输出逐字节兼容（有测试锁定）；memory/scene/motivation 新段按
@@ -86,7 +86,7 @@ pnpm --dir webui test                           # 前端 11 用例
 - **工具域 v2**（文档四节）：`@register(name, parameters, permission_tags)` 注册表、
   角色卡 `allowed_tools` 白名单（权限矩阵，webui 勾选编辑）、内置
   memory_query / sticker_send / web_search；`BaseSearchProvider` 抽象 + SearxNG + Tavily
-- **GLM 工具调用回路**：`chat_with_tools` → 执行 → 结果回填 → 二次推理，
+- **工具调用回路（在线 LLM 后端）**：`chat_with_tools` → 执行 → 结果回填 → 二次推理，
   `ai_companion_enable_tool_calls` 默认关闭，轮次/超时/结果长度有上限防死循环
 - **API/webui**：`/api/role-cards`（CRUD/克隆/绑定/生成/刷新风格）+ `/api/tools`；
   webui 新增"角色卡"页（第 6 个工作区）
@@ -155,9 +155,9 @@ pnpm --dir webui test                           # 前端 11 用例
 
 ## 已知的现状债务（刻意保留，分期解决）
 
-- 表情选择与后台识图固定直连 `mlx_runtime`（GLM 模式下本地视觉仍被使用）——第三期随
+- 表情选择与后台识图固定直连 `mlx_runtime`（在线模式下本地视觉仍被使用）——第三期随
   RoleProviderBinding 的 vision 角色绑定一起解决
-- 工具调用回路在 GLM 与 OpenAI 兼容实例（Ollama/llama.cpp）上可用；本地 MLX 后端
+- 工具调用回路在在线 LLM 与 OpenAI 兼容实例（Ollama/llama.cpp）上可用；本地 MLX 后端
   无 function calling，工具仅作为提示词描述存在
 - `sticker/assets.py` 的去重/回填/清理维护例程会跨表重写 chat_samples（同事务、表情域语义，
   已在模块 docstring 标注）；第五期 Alembic 化时收敛

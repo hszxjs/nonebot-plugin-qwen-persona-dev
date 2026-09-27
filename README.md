@@ -1,6 +1,6 @@
 # nonebot-plugin-ai-companion
 
-AI 对话伙伴 NoneBot2 插件：本地 MLX / 在线 GLM 双推理后端（Provider 注册表抽象），被动学习群友语气与表情包，支持 LoRA 定时训练。前身为 `nonebot-plugin-qwen-persona`，0.2.0 起按领域分包重构（重构说明见 `docs/architecture.md`）。
+AI 对话伙伴 NoneBot2 插件：本地 MLX / 在线 LLM 双推理后端（Provider 注册表抽象），被动学习群友语气与表情包，支持 LoRA 定时训练。前身为 `nonebot-plugin-qwen-persona`，0.2.0 起按领域分包重构（重构说明见 `docs/architecture.md`）。
 
 ## 安装
 
@@ -30,9 +30,9 @@ nonebot-plugin-ai-companion = ["nonebot_plugin_ai_companion"]
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `ai_companion_inference_backend` | `mlx` | `mlx`（本地）/ `glm`（在线 OpenAI 兼容 API） |
+| `ai_companion_inference_backend` | `mlx` | `mlx`（本地）/ `llm`（在线 OpenAI 兼容 API；旧值 `glm` 仍兼容） |
 | `ai_companion_mlx_model` | `mlx-community/Qwen3.5-9B-MLX-4bit` | 本地 MLX-VLM 模型 |
-| `ai_companion_online_api_url` / `_api_key` / `_model` | - | GLM 在线后端 |
+| `ai_companion_online_api_url` / `_api_key` / `_model` | - | 在线 LLM 后端（DeepSeek / GLM / Qwen 等） |
 | `ai_companion_data_dir` | `data/qwen_persona` | 运行数据目录（历史路径保持不变） |
 | `ai_companion_admin_host` / `_port` | `127.0.0.1` / `8082` | 管理 WebUI |
 | `ai_companion_train_times` | `["06:10", "23:50"]` | LoRA 定时训练时刻 |
@@ -45,11 +45,11 @@ AI_COMPANION_INFERENCE_BACKEND=mlx
 AI_COMPANION_MLX_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit
 AI_COMPANION_MLX_AUTO_LOAD=true
 
-# 在线 GLM
-AI_COMPANION_INFERENCE_BACKEND=glm
+# 在线 LLM
+AI_COMPANION_INFERENCE_BACKEND=llm
 AI_COMPANION_ONLINE_API_URL=https://api.z.ai/api/coding/paas/v4/chat/completions
 AI_COMPANION_ONLINE_API_KEY=sk-xxx
-AI_COMPANION_ONLINE_MODEL=glm-5.2
+AI_COMPANION_ONLINE_MODEL=deepseek-flash
 ```
 
 ## 使用
@@ -75,7 +75,7 @@ AI_COMPANION_ONLINE_MODEL=glm-5.2
 
 ### 推理后端与角色绑定（第三期）
 
-- **多后端实例**：管理页可为 Ollama / llama.cpp（本地）与 GLM（在线）创建任意多个实例
+- **多后端实例**：管理页可为 Ollama / llama.cpp（本地）与在线 LLM API 创建任意多个实例
   （自定义 base_url / 模型 / API key / 优先级），一键健康检查；新后端类型只需在
   `providers/` 加一个 `@register` 适配器文件
 - **三角色绑定**：`chat`（主对话）/ `vision`（识图与表情选择）/ `data_cleaning`（风格
@@ -93,7 +93,7 @@ AI_COMPANION_ONLINE_MODEL=glm-5.2
   （自动分析口头禅/语气/话题偏好，可随时"刷新语言风格"）。绑定到群后生效，
   切换绑定会重置该会话短期上下文
 - **工具权限矩阵**：每张角色卡可勾选允许的工具（memory_query / sticker_send / web_search）；
-  `AI_COMPANION_ENABLE_TOOL_CALLS=true` 时 GLM 在线后端启用 function calling
+  `AI_COMPANION_ENABLE_TOOL_CALLS=true` 时在线 LLM 后端启用 function calling
   回路（执行工具 → 回填 → 二次推理，轮次/超时受限）
 - **网页搜索**：`AI_COMPANION_SEARCH_PROVIDER=searxng|tavily` 并配置
   `AI_COMPANION_SEARXNG_URL` 或 `AI_COMPANION_TAVILY_API_KEY` 后，web_search 工具可用
@@ -131,7 +131,7 @@ nonebot_plugin_ai_companion/
 ├── store.py             # PersonaStore：领域仓库聚合容器
 ├── config.py            # ai_companion_* 配置（含旧前缀兼容）
 ├── runtime_config.py    # admin_config.json 覆盖持久化
-├── providers/           # 推理来源域：base/registry/client + mlx/glm 后端
+├── providers/           # 推理来源域：base/registry/client + mlx/llm 后端
 ├── model_manager/       # 模型下载与默认模型列表
 ├── memory/              # 样本/模式/语料仓库 + 共享 DB 层 + 摄入管线
 ├── context/             # 消息信封/转发展开/昵称/媒体解析/图文相关性
