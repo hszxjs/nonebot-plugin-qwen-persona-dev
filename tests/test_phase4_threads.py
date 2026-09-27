@@ -179,3 +179,43 @@ async def test_backfill_threads_is_idempotent(persona_store) -> None:
     second = await persona_store.conversation.backfill_threads()
     assert first["sessions"] == 1 and first["rows"] == 2
     assert second["sessions"] == 0 and second["rows"] == 0  # 已算过就跳过
+
+
+# ---- 工程收尾：限流占位、被回复即被叫 ----
+
+
+def test_limiter_slot_is_reserved_at_decision_time() -> None:
+    """判定即占位：否则并发的几条消息会各自通过冷却检查、一起发出去。"""
+    from nonebot_plugin_ai_companion.decision.interjection import InterjectionLimiter
+
+    limiter = InterjectionLimiter(cooldown_seconds=45, hourly_limit=20, heat_window_seconds=120)
+    assert limiter.block_reason(group_id="100", now=1000.0) == ""
+    # 判定通过 → 占位（模拟 decide 阶段的 observe_reply）
+    limiter.observe_reply(group_id="100", user_id="42", now=1000.0)
+    # 同一批的第二条消息立刻判定：应被冷却挡住
+    assert limiter.block_reason(group_id="100", now=1000.5) == "cooldown"
+
+
+def test_reply_to_bot_counts_as_addressed() -> None:
+    """有人在回复 bot 自己 = 被叫：不该被概率或冷却挡掉。"""
+    from nonebot_plugin_ai_companion.context.envelope import reply_sender_from_event
+
+    class Sender:
+        user_id = "999"
+        card = "阿强"
+        nickname = "qiang"
+
+    class Reply:
+        sender = Sender()
+        message = []
+
+    class Event:
+        reply = Reply()
+
+    parsed = reply_sender_from_event(Event())
+    assert parsed is not None and parsed.get("user_id") == "999"
+    # 没有引用时返回 None（不会误判成被叫）
+    class BareEvent:
+        pass
+
+    assert reply_sender_from_event(BareEvent()) is None

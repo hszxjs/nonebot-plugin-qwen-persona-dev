@@ -1,10 +1,7 @@
 import { useMemo, useState } from "react"
 import {
   IconChevronRight,
-  IconClock,
   IconSend,
-  IconSparkles,
-  IconTrash,
 } from "@tabler/icons-react"
 import { toast } from "sonner"
 
@@ -24,25 +21,17 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
 import { Item, ItemActions, ItemContent } from "@/components/ui/item"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import {
   apiErrorMessage,
-  decayMemories,
-  deleteMemory,
-  extractMemories,
   pokeSession,
-  useMemories,
   useSessionLogs,
   useSessions,
 } from "@/lib/api"
-import { mutate } from "swr"
 import type {
-  LongTermMemory,
-  MemoriesPayload,
   MessageLogEntry,
   SessionSummary,
   SessionsPayload,
@@ -54,12 +43,6 @@ const FAILED_STATUSES = new Set(["failed", "error", "rejected", "timeout"])
 function secondsText(value: number | null | undefined) {
   if (value === null || value === undefined) return "-"
   return `${value.toFixed(2)}s`
-}
-
-function formatTimestamp(value: number | undefined) {
-  if (!value) return "-"
-  const date = new Date(value > 1e12 ? value : value * 1000)
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("zh-CN", { hour12: false })
 }
 
 function clockText(entry: MessageLogEntry) {
@@ -258,156 +241,10 @@ export function SessionsTabView({
   )
 }
 
-function MemoryKindBadge({ kind }: { kind: string }) {
-  const variant =
-    kind === "profile" ? "default" : kind === "preference" ? "secondary" : "outline"
-  return <Badge variant={variant}>{kind}</Badge>
-}
-
-export function MemoriesTabView({
-  payload,
-  userId,
-  onUserIdChange,
-  includeDecayed,
-  onIncludeDecayedChange,
-  extracting,
-  decaying,
-  deletingId,
-  onExtract,
-  onDecay,
-  onDelete,
-}: {
-  payload: MemoriesPayload | undefined
-  userId: string
-  onUserIdChange: (value: string) => void
-  includeDecayed: boolean
-  onIncludeDecayedChange: (value: boolean) => void
-  extracting: boolean
-  decaying: boolean
-  deletingId: number | null
-  onExtract: (userId: string) => void
-  onDecay: () => void
-  onDelete: (id: number) => void
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          aria-label="用户 ID 过滤"
-          placeholder="按用户 ID 过滤"
-          className="w-44"
-          value={userId}
-          onChange={(event) => onUserIdChange(event.target.value)}
-        />
-        <label className="flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="size-4 accent-primary"
-            checked={includeDecayed}
-            onChange={(event) => onIncludeDecayedChange(event.target.checked)}
-          />
-          显示已衰减
-        </label>
-        <Button size="sm" disabled={!userId.trim() || extracting} onClick={() => onExtract(userId.trim())}>
-          <IconSparkles data-icon="inline-start" />
-          {extracting ? "提取中…" : "手动提取记忆"}
-        </Button>
-        <Button variant="outline" size="sm" disabled={decaying} onClick={onDecay}>
-          <IconClock data-icon="inline-start" />
-          {decaying ? "执行中…" : "执行衰减"}
-        </Button>
-        <Badge variant="outline">共 {payload?.total ?? 0} 条</Badge>
-      </div>
-      <p className="text-xs text-muted-foreground">
-        手动提取会为过滤框中的用户 ID 重新抽取长期记忆；执行衰减按半衰期更新重要度并标记遗忘。
-      </p>
-      {payload?.items.length ? (
-        <div className="overflow-x-auto rounded-lg border" data-testid="memories-table">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2 font-medium">用户</th>
-                <th className="px-3 py-2 font-medium">类型</th>
-                <th className="px-3 py-2 font-medium">内容</th>
-                <th className="px-3 py-2 font-medium">重要度</th>
-                <th className="px-3 py-2 font-medium">最近见到</th>
-                <th className="px-3 py-2 font-medium">状态</th>
-                <th className="px-3 py-2 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payload.items.map((memory: LongTermMemory) => (
-                <tr key={memory.id} data-testid="memory-row">
-                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{memory.user_id}</td>
-                  <td className="px-3 py-2">
-                    <MemoryKindBadge kind={memory.kind} />
-                  </td>
-                  <td className="max-w-[320px] px-3 py-2">
-                    <span className="block truncate" title={memory.content}>
-                      {memory.content}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 tabular-nums">{memory.importance.toFixed(2)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                    {formatTimestamp(memory.last_seen_at)}
-                  </td>
-                  <td className="px-3 py-2">
-                    {memory.decayed ? <Badge variant="destructive">已衰减</Badge> : <Badge variant="secondary">生效中</Badge>}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          disabled={deletingId === memory.id}
-                          aria-label={`删除记忆 ${memory.id}`}
-                        >
-                          <IconTrash data-icon="inline-start" />
-                          删除
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>删除这条记忆？</AlertDialogTitle>
-                          <AlertDialogDescription>{memory.content}</AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>取消</AlertDialogCancel>
-                          <AlertDialogAction variant="destructive" onClick={() => onDelete(memory.id)}>
-                            删除
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <Empty>
-          <EmptyHeader>
-            <EmptyTitle>暂无长期记忆</EmptyTitle>
-            <EmptyDescription>手动提取或等待后台自动抽取后，记忆会按重要度排序显示。</EmptyDescription>
-          </EmptyHeader>
-          <EmptyContent />
-        </Empty>
-      )}
-    </div>
-  )
-}
 
 export function SessionsWorkspace() {
   const { data: sessions, error: sessionsError, isLoading: sessionsLoading } = useSessions(50)
-  const [userId, setUserId] = useState("")
-  const [includeDecayed, setIncludeDecayed] = useState(false)
-  const memories = useMemories(userId, includeDecayed)
   const [pokingKey, setPokingKey] = useState<string | null>(null)
-  const [extracting, setExtracting] = useState(false)
-  const [decaying, setDecaying] = useState(false)
-  const [deletingId, setDeletingId] = useState<number | null>(null)
 
   async function handlePoke(groupId: string) {
     setPokingKey(groupId)
@@ -421,50 +258,13 @@ export function SessionsWorkspace() {
     }
   }
 
-  async function handleExtract(targetUserId: string) {
-    setExtracting(true)
-    try {
-      const result = await extractMemories(targetUserId)
-      toast.success(`已提取 ${result.count} 条记忆`)
-      await mutate((key) => typeof key === "string" && key.startsWith("memories?"))
-    } catch (caught) {
-      toast.error(await apiErrorMessage(caught))
-    } finally {
-      setExtracting(false)
-    }
-  }
-
-  async function handleDecay() {
-    setDecaying(true)
-    try {
-      const result = await decayMemories()
-      toast.success(`衰减完成：${result.decayed} 条被标记遗忘 / 共 ${result.total} 条`)
-      await mutate((key) => typeof key === "string" && key.startsWith("memories?"))
-    } catch (caught) {
-      toast.error(await apiErrorMessage(caught))
-    } finally {
-      setDecaying(false)
-    }
-  }
-
-  async function handleDelete(id: number) {
-    setDeletingId(id)
-    try {
-      await deleteMemory(id)
-      toast.success("已删除记忆")
-      await mutate((key) => typeof key === "string" && key.startsWith("memories?"))
-    } catch (caught) {
-      toast.error(await apiErrorMessage(caught))
-    } finally {
-      setDeletingId(null)
-    }
-  }
-
   return (
     <div className="flex flex-col gap-4">
       <section>
         <h1>会话监控</h1>
-        <p>按会话聚合的回复监控、手动接话与长期记忆管理。</p>
+        <p>
+          按会话聚合的回复监控与手动接话。群/成员记忆已独立成页，见左侧「记忆」。
+        </p>
       </section>
       {sessionsError ? (
         <Alert variant="destructive">
@@ -472,16 +272,9 @@ export function SessionsWorkspace() {
           <AlertDescription>{String(sessionsError)}</AlertDescription>
         </Alert>
       ) : null}
-      {memories.error ? (
-        <Alert variant="destructive">
-          <AlertTitle>无法读取记忆数据</AlertTitle>
-          <AlertDescription>{String(memories.error)}</AlertDescription>
-        </Alert>
-      ) : null}
       <Tabs defaultValue="sessions">
         <TabsList>
           <TabsTrigger value="sessions">会话</TabsTrigger>
-          <TabsTrigger value="memories">记忆</TabsTrigger>
         </TabsList>
         <TabsContent value="sessions">
           {sessionsLoading ? (
@@ -491,25 +284,6 @@ export function SessionsWorkspace() {
               payload={sessions}
               pokingKey={pokingKey}
               onPoke={(groupId) => void handlePoke(groupId)}
-            />
-          )}
-        </TabsContent>
-        <TabsContent value="memories">
-          {memories.isLoading ? (
-            <Skeleton className="h-64" />
-          ) : (
-            <MemoriesTabView
-              payload={memories.data}
-              userId={userId}
-              onUserIdChange={setUserId}
-              includeDecayed={includeDecayed}
-              onIncludeDecayedChange={setIncludeDecayed}
-              extracting={extracting}
-              decaying={decaying}
-              deletingId={deletingId}
-              onExtract={(target) => void handleExtract(target)}
-              onDecay={() => void handleDecay()}
-              onDelete={(id) => void handleDelete(id)}
             />
           )}
         </TabsContent>

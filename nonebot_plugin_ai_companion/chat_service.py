@@ -15,7 +15,12 @@ from nonebot.matcher import Matcher
 
 from .bot_env import BotEnvironment
 from .config import AiCompanionConfig
-from .context.envelope import MessageContextEnvelope, _at_targets_from_message, build_message_context
+from .context.envelope import (
+    MessageContextEnvelope,
+    _at_targets_from_message,
+    build_message_context,
+    reply_sender_from_event,
+)
 from .context.forward import count_forward_segments, resolve_forward
 from .context.media_parts import message_to_parts
 from .context.nicknames import NicknameResolver
@@ -241,7 +246,7 @@ class ChatService:
                     store=self.store,
                     ids=ids,
                     trigger_reason="auto_reply",
-                    model=self.config.ai_companion_mlx_model,
+                    model=self.client.active_model_name(),
                     adapter=self.config.ai_companion_mlx_adapter_path,
                     started_at=inference_started,
                     finished_at=time.perf_counter(),
@@ -379,10 +384,7 @@ class ChatService:
             trigger_reason=reply_decision.reason,
             reply_to_message_id=str(ids.get("message_id") or ""),
         )
-        if ids.get("group_id"):
-            self.interjection_limiter.observe_reply(
-                group_id=str(ids["group_id"]), user_id=str(ids.get("user_id") or "")
-            )
+        # 限流占位已在判定阶段完成（避免并发突发绕过冷却），这里不再重复登记
         self.conversation_pattern_tracker.reset(ids["group_id"])
         matcher.stop_propagation()
 
@@ -592,6 +594,12 @@ class ChatService:
             bot_self_id=self.env.bot_self_id(bot),
             to_me=self.env.is_to_me(event, plain_text),
         )
+        if not force_reply:
+            # 有人在回复 bot 自己：也算"被叫"，不该被冷却或概率挡掉
+            sender = reply_sender_from_event(event)
+            self_id = self.env.cached_self_id()
+            if sender and self_id and str(sender.get("user_id") or "") == self_id:
+                force_reply = True
         # 纯图片消息也算"有内容"（打趣回复的前提）；普通表情(face/mface)不算，避免刷触发
         has_media = any(str(part.get("type") or "") == "image" for part in (media_parts or []))
         group_id = ids.get("group_id")
@@ -630,6 +638,8 @@ class ChatService:
             blocked = self.interjection_limiter.block_reason(group_id=group_id)
             if blocked:
                 return ReplyDecision(False, f"rate_limited:{blocked}")
+            # 判定即占位：否则同一批并发消息会各自通过检查、一起发出去，把冷却架空
+            self.interjection_limiter.observe_reply(group_id=group_id, user_id=str(ids.get("user_id") or ""))
             decision = ReplyDecision(True, f"{decision.reason}[{weighted.describe()}]")
         return decision
 
@@ -653,6 +663,12 @@ class ChatService:
             bot_self_id=self.env.bot_self_id(bot),
             to_me=self.env.is_to_me(event, plain_text),
         )
+        if not force_reply:
+            # 有人在回复 bot 自己：也算"被叫"，不该被冷却或概率挡掉
+            sender = reply_sender_from_event(event)
+            self_id = self.env.cached_self_id()
+            if sender and self_id and str(sender.get("user_id") or "") == self_id:
+                force_reply = True
         decision = should_analyze_background_media(
             enable_learning=self.config.ai_companion_enable_learning,
             group_enabled=private_chat or self.env.group_enabled(ids["group_id"]),

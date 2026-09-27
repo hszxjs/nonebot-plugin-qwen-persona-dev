@@ -349,35 +349,4 @@ describe("phase5 kpi dashboard", () => {
     await waitFor(() => expect(mocks.pokeSession).toHaveBeenCalledWith("g1"))
   })
 
-  it("renders memories table with decay markers and runs extract for the filtered user", async () => {
-    renderSessionsWorkspace()
-
-    // radix Tabs 在 mousedown 时激活
-    fireEvent.mouseDown(screen.getByRole("tab", { name: "记忆" }))
-
-    const table = screen.getByTestId("memories-table")
-    const rows = within(table).getAllByTestId("memory-row")
-    expect(rows).toHaveLength(2)
-    expect(within(rows[0]).getByText("100")).toBeInTheDocument()
-    expect(within(rows[0]).getByText("profile")).toBeInTheDocument()
-    expect(within(rows[0]).getByText("喜欢猫")).toBeInTheDocument()
-    expect(within(rows[0]).getByText("生效中")).toBeInTheDocument()
-    expect(within(rows[1]).getByText("已衰减")).toBeInTheDocument()
-    expect(within(rows[1]).getByText("0.30")).toBeInTheDocument()
-
-    fireEvent.change(screen.getByLabelText("用户 ID 过滤"), { target: { value: "100" } })
-    mocks.extractMemories.mockResolvedValue({ written: ["喜欢猫"], count: 1 })
-    fireEvent.click(screen.getByRole("button", { name: /手动提取记忆/ }))
-    await waitFor(() => expect(mocks.extractMemories).toHaveBeenCalledWith("100"))
-  })
-
-  it("runs memory decay from the memories tab", async () => {
-    renderSessionsWorkspace()
-
-    fireEvent.mouseDown(screen.getByRole("tab", { name: "记忆" }))
-    mocks.decayMemories.mockResolvedValue({ decayed: 2, total: 5 })
-    fireEvent.click(screen.getByRole("button", { name: /执行衰减/ }))
-
-    await waitFor(() => expect(mocks.decayMemories).toHaveBeenCalled())
-  })
 })

@@ -101,6 +101,11 @@ def _at_targets_from_message(
     return targets
 
 
+def reply_sender_from_event(event: Any, nickname: str | None = None) -> dict[str, str] | None:
+    """被引用消息的发送者（谁被回复了）；判定"有人在回复 bot 自己"也用它。"""
+    return _reply_sender_from_event(event, nickname)
+
+
 def _reply_sender_from_event(
     event: Any,
     nickname: str | None,
