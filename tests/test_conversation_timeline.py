@@ -395,3 +395,28 @@ def test_prompt_never_contains_full_qq_ids() -> None:
     joined = "\n".join(lines)
     assert "3305167706" not in joined and "2752330053" not in joined
     assert "群友7706" in joined and "群友0053" in joined
+
+
+def test_background_media_analysis_uses_caption_adapter() -> None:
+    """后台图片分析必须拿到 MediaCaptioner 适配器，而不是聊天后端（曾经传错对象导致一直失败）。"""
+    from types import SimpleNamespace
+
+    from nonebot_plugin_ai_companion.chat_service import ChatService
+
+    calls: list[dict] = []
+
+    class Captioner:
+        async def caption_media_general(self, part):
+            calls.append(part)
+            return "图片内容：类型：梗图"
+
+    fake_self = SimpleNamespace(
+        config=SimpleNamespace(ai_companion_anime_caption_enabled=True),
+        captioner=Captioner(),
+    )
+    adapter = ChatService._active_reply_captioner(fake_self)
+    assert adapter is not None and hasattr(adapter, "caption_media")
+    import asyncio
+
+    assert asyncio.run(adapter.caption_media({"type": "image", "data": {}})) == "图片内容：类型：梗图"
+    assert calls  # 确实委派给了 caption_media_general

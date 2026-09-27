@@ -1075,7 +1075,9 @@ class ChatService:
         try:
             result = await analyze_media_parts(
                 store=self.store,
-                captioner=await self._vision_provider(),
+                # 这里要的是 MediaCaptioner（caption_media），不是聊天后端：
+                # 传 vision provider 会因缺方法而整批分析失败（历史上一直如此，被 except 吞掉）
+                captioner=self._active_reply_captioner(),
                 parts=media_parts,
                 group_id=ids.get("group_id"),
                 user_id=ids.get("user_id"),
