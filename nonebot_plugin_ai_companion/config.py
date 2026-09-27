@@ -63,6 +63,14 @@ class AiCompanionConfig(BaseModel):
     ai_companion_context_messages: int = 40
     # 回复时引用触发它的那条消息（群里看得出在接谁的话）；长文合并转发无法引用。
     ai_companion_reply_quote: bool = True
+    # ---- 长期记忆（群记忆 / 成员记忆）：批量增量抽取 + 敏感度分级注入 ----
+    ai_companion_memory_enabled: bool = True
+    ai_companion_memory_extract_min_turns: int = 30
+    ai_companion_memory_extract_interval_seconds: int = 1800
+    ai_companion_memory_extract_check_seconds: int = 300
+    ai_companion_memory_half_life_days: float = 30.0
+    # 不记记忆的群（群号列表）：这些群既不抽取也不注入。
+    ai_companion_memory_disabled_groups: list[str] = Field(default_factory=list)
     ai_companion_min_meme_recent_count: int = 2
 
     ai_companion_min_sample_chars: int = 2

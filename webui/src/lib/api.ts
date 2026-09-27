@@ -24,6 +24,11 @@ import type {
   ModelsManagePayload,
   ModelsPayload,
   OperationsOverview,
+  PersonaMemoriesPayload,
+  PersonaMemoryDecayResult,
+  PersonaMemoryExtractResult,
+  PersonaMemoryGroupsPayload,
+  PersonaMemoryPurgeResult,
   ProviderBindingPayload,
   ProviderBindingsPayload,
   RoleCard,
@@ -421,4 +426,49 @@ export function deleteLoraAdapter(id: string) {
   return api
     .delete(`lora-adapters/${encodeURIComponent(id)}`)
     .json<LoraAdapterDeleteResult>()
+}
+
+// ---- 群记忆 / 成员记忆（批 2）----
+
+export function usePersonaMemories(scope: "group" | "member", groupId: string, includeDecayed = false) {
+  const query = new URLSearchParams({ scope, limit: "200" })
+  if (groupId) query.set("group_id", groupId)
+  if (includeDecayed) query.set("include_decayed", "true")
+  return useSWR<PersonaMemoriesPayload>(`persona-memories?${query.toString()}`, fetchJson)
+}
+
+export function usePersonaMemoryGroups() {
+  return useSWR<PersonaMemoryGroupsPayload>("persona-memories/groups", fetchJson)
+}
+
+export function updatePersonaMemory(
+  scope: "group" | "member",
+  id: number,
+  payload: { content?: string; importance?: number; sensitivity?: string },
+) {
+  return api.patch(`persona-memories/${scope}/${id}`, { json: payload }).json<{ ok: boolean }>()
+}
+
+export function deletePersonaMemory(scope: "group" | "member", id: number) {
+  return api.delete(`persona-memories/${scope}/${id}`).json<{ ok: boolean; deleted: number }>()
+}
+
+export function purgeMemberMemories(groupId: string, userId: string) {
+  return api
+    .post("persona-memories/purge", { json: { group_id: groupId, user_id: userId } })
+    .json<PersonaMemoryPurgeResult>()
+}
+
+export function extractPersonaMemories(groupId = "", maxTurns = 300) {
+  return api
+    .post("persona-memories/extract", { json: { group_id: groupId, force: true, max_turns: maxTurns } })
+    .json<PersonaMemoryExtractResult>()
+}
+
+export function decayPersonaMemories() {
+  return api.post("persona-memories/decay").json<PersonaMemoryDecayResult>()
+}
+
+export function refreshConversationNames() {
+  return api.post("conversation/refresh-names").json<{ groups: number; names: number; details: Record<string, number> }>()
 }

@@ -732,13 +732,24 @@ class ChatService:
             conversation_lines, self.config, online=self._online_backend_active()
         )
         history_lines = trim_history_lines_for_context(history_lines, self.config, online=self._online_backend_active())
-        # 记忆注入段（文档六/十节）：启用 memory 段时取发送者长期记忆（未衰减 top）
+        # 记忆注入：群记忆 + 在场成员（说话人 / 被@ / 被引用）的记忆，按敏感度分级。
+        # 群聊是公开场合：即使被 @ 也只注入 neutral/relation；私聊才注入情绪与隐私类。
         memory_lines: list[str] = []
-        if "memory" in effective_segment_order(self.config) and ids.get("user_id"):
+        if "memory" in effective_segment_order(self.config) and bool(
+            getattr(self.config, "ai_companion_memory_enabled", True)
+        ):
+            member_ids = [str(ids.get("user_id") or "")]
+            member_ids.extend(str(target.get("qq") or "") for target in envelope.at_targets)
+            if envelope.reply_sender:
+                member_ids.append(str(envelope.reply_sender.get("user_id") or ""))
             try:
-                memory_lines = await self.store.long_term_memories.prompt_lines(user_id=str(ids["user_id"]))
+                memory_lines = await self.store.persona_memory.prompt_lines_for_session(
+                    group_id=group_id,
+                    user_ids=[item for item in member_ids if item],
+                    include_sensitive=group_id is None,
+                )
             except Exception as exc:  # noqa: BLE001 — 记忆取数失败不阻塞回复
-                logger.debug("long term memory fetch skipped: %r", exc)
+                logger.debug("persona memory fetch skipped: %r", exc)
 
         active_memes = select_active_memes(
             build_meme_candidates_from_samples(

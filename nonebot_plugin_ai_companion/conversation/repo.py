@@ -110,6 +110,23 @@ class ConversationRepo:
             rows = conn.execute(sql, tuple(params)).fetchall()
         return [turn_from_row(row) for row in reversed(rows)]
 
+    async def turns_after(self, *, session_key: str, after_id: int, limit: int = 200) -> list[ConversationTurn]:
+        """增量读取：id 大于 after_id 的 turn（旧 → 新），记忆抽取用。"""
+        return await asyncio.to_thread(self._turns_after_sync, session_key, int(after_id), max(1, int(limit)))
+
+    def _turns_after_sync(self, session_key: str, after_id: int, limit: int) -> list[ConversationTurn]:
+        self.db.ensure_schema()
+        with self.db.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM conversation_turns
+                WHERE session_key = ? AND id > ?
+                ORDER BY id ASC LIMIT ?
+                """,
+                (session_key, after_id, limit),
+            ).fetchall()
+        return [turn_from_row(row) for row in rows]
+
     async def count_turns(self, *, session_key: str | None = None) -> int:
         return await asyncio.to_thread(self._count_turns_sync, session_key)
 

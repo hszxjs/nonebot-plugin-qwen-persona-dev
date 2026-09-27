@@ -414,6 +414,58 @@ class PersonaDatabase:
                 )
                 """
             )
+            # 群记忆 / 成员记忆：两张表分开存，语义各管各的（群事实 vs 人的事）。
+            # sensitivity: neutral=中性事实 / relation=人际关系 / emotion=情绪 / private=隐私。
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS group_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    importance REAL NOT NULL DEFAULT 1.0,
+                    sensitivity TEXT NOT NULL DEFAULT 'neutral',
+                    created_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    decayed INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_group_memories_group "
+                "ON group_memories(group_id, decayed, importance DESC)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS member_memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    importance REAL NOT NULL DEFAULT 1.0,
+                    sensitivity TEXT NOT NULL DEFAULT 'neutral',
+                    created_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    decayed INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_member_memories_member "
+                "ON member_memories(group_id, user_id, decayed, importance DESC)"
+            )
+            # 增量抽取进度：每个会话已抽取到哪条 turn。
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_extraction_state (
+                    session_key TEXT PRIMARY KEY,
+                    last_turn_id INTEGER NOT NULL DEFAULT 0,
+                    last_run_at REAL NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
 
     @staticmethod
     def is_noise_text(

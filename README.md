@@ -30,6 +30,9 @@ nonebot-plugin-ai-companion = ["nonebot_plugin_ai_companion"]
 
 | 键 | 默认 | 说明 |
 |---|---|---|
+| `ai_companion_memory_enabled` | `true` | 群记忆 / 成员记忆（批量增量抽取 + 敏感度分级注入） |
+| `ai_companion_reply_quote` | `true` | 回复时引用触发它的消息 |
+| `ai_companion_context_messages` | `40` | 送进提示词的最近对话条数（带说话人） |
 | `ai_companion_inference_backend` | `mlx` | `mlx`（本地）/ `llm`（在线 OpenAI 兼容 API；旧值 `glm` 仍兼容） |
 | `ai_companion_mlx_model` | `mlx-community/Qwen3.5-9B-MLX-4bit` | 本地 MLX-VLM 模型 |
 | `ai_companion_online_api_url` / `_api_key` / `_model` | - | 在线 LLM 后端（DeepSeek / GLM / Qwen 等） |

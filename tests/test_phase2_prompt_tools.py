@@ -88,7 +88,7 @@ def test_prompt_segments_identity_override_and_tools() -> None:
     assert "- demo：演示工具" in output
 
 
-def test_prompt_segments_new_segments_only_when_ordered() -> None:
+def test_prompt_segments_memory_default_on_scene_opt_in() -> None:
     config = AiCompanionConfig()
     ctx = PromptContext(
         config=config,
@@ -96,18 +96,22 @@ def test_prompt_segments_new_segments_only_when_ordered() -> None:
         memory_lines=["群友A喜欢打游戏"],
         scene_lines=["当前是群聊"],
     )
-    # 默认顺序不含 memory/scene → 不输出（默认行为不变）
+    # 批 2 起 memory 段默认启用（bot 要有长期记忆）；scene（话题摘要）仍需显式排序
     default_output = build_system_prompt(ctx)
-    assert "背景记忆" not in default_output
+    assert "背景记忆" in default_output
+    assert "群友A喜欢打游戏" in default_output
     assert "当前是群聊" not in default_output
 
-    config_ordered = AiCompanionConfig(
+    # 关掉 memory 段即不再注入
+    ctx.config = AiCompanionConfig(ai_companion_disabled_prompt_segments=["memory"])
+    assert "背景记忆" not in build_system_prompt(ctx)
+
+    # 显式排序时 scene/摘要段才会出现
+    ctx.config = AiCompanionConfig(
         ai_companion_prompt_segment_order=["identity", "memory", "scene", "naturalness"],
     )
-    ctx.config = config_ordered
     ordered_output = build_system_prompt(ctx)
     assert "背景记忆" in ordered_output
-    assert "群友A喜欢打游戏" in ordered_output
     assert "当前是群聊" in ordered_output
 
 

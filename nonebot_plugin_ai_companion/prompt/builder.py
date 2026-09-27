@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from ..config import AiCompanionConfig
 from ..tools.registry import ToolRegistry
 
-DEFAULT_SEGMENT_ORDER: tuple[str, ...] = ("identity", "selfcheck", "naturalness", "sticker", "tools")
-KNOWN_SEGMENTS: tuple[str, ...] = DEFAULT_SEGMENT_ORDER + ("memory", "scene", "motivation")
+DEFAULT_SEGMENT_ORDER: tuple[str, ...] = ("identity", "selfcheck", "naturalness", "sticker", "tools", "memory")
+KNOWN_SEGMENTS: tuple[str, ...] = DEFAULT_SEGMENT_ORDER + ("scene", "motivation")
 
 MOTIVATION_LINES: tuple[str, ...] = (
     "只有存在明确话头才主动展开新话题；没有天然话头时优先简短呼应或提出小问题，而非表演式发言。",

@@ -19,6 +19,7 @@ from .memory.corpus import ExternalCorpusRepo
 from .memory.db import PersonaDatabase
 from .memory.longterm import LongTermMemoryRepo
 from .memory.patterns import ConversationPatternRepo
+from .memory.persona_memory import PersonaMemoryRepo
 from .memory.samples import ChatSampleRepo
 from .memory.stats import StatsRepo
 from .observability.events import InferenceEventRepo, StickerEventRepo
@@ -48,6 +49,8 @@ class PersonaStore:
         # 会话时间线域：对话历史（谁说了什么）+ 昵称快照
         self.conversation = ConversationRepo(self.db)
         self.member_names = MemberNameRepo(self.db)
+        # 长期记忆：群记忆 / 成员记忆（敏感度分级注入）
+        self.persona_memory = PersonaMemoryRepo(self.db)
 
     def attach_event_bus(self, bus) -> None:
         """注入事件总线：三个事件仓库写入后实时发布（SSE 时间线用）。"""

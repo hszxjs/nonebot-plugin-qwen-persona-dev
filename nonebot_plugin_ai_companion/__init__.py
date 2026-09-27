@@ -6,6 +6,7 @@ matcher 层只做路由 + 依赖装配；业务编排在 chat_service / learning
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -243,6 +244,7 @@ _CONFIG_RESTART_REQUIRED = {
     "ai_companion_reply_priority",
 }
 _schedule_installed = False
+_memory_loop_started = False
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +337,42 @@ async def _startup() -> None:
         except Exception as exc:
             logger.exception(f"ai companion mlx runtime auto load failed: {exc!r}")
     _install_schedule()
+    _start_memory_extraction_loop()
+
+
+def _start_memory_extraction_loop() -> None:
+    """后台批量增量抽取记忆：每 check_seconds 扫一次，够条数/够时长的会话才跑。"""
+    global _memory_loop_started
+    if _memory_loop_started:
+        return
+    _memory_loop_started = True
+    asyncio.create_task(_memory_extraction_loop())
+
+
+async def _memory_extraction_loop() -> None:
+    from .memory.extractor import run_memory_extraction_round
+
+    while True:
+        try:
+            await asyncio.sleep(max(60, int(plugin_config.ai_companion_memory_extract_check_seconds or 300)))
+            if not plugin_config.ai_companion_memory_enabled:
+                continue
+            results = await run_memory_extraction_round(
+                conversation=store.conversation,
+                memories=store.persona_memory,
+                names_repo=store.member_names,
+                data_cleaning_chat=_data_cleaning_chat,
+                min_new_turns=int(plugin_config.ai_companion_memory_extract_min_turns),
+                interval_seconds=float(plugin_config.ai_companion_memory_extract_interval_seconds),
+                disabled_groups={str(item) for item in plugin_config.ai_companion_memory_disabled_groups},
+            )
+            for item in results:
+                if item.get("error"):
+                    logger.warning(f"ai companion memory extraction skipped {item.get('session_key')}: {item['error']}")
+        except asyncio.CancelledError:  # pragma: no cover - 关闭时退出
+            raise
+        except Exception as exc:  # noqa: BLE001 — 循环必须活下去
+            logger.warning(f"ai companion memory extraction loop error: {exc!r}")
 
 
 def _install_schedule() -> None:

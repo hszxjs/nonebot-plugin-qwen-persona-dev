@@ -620,3 +620,53 @@ export type LoraAdapterPayload = {
 export type LoraAdapterDeleteResult = {
   deleted: number
 }
+
+// ---- 群记忆 / 成员记忆（批 2）----
+
+export type PersonaMemory = {
+  id: number
+  scope: "group" | "member"
+  group_id: string
+  user_id: string
+  kind: string
+  content: string
+  importance: number
+  sensitivity: "neutral" | "relation" | "emotion" | "private"
+  created_at: number
+  last_seen_at: number
+  decayed: boolean
+}
+
+export type PersonaMemoriesPayload = {
+  items: PersonaMemory[]
+  scope: "group" | "member"
+}
+
+export type PersonaMemoryGroupsPayload = {
+  groups: string[]
+  disabled: string[]
+  sensitivities: string[]
+}
+
+export type PersonaMemoryExtractResult = {
+  saved: number
+  failed: number
+  results: Array<{
+    session_key?: string
+    group_saved?: number
+    member_saved?: number
+    skipped?: number
+    turns?: number
+    error?: string
+  }>
+}
+
+export type PersonaMemoryDecayResult = {
+  updated: number
+  decayed: number
+}
+
+export type PersonaMemoryPurgeResult = {
+  ok: boolean
+  deleted: number
+}

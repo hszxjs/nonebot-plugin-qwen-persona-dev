@@ -1,18 +1,6 @@
 import { useEffect } from "react"
 
-import {
-  IconActivity,
-  IconAdjustments,
-  IconDatabase,
-  IconHomeStats,
-  IconIdBadge2,
-  IconMessages,
-  IconMoodSmile,
-  IconServer2,
-  IconShieldCheck,
-  IconShieldOff,
-  IconTool,
-} from "@tabler/icons-react"
+import { IconActivity, IconAdjustments, IconBrain, IconDatabase, IconHomeStats, IconIdBadge2, IconMessages, IconMoodSmile, IconServer2, IconShieldCheck, IconShieldOff, IconTool } from "@tabler/icons-react"
 import { NavLink, Route, Routes } from "react-router-dom"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -35,6 +23,7 @@ import { BackendsWorkspace } from "@/features/backends/backends-workspace"
 import { BlacklistWorkspace } from "@/features/blacklist/blacklist-workspace"
 import { DiagnosticsWorkspace } from "@/features/diagnostics/diagnostics-workspace"
 import { LogsWorkspace } from "@/features/logs/logs-workspace"
+import { MemoriesWorkspace } from "@/features/memories/memories-workspace"
 import { ModelsWorkspace } from "@/features/models/models-workspace"
 import { OperationsDashboard } from "@/features/operations/operations-dashboard"
 import { RoleCardsWorkspace } from "@/features/role-cards/role-cards-workspace"
@@ -52,6 +41,7 @@ const navItems = [
   { to: "/models", label: "模型管理", icon: IconDatabase },
   { to: "/logs", label: "日志时间线", icon: IconActivity },
   { to: "/sessions", label: "会话监控", icon: IconMessages },
+  { to: "/memories", label: "记忆", icon: IconBrain },
   { to: "/blacklist", label: "黑名单词库", icon: IconShieldOff },
   { to: "/settings", label: "配置管理", icon: IconAdjustments },
   { to: "/rules", label: "规则过滤", icon: IconShieldCheck },
@@ -134,6 +124,7 @@ export function App() {
             <Route path="/models" element={<ModelsWorkspace />} />
             <Route path="/logs" element={<LogsWorkspace />} />
             <Route path="/sessions" element={<SessionsWorkspace />} />
+            <Route path="/memories" element={<MemoriesWorkspace />} />
             <Route path="/blacklist" element={<BlacklistWorkspace />} />
             <Route path="/settings" element={<SettingsWorkspace />} />
             <Route path="/rules" element={<RulesWorkspace />} />

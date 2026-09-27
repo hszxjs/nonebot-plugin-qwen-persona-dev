@@ -23,6 +23,7 @@ from .routes import (
     memories,
     misc,
     operations,
+    persona_memories,
     role_cards,
     runtime,
     settings,
@@ -96,6 +97,9 @@ def create_admin_app(
     )
     app.include_router(backends.build_router(auth=auth, instances=provider_instances, bindings=provider_bindings))
     app.include_router(conversation.build_router(auth=auth, store=store))
+    app.include_router(
+        persona_memories.build_router(auth=auth, store=store, config=config, data_cleaning_chat=data_cleaning_chat)
+    )
     app.include_router(model_manager_routes.build_router(auth=auth, model_manager=model_manager))
     app.include_router(logs.build_router(auth=auth, store=store, event_bus=event_bus, env=env))
     app.include_router(
