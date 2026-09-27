@@ -44,6 +44,15 @@ class ProviderSpec:
 
 _REGISTRY: dict[str, ProviderSpec] = {}
 
+# 历史名兼容：在线 LLM 后端早期叫 "glm"，旧配置/旧实例行里可能仍是这个值。
+PROVIDER_ALIASES: dict[str, str] = {"glm": "llm"}
+
+
+def normalize_provider_name(name: str) -> str:
+    """把历史别名归一到当前注册名（"glm" → "llm"）。"""
+    key = str(name or "").strip().lower()
+    return PROVIDER_ALIASES.get(key, key)
+
 
 def register(
     name: str,
@@ -76,7 +85,7 @@ def register(
 
 def get_provider_spec(name: str) -> ProviderSpec:
     try:
-        return _REGISTRY[name]
+        return _REGISTRY[normalize_provider_name(name)]
     except KeyError:
         available = ", ".join(sorted(_REGISTRY)) or "<none>"
         raise ProviderNotFoundError(f"provider {name!r} not registered (available: {available})") from None

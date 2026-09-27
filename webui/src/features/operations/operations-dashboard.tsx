@@ -271,7 +271,7 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
   const [pendingAction, setPendingAction] = useState<RuntimeAction | null>(null)
   const [confirmAction, setConfirmAction] = useState<RuntimeAction | null>(null)
   const [actionMessage, setActionMessage] = useState("")
-  const isGlm = runtime.runtime === "glm_online"
+  const isOnlineLlm = runtime.runtime === "llm_online"
   const [switchingBackend, setSwitchingBackend] = useState(false)
 
   async function switchBackend(value: string) {
@@ -280,7 +280,7 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
     try {
       await saveSettingField("ai_companion_inference_backend", value)
       await mutate("operations/overview")
-      toast.success(value === "glm" ? "已切换到 GLM 在线推理" : "已切换到本地 MLX 推理")
+      toast.success(value === "llm" ? "已切换到在线 LLM 推理" : "已切换到本地 MLX 推理")
     } catch (error) {
       const text = error instanceof Error ? error.message : String(error)
       toast.error(`切换后端失败：${text}`)
@@ -322,13 +322,13 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
         <CardAction>
           <ToggleGroup
             type="single"
-            value={isGlm ? "glm" : "mlx"}
+            value={isOnlineLlm ? "llm" : "mlx"}
             onValueChange={(value) => switchBackend(value)}
             disabled={switchingBackend}
             spacing={1}
           >
             <ToggleGroupItem value="mlx">本地 MLX</ToggleGroupItem>
-            <ToggleGroupItem value="glm">GLM 在线</ToggleGroupItem>
+            <ToggleGroupItem value="llm">在线 LLM</ToggleGroupItem>
           </ToggleGroup>
         </CardAction>
       </CardHeader>
@@ -367,7 +367,7 @@ function RuntimeCard({ overview }: { overview: OperationsOverview }) {
             </ItemContent>
           </Item>
         </ItemGroup>
-        {!isGlm ? (
+        {!isOnlineLlm ? (
           <>
             <ButtonGroup>
               <Button

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 匹配 GLM 等模型常用 ```json ... ``` 代码块围栏，用于容错解析辅助清洗结果。
+# 匹配在线 LLM 常用 ```json ... ``` 代码块围栏，用于容错解析辅助清洗结果。
 _JSON_FENCE_RE = re.compile(
     r"```(?:json|JSON)?\s*(?P<body>.*?)\s*```",
     re.DOTALL,
@@ -466,7 +466,7 @@ class PersonaTrainer:
             headers["Authorization"] = f"Bearer {self.config.ai_companion_lora_helper_api_key.strip()}"
 
         extra_body = dict(self.config.ai_companion_lora_helper_extra_body)
-        # response_format 对 GLM 系列（含 glm-5.2）的 OpenAI 兼容端点是可选的，
+        # response_format 对部分 OpenAI 兼容端点（DeepSeek / GLM 等）是可选的，
         # 部分中转/官方网关对 json_object 支持不稳定。默认开启，用户可在
         # extra_body 里用 _disable_response_format=true 关闭，或直接覆盖 response_format。
         payload: dict[str, Any] = {
@@ -538,7 +538,7 @@ class PersonaTrainer:
 
     @staticmethod
     def _extract_helper_content(data: dict[str, Any]) -> str:
-        """兼容 OpenAI 标准与部分 GLM 中转的字段差异，提取回复文本。"""
+        """兼容 OpenAI 标准与部分中转端点的字段差异，提取回复文本。"""
         try:
             choices = data.get("choices") or []
             if not choices:
@@ -562,7 +562,7 @@ class PersonaTrainer:
 
     @staticmethod
     def _parse_helper_json(content: str) -> dict[str, Any]:
-        """从 GLM 回复中解析 JSON，容忍前后说明文字与 ```json 代码块。"""
+        """从在线 LLM 回复中解析 JSON，容忍前后说明文字与 ```json 代码块。"""
         text = content.strip()
         # 1) 直接解析（最理想：纯 JSON）。
         try:

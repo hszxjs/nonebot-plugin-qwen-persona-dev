@@ -76,11 +76,11 @@ def build_router(
             chat_url = (config.ai_companion_lora_helper_api_url or "").strip()
             api_key = (config.ai_companion_lora_helper_api_key or "").strip()
         try:
-            from ...providers.glm_backend import fetch_online_models
+            from ...providers.llm_backend import fetch_online_models
 
             models, source = await fetch_online_models(chat_url, api_key, timeout=8.0)
         except Exception as exc:  # noqa: BLE001 — 任何异常都走兜底，不阻塞前端
-            models, source = ["glm-5.2", "glm-4.5-flash", "glm-4.6", "glm-4.5"], "fallback"
+            models, source = ["deepseek-flash", "deepseek-v4-pro"], "fallback"
             logger.warning("list_models fallback after error: %r", exc)
         return {"models": models, "source": source}
 

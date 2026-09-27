@@ -6,13 +6,13 @@ from typing import Any
 from ..config import AiCompanionConfig, effective_chat_model
 from .base import BaseProvider, ProviderCapabilities
 from .mlx_runtime import MlxVLMRuntime
-from .registry import create_provider, get_provider_spec
+from .registry import create_provider, get_provider_spec, normalize_provider_name
 
 logger = logging.getLogger(__name__)
 
 
 class QwenClient:
-    """推理后端分发器：按 config 经注册表选择本地 MLX 或在线 GLM。
+    """推理后端分发器：按 config 经注册表选择本地 MLX 或在线 LLM。
 
     chat / metrics_snapshot / status_snapshot 全部转发到当前激活的 backend，
     上层（chat 服务、admin_server、observability）无需感知后端差异。
@@ -23,32 +23,32 @@ class QwenClient:
         config: AiCompanionConfig,
         *,
         runtime: MlxVLMRuntime | None = None,
-        glm_backend: Any | None = None,
+        online_backend: Any | None = None,
     ) -> None:
         self.config = config
         # 经注册表构建，保证后端与注册信息一致；允许测试注入替身。
         self.mlx_runtime = runtime or create_provider("mlx", config)
-        self.glm_backend = glm_backend or create_provider("glm", config)
+        self.llm_backend = online_backend or create_provider("llm", config)
 
     def reconfigure(self, config: AiCompanionConfig) -> None:
-        prev_backend = self.config.ai_companion_inference_backend
+        prev_backend = normalize_provider_name(self.config.ai_companion_inference_backend)
         self.config = config
         self.mlx_runtime.reconfigure(config)
-        self.glm_backend.reconfigure(config)
-        new_backend = config.ai_companion_inference_backend
+        self.llm_backend.reconfigure(config)
+        new_backend = normalize_provider_name(config.ai_companion_inference_backend)
         if prev_backend != new_backend:
             logger.info("inference backend switched: %s -> %s", prev_backend, new_backend)
 
     @property
     def _active(self) -> BaseProvider:
-        """当前激活的 backend（mlx_runtime 或 glm_backend）。"""
-        if self.config.ai_companion_inference_backend == "glm":
-            return self.glm_backend  # type: ignore[return-value]
+        """当前激活的 backend（mlx_runtime 或在线 LLM 后端）。"""
+        if normalize_provider_name(self.config.ai_companion_inference_backend) == "llm":
+            return self.llm_backend  # type: ignore[return-value]
         return self.mlx_runtime  # type: ignore[return-value]
 
     def active_backend(self) -> str:
-        """返回当前后端标识：'mlx' 或 'glm'。"""
-        return self.config.ai_companion_inference_backend
+        """返回当前后端标识：'mlx' 或 'llm'（历史值 'glm' 归一为 'llm'）。"""
+        return normalize_provider_name(self.config.ai_companion_inference_backend)
 
     def active_backend_spec(self) -> dict[str, str]:
         """当前后端的注册信息（类型/展示名/文档链接，供前端展示）。"""
@@ -80,16 +80,16 @@ class QwenClient:
         *,
         tools: list[dict[str, Any]],
     ) -> tuple[str, list[dict[str, Any]]]:
-        """带 function calling 的对话（仅在线 GLM 后端支持）。
+        """带 function calling 的对话（仅在线 LLM 后端支持）。
 
         返回 (文本, tool_calls)；当前后端不支持时抛 NotImplementedError，
         调用方应回退到普通 chat()。
         """
-        if self.active_backend() != "glm":
-            raise NotImplementedError("tool calls require the glm backend")
-        glm = self.glm_backend
-        assert hasattr(glm, "chat_with_tools")
-        return await glm.chat_with_tools(messages, tools=tools)
+        if self.active_backend() != "llm":
+            raise NotImplementedError("tool calls require the online llm backend")
+        backend = self.llm_backend
+        assert hasattr(backend, "chat_with_tools")
+        return await backend.chat_with_tools(messages, tools=tools)
 
     def metrics_snapshot(self) -> dict[str, Any]:
         return self._active.metrics_snapshot()

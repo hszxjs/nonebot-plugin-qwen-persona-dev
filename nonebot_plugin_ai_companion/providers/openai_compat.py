@@ -1,6 +1,6 @@
 """OpenAI 兼容 HTTP 后端基类：Ollama / llama.cpp / 任意兼容端点共用。
 
-与 GlmBackend 同构（chat / chat_with_tools / status_snapshot / metrics），
+与在线 LLM 后端同构（chat / chat_with_tools / status_snapshot / metrics），
 但面向"用户可自建多个实例"的场景（InferenceBackendConfig 持久化配置，
 见 providers/instances.py），构造参数来自实例设置而非插件全局配置。
 """
@@ -17,7 +17,7 @@ import httpx
 
 from ..contracts import InferenceMetric, utc_timestamp
 from .base import ProviderCapabilities
-from .glm_backend import _build_openai_messages
+from .llm_backend import _build_openai_messages
 
 logger = logging.getLogger(__name__)
 

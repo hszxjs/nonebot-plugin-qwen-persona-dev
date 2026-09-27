@@ -61,7 +61,7 @@ const kpi: KpiPayload = {
     { reason: "mention", count: 80 },
     { reason: "random", count: 43 },
   ],
-  providers: [{ model: "glm-5.2", total: 100, avg_latency_seconds: 1.234, avg_tps: 30.5 }],
+  providers: [{ model: "deepseek-flash", total: 100, avg_latency_seconds: 1.234, avg_tps: 30.5 }],
   active_sessions: 5,
   learned_messages: 456,
   tools: {
@@ -69,12 +69,12 @@ const kpi: KpiPayload = {
     overall_success_rate: 0.87,
     items: [{ name: "search_web", total: 50, ok: 44, success_rate: 0.88, avg_latency_seconds: 0.9 }],
   },
-  backend: { healthy: true, model: "glm-5.2", backend: "glm_online" },
+  backend: { healthy: true, model: "deepseek-flash", backend: "llm_online" },
 }
 
 const overview: OperationsOverview = {
   runtime: {
-    runtime: "glm_online",
+    runtime: "llm_online",
     state: "loaded",
     status: "loaded",
     healthy: true,
@@ -157,8 +157,8 @@ function buildMessage(overrides: Partial<MessageLogEntry> = {}): MessageLogEntry
     status: "success",
     trigger_reason: "mention",
     role_card_name: "毒舌管家",
-    provider: "glm",
-    model: "glm-5.2",
+    provider: "llm",
+    model: "deepseek-flash",
     latency_seconds: 1.2,
     input_preview: "你好",
     output_preview: "你好呀",
@@ -262,8 +262,8 @@ describe("phase5 kpi dashboard", () => {
     expect(within(section).getByText("87%")).toBeInTheDocument()
     expect(within(section).getByText("后端健康")).toBeInTheDocument()
     expect(within(section).getByText("健康")).toBeInTheDocument()
-    expect(within(section).getAllByText("glm-5.2").length).toBeGreaterThan(0)
-    expect(within(section).getByText("glm_online")).toBeInTheDocument()
+    expect(within(section).getAllByText("deepseek-flash").length).toBeGreaterThan(0)
+    expect(within(section).getByText("llm_online")).toBeInTheDocument()
 
     const reasons = within(section).getByTestId("kpi-reasons")
     expect(within(reasons).getByText("mention")).toBeInTheDocument()
@@ -271,7 +271,7 @@ describe("phase5 kpi dashboard", () => {
     expect(within(reasons).getByText("random")).toBeInTheDocument()
 
     const providers = within(section).getByTestId("kpi-providers")
-    expect(within(providers).getByText("glm-5.2")).toBeInTheDocument()
+    expect(within(providers).getByText("deepseek-flash")).toBeInTheDocument()
     expect(within(providers).getByText("1.23s")).toBeInTheDocument()
     expect(within(providers).getByText("30.50 tok/s")).toBeInTheDocument()
   })

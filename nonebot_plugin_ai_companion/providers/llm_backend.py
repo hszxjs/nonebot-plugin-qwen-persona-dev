@@ -1,6 +1,6 @@
-"""GLM 在线推理 backend（OpenAI 兼容）。
+"""在线 LLM 推理 backend（OpenAI 兼容：DeepSeek / GLM / Qwen 等）。
 
-当 ai_companion_inference_backend == "glm" 时，QwenClient 把对话推理分发到这里。
+当 ai_companion_inference_backend == "llm" 时，QwenClient 把对话推理分发到这里。
 接口对齐 MlxVLMRuntime 的 chat / metrics_snapshot / status_snapshot / reconfigure，
 使上层（admin_server、inference_events）无需感知后端差异。
 """
@@ -27,7 +27,7 @@ from .registry import register
 
 logger = logging.getLogger(__name__)
 
-# 匹配 GLM 等模型常用 ```json ... ``` 代码块围栏，用于容错解析。
+# 匹配在线 LLM 常用 ```json ... ``` 代码块围栏，用于容错解析。
 _JSON_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(?P<body>.*?)\s*```", re.DOTALL)
 
 # 仅对这些状态码做指数退避重试；4xx（鉴权/参数错误）直接抛出。
@@ -63,7 +63,7 @@ def _normalize_models_url(chat_url: str) -> str:
 
 
 def _extract_chat_content(data: dict[str, Any]) -> str:
-    """兼容 OpenAI 标准与部分 GLM 中转的字段差异，提取回复文本。"""
+    """兼容 OpenAI 标准与部分中转端点的字段差异，提取回复文本。"""
     try:
         choices = data.get("choices") or []
         if not choices:
@@ -86,9 +86,9 @@ def _extract_chat_content(data: dict[str, Any]) -> str:
 
 
 def _uri_to_data_url(uri: str) -> str | None:
-    """把图片 URI 规范化成 GLM 可接受的 data URL 或 http(s) URL。
+    """把图片 URI 规范化成在线端点可接受的 data URL 或 http(s) URL。
 
-    - http(s) URL：直接返回（GLM 可访问公网图床）。
+    - http(s) URL：直接返回（端点可直接抓取公网图床）。
     - 本地文件路径：读文件转 base64 data URL。
     - 其它（file_id、base64://、无法读取）：返回 None，由调用方跳过。
     """
@@ -98,7 +98,7 @@ def _uri_to_data_url(uri: str) -> str | None:
     if uri.startswith(("http://", "https://")):
         return uri
     if uri.startswith("base64://"):
-        # MLX 路径会跳过这种，但 GLM 需要它；补上 data URL 前缀需要 MIME，缺失则按 jpeg。
+        # MLX 路径会跳过这种，但在线端点需要它；补上 data URL 前缀需要 MIME，缺失则按 jpeg。
         raw = uri[len("base64://") :]
         return f"data:image/jpeg;base64,{raw}"
     # 本地路径
@@ -113,7 +113,7 @@ def _uri_to_data_url(uri: str) -> str | None:
         data = path.read_bytes()
         return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
     except (OSError, ValueError) as exc:
-        logger.debug("glm_backend: skip unreadable media uri=%r err=%r", uri, exc)
+        logger.debug("llm_backend: skip unreadable media uri=%r err=%r", uri, exc)
         return None
 
 
@@ -154,7 +154,7 @@ def _build_openai_messages(
             if data_url:
                 image_urls.append(data_url)
             else:
-                logger.info("glm_backend: skip media part uri=%r (unreadable)", uri)
+                logger.info("llm_backend: skip media part uri=%r (unreadable)", uri)
 
     if not image_urls:
         return messages
@@ -185,21 +185,20 @@ def _build_openai_messages(
 
 
 @register(
-    "glm",
+    "llm",
     provider_type="remote",
-    display_name="GLM 在线 API",
-    docs_url="https://open.bigmodel.cn/dev/api",
+    display_name="在线 LLM API（OpenAI 兼容）",
+    docs_url="https://platform.deepseek.com/api-docs",
 )
-class GlmBackend:
-    """GLM 在线推理 backend。无本地状态，可并发，无 load/unload 概念。
+class LlmBackend:
+    """在线 LLM 推理 backend。无本地状态，可并发，无 load/unload 概念。
 
-    多模态说明：z.ai 的 Coding 订阅端点（coding/paas/v4）只支持纯文本，
-    带图消息会触发 400。因此默认 multimodal=False：遇到图片时丢弃图片、
-    仅发送文字部分（并记日志）。若你的端点支持多模态（如普通 paas/v4
-    + API 资源包），可在 online 配置里设 multimodal=true 开启图片转 base64。
+    多模态说明：默认 multimodal=False —— 遇到图片时丢弃图片、仅发送文字部分
+    （并记日志）。端点支持图片输入时（如 deepseek-flash、GLM paas/v4
+    + API 资源包），在实例/online 配置里设 multimodal=true 即可随消息发图。
     """
 
-    provider_name = "glm"
+    provider_name = "llm"
 
     def __init__(self, config: AiCompanionConfig) -> None:
         self.config = config
@@ -216,7 +215,7 @@ class GlmBackend:
 
     @property
     def _model(self) -> str:
-        return (self.config.ai_companion_online_model or "glm-5.2").strip() or "glm-5.2"
+        return (self.config.ai_companion_online_model or "deepseek-flash").strip() or "deepseek-flash"
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -234,7 +233,7 @@ class GlmBackend:
     ) -> dict[str, Any]:
         """提交对话载荷，默认关闭思考。
 
-        思考型模型（deepseek-flash / glm-5.x 等）先把预算烧在 reasoning 上，
+        思考型模型（deepseek-flash 等）先把预算烧在 reasoning 上，
         群聊短回复白等一轮且 content 可能为空。端点不认识 thinking 字段
         （400）时去参重试一次，兼容其他 OpenAI 兼容后端。
         """
@@ -244,7 +243,7 @@ class GlmBackend:
         except httpx.HTTPStatusError as exc:
             if exc.response is None or exc.response.status_code != 400:
                 raise
-            logger.info("glm_backend: endpoint rejected thinking param, retrying without it")
+            logger.info("llm_backend: endpoint rejected thinking param, retrying without it")
             body.pop("thinking", None)
             return await self._post_with_retry(url, headers, body, timeout)
 
@@ -304,7 +303,7 @@ class GlmBackend:
                     1 for p in media_parts if isinstance(p, dict) and str(p.get("type") or "") in _MEDIA_PART_TYPES
                 )
                 if dropped:
-                    logger.info("glm_backend: %d media part(s) dropped (multimodal disabled)", dropped)
+                    logger.info("llm_backend: %d media part(s) dropped (multimodal disabled)", dropped)
             openai_messages = messages
         payload: dict[str, Any] = {
             "model": self._model,
@@ -345,7 +344,7 @@ class GlmBackend:
                     response = await client.post(url, headers=headers, json=payload)
                     if response.status_code in _RETRYABLE_STATUS:
                         raise httpx.HTTPStatusError(
-                            f"glm status {response.status_code}",
+                            f"online llm status {response.status_code}",
                             request=response.request,
                             response=response,
                         )
@@ -391,7 +390,7 @@ class GlmBackend:
                 tokens = int(usage.get("completion_tokens") or 0) or None
             except (TypeError, ValueError):
                 tokens = None
-        source = "glm_api" if tokens is not None else "estimated"
+        source = "online_api" if tokens is not None else "estimated"
         if tokens is None:
             # 粗估：中文约 1.5 字符/token，英文约 4 字符/token，取折中。
             tokens = max(1, int(len(content) / 2.5))
@@ -400,7 +399,7 @@ class GlmBackend:
                 time=started,
                 model=self._model,
                 latency_seconds=round(elapsed, 3),
-                completion_tokens=tokens if source == "glm_api" else None,
+                completion_tokens=tokens if source == "online_api" else None,
                 response_chars=len(content),
                 tps=round(tokens / elapsed, 2),
                 source=source,
@@ -422,7 +421,7 @@ class GlmBackend:
         )
 
     def default_models(self) -> list[dict[str, str]]:
-        return [{"value": name, "label": name, "description": "GLM 在线 API 模型"} for name in _FALLBACK_MODELS]
+        return [{"value": name, "label": name, "description": "在线 LLM API 模型"} for name in _FALLBACK_MODELS]
 
     async def health_check(self) -> bool:
         # 无独立探活端点：以最近一次调用的健康状态为准（进程启动后默认健康）。
@@ -431,7 +430,7 @@ class GlmBackend:
     def status_snapshot(self) -> dict[str, Any]:
         configured = bool(self._api_url)
         return {
-            "runtime": "glm_online",
+            "runtime": "llm_online",
             "status": "loaded" if configured else "not_configured",
             "state": "loaded" if configured else "not_configured",
             "healthy": bool(configured and self._healthy),
@@ -499,10 +498,8 @@ async def fetch_online_models(
         return list(_FALLBACK_MODELS), "fallback"
 
 
-# 动态拉取失败时的兜底模型列表（z.ai GLM 常见可用模型）。
+# 动态拉取（fetch_online_models）失败时的兜底模型列表，仅供展示兜底。
 _FALLBACK_MODELS: tuple[str, ...] = (
-    "glm-5.2",
-    "glm-4.5-flash",
-    "glm-4.6",
-    "glm-4.5",
+    "deepseek-flash",
+    "deepseek-v4-pro",
 )

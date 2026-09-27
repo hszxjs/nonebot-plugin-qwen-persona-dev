@@ -25,7 +25,7 @@ class ProviderCapabilities:
 
 
 class BaseProvider(Protocol):
-    """所有推理后端（本地 MLX / 在线 GLM / 未来的 Ollama、llama.cpp）的统一接口。"""
+    """所有推理后端（本地 MLX / 在线 LLM / Ollama / llama.cpp）的统一接口。"""
 
     @property
     def provider_name(self) -> str: ...

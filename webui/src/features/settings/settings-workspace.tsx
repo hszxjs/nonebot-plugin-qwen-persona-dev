@@ -212,8 +212,8 @@ function SelectControl({
       </SelectTrigger>
       <SelectContent>
         {models.length === 0 ? (
-          <SelectItem value={currentValue || "glm-5.2"}>
-            {currentValue || "glm-5.2"}
+          <SelectItem value={currentValue || "deepseek-flash"}>
+            {currentValue || "deepseek-flash"}
           </SelectItem>
         ) : (
           models.map((model) => (

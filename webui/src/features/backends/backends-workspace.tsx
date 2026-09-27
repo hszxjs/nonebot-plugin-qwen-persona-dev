@@ -344,7 +344,7 @@ function BackendFormFields({
           onCheckedChange={(checked) => onChange({ multimodal: checked })}
         />
         <FieldDescription>
-          模型支持视觉时开启（如 glm-5.3-flash / glm-4.6v）：图片随消息发送，bot 能直接看图回复。
+          模型支持视觉时开启（如 deepseek-flash）：图片随消息发送，bot 能直接看图回复。
         </FieldDescription>
       </Field>
     </FieldGroup>

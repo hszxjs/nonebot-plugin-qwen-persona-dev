@@ -52,18 +52,18 @@ const payload: BackendsPayload = {
     },
     {
       id: "backend-2",
-      backend_type: "glm",
-      display_name: "GLM 在线",
-      settings: { model: "glm-5.2", api_key: "sk-remote" },
+      backend_type: "llm",
+      display_name: "在线 LLM",
+      settings: { model: "deepseek-flash", api_key: "sk-remote" },
       enabled: false,
       priority: 90,
       created_at: 1783795200,
       updated_at: 1783795300,
       spec: {
-        name: "glm",
+        name: "llm",
         provider_type: "remote",
-        display_name: "GLM",
-        docs_url: "https://glm.example/docs",
+        display_name: "在线 LLM",
+        docs_url: "https://llm.example/docs",
       },
     },
   ],
@@ -76,10 +76,10 @@ const payload: BackendsPayload = {
       docs_url: "https://ml.example/docs",
     },
     {
-      name: "glm",
+      name: "llm",
       provider_type: "remote",
-      display_name: "GLM",
-      docs_url: "https://glm.example/docs",
+      display_name: "在线 LLM",
+      docs_url: "https://llm.example/docs",
     },
   ],
 }
@@ -125,17 +125,17 @@ describe("backends workspace", () => {
     expect(screen.getByRole("heading", { name: "推理后端" })).toBeInTheDocument()
     // 卡片标题 + 角色绑定下拉框中都会出现实例名
     expect(screen.getAllByText("本地 MLX").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("GLM 在线").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("在线 LLM").length).toBeGreaterThan(0)
     // 本地/在线 类型徽标 + backend_type 徽标
     expect(screen.getAllByText("本地").length).toBeGreaterThan(0)
     expect(screen.getAllByText("在线").length).toBeGreaterThan(0)
     expect(screen.getAllByText("mlx_lm").length).toBeGreaterThan(0)
-    expect(screen.getAllByText("glm").length).toBeGreaterThan(0)
+    expect(screen.getAllByText("llm").length).toBeGreaterThan(0)
     // 停用实例标记
     expect(screen.getByText("停用")).toBeInTheDocument()
     // 设置摘要只展示 base_url / model，不泄露 api_key
     expect(screen.getByText("http://127.0.0.1:8080/v1 · qwen3-4b")).toBeInTheDocument()
-    expect(screen.getByText("glm-5.2")).toBeInTheDocument()
+    expect(screen.getByText("deepseek-flash")).toBeInTheDocument()
     expect(screen.queryByText(/sk-secret|sk-remote/)).not.toBeInTheDocument()
     // 角色绑定三个角色行
     expect(screen.getByText("主对话")).toBeInTheDocument()

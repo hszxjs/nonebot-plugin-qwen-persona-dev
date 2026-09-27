@@ -231,7 +231,7 @@ def _candidate_media_parts(
 ) -> list[dict[str, Any]]:
     """候选表情的附图，只用本地仓库副本。
 
-    QQ 的 http 图片 URL 带 rkey 会过期：远程后端（GLM）拉不到就在服务端整单
+    QQ 的 http 图片 URL 带 rkey 会过期：远程后端拉不到就在服务端整单
     400，本地 MLX 下载也会失败。没有本地副本的候选仍留在编号文本列表里，
     选择器靠文字摘要照样能选。
     """

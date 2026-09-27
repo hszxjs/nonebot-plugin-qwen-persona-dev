@@ -52,7 +52,7 @@ def test_llama_cpp_backend_normalizes_base_url() -> None:
     assert backend.capabilities().lora_hotload is True
     spec = get_provider_spec("llama_cpp")
     assert spec.provider_type == "local"
-    assert {spec.name for spec in provider_specs()} >= {"mlx", "glm", "ollama", "llama_cpp"}
+    assert {spec.name for spec in provider_specs()} >= {"mlx", "llm", "ollama", "llama_cpp"}
 
 
 class _FakeResponse:
@@ -280,7 +280,7 @@ def test_backends_api_crud_and_bindings(backends_client: TestClient) -> None:
     listing = backends_client.get("/api/backends")
     assert listing.status_code == 200
     names = [spec["name"] for spec in listing.json()["available_types"]]
-    assert {"mlx", "glm", "ollama", "llama_cpp"} <= set(names)
+    assert {"mlx", "llm", "ollama", "llama_cpp"} <= set(names)
 
     # 未知类型拒绝
     bad = backends_client.post("/api/backends", json={"backend_type": "vllm", "display_name": "x"})
@@ -744,13 +744,13 @@ class _QueueClient:
 
 
 async def test_glm_chat_disables_thinking(monkeypatch) -> None:
-    from nonebot_plugin_ai_companion.providers.glm_backend import GlmBackend
+    from nonebot_plugin_ai_companion.providers.llm_backend import LlmBackend
 
     posted: list[dict] = []
     client = _QueueClient([_QueueResponse(200, {"choices": [{"message": {"content": "你好"}}]})], posted)
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: client)
 
-    backend = GlmBackend(
+    backend = LlmBackend(
         AiCompanionConfig(
             ai_companion_online_api_url="https://api.deepseek.com/v1/chat/completions",
             ai_companion_online_api_key="k",
@@ -764,7 +764,7 @@ async def test_glm_chat_disables_thinking(monkeypatch) -> None:
 
 
 async def test_glm_chat_retries_without_thinking_on_400(monkeypatch) -> None:
-    from nonebot_plugin_ai_companion.providers.glm_backend import GlmBackend
+    from nonebot_plugin_ai_companion.providers.llm_backend import LlmBackend
 
     posted: list[dict] = []
     client = _QueueClient(
@@ -776,7 +776,7 @@ async def test_glm_chat_retries_without_thinking_on_400(monkeypatch) -> None:
     )
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: client)
 
-    backend = GlmBackend(
+    backend = LlmBackend(
         AiCompanionConfig(
             ai_companion_online_api_url="https://api.example.invalid/v1/chat/completions",
             ai_companion_online_api_key="k",

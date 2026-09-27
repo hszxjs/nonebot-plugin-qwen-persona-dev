@@ -24,11 +24,11 @@ from pydantic import BaseModel, Field
 from ..config import AiCompanionConfig
 from ..memory.db import PersonaDatabase
 from .client import QwenClient
-from .glm_backend import GlmBackend
 from .llama_cpp import LlamaCppBackend
+from .llm_backend import LlmBackend
 from .mlx_runtime import MlxVLMRuntime
 from .ollama import OllamaBackend
-from .registry import ProviderNotFoundError
+from .registry import ProviderNotFoundError, normalize_provider_name
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ def build_backend_from_config(
 ) -> Any:
     """按 backend_type + settings 构建后端实例。未知类型抛 ProviderNotFoundError。"""
     settings = dict(config.settings or {})
-    backend_type = config.backend_type
+    backend_type = normalize_provider_name(config.backend_type)
     if backend_type == "ollama":
         return OllamaBackend(
             base_url=settings.get("base_url"),
@@ -227,17 +227,16 @@ def build_backend_from_config(
             api_key=settings.get("api_key"),
             extra_body=settings.get("extra_body"),
         )
-    if backend_type == "glm":
-        return GlmBackend(
+    if backend_type == "llm":
+        return LlmBackend(
             AiCompanionConfig(
-                ai_companion_online_api_url=settings.get("base_url")
-                or "https://api.z.ai/api/coding/paas/v4/chat/completions",
+                ai_companion_online_api_url=settings.get("base_url") or "https://api.deepseek.com/v1/chat/completions",
                 ai_companion_online_api_key=settings.get("api_key") or "",
-                ai_companion_online_model=settings.get("model") or "glm-5.2",
+                ai_companion_online_model=settings.get("model") or "deepseek-flash",
                 ai_companion_online_multimodal=bool(settings.get("multimodal", False)),
             )
         )
-    raise ProviderNotFoundError(f"no instance builder for backend type {backend_type!r}")
+    raise ProviderNotFoundError(f"no instance builder for backend type {config.backend_type!r}")
 
 
 @dataclass

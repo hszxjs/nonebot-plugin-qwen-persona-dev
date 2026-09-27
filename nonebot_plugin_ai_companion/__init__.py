@@ -54,7 +54,7 @@ from .tools.registry import ToolRegistry
 
 __plugin_meta__ = PluginMetadata(
     name="AI Companion",
-    description="AI 对话伙伴：本地 MLX / 在线 GLM 双推理后端，学习群友语气与表情包，支持 LoRA 训练。",
+    description="AI 对话伙伴：本地 MLX / 在线 LLM 双推理后端，学习群友语气与表情包，支持 LoRA 训练。",
     usage=("配置推理后端后，@机器人即可聊天。\n命令：人格状态、人格训练（SUPERUSER）。"),
     type="application",
     homepage="https://github.com/hszxjs/nonebot-plugin-qwen-persona-dev",

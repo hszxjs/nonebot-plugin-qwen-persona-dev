@@ -133,7 +133,7 @@ class ToolRegistry:
         return "\n".join(entries)
 
     def openai_tools_payload(self, allowed: list[str] | set[str] | None = None) -> list[dict[str, Any]]:
-        """生成 OpenAI/GLM function calling 的 tools 载荷（仅白名单内）。"""
+        """生成 OpenAI 兼容 function calling 的 tools 载荷（仅白名单内）。"""
         return [
             {
                 "type": "function",

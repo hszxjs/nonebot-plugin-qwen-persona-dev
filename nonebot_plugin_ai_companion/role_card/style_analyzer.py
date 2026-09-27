@@ -80,7 +80,7 @@ async def analyze_user_style(
             raise AuxLlmError("data_cleaning provider empty content")
         data = parse_json_object(reply)
     else:
-        model = str(getattr(config, "ai_companion_member_mimic_model", "") or "glm-4.5-flash")
+        model = str(getattr(config, "ai_companion_member_mimic_model", "") or "deepseek-flash")
         data = await aux_chat_json(
             config,
             prompt=prompt,

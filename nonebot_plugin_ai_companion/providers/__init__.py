@@ -3,8 +3,8 @@
 from .base import BaseProvider, ProviderCapabilities
 from .client import QwenClient
 from .generation_profiles import GenerationProfile, GenerationPurpose, profile_for_purpose
-from .glm_backend import GlmBackend
 from .llama_cpp import LlamaCppBackend
+from .llm_backend import LlmBackend
 from .mlx_backend import DefaultMlxBackend, MlxBackend
 from .mlx_runtime import MlxVLMRuntime
 from .ollama import OllamaBackend
@@ -20,7 +20,7 @@ from .registry import (
 
 __all__ = [
     "QwenClient",
-    "GlmBackend",
+    "LlmBackend",
     "MlxVLMRuntime",
     "OllamaBackend",
     "LlamaCppBackend",

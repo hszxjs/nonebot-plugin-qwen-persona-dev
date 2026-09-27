@@ -11,12 +11,15 @@ class AiCompanionConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _accept_legacy_prefix(cls, data: Any) -> Any:
-        """兼容旧 qwen_persona_* 配置键（.env / admin_config.json），统一改写为 ai_companion_*。"""
+        """兼容旧配置：qwen_persona_* 键改写为 ai_companion_*；推理后端旧值 "glm" 归一为 "llm"。"""
         if isinstance(data, dict):
             rewritten = {
                 ("ai_companion_" + key.removeprefix("qwen_persona_")) if key.startswith("qwen_persona_") else key: value
                 for key, value in data.items()
             }
+            backend = rewritten.get("ai_companion_inference_backend")
+            if isinstance(backend, str) and backend.strip().lower() == "glm":
+                rewritten["ai_companion_inference_backend"] = "llm"
             return rewritten
         return data
 
@@ -135,7 +138,7 @@ class AiCompanionConfig(BaseModel):
     ai_companion_mlx_lora_steps_per_report: int = 10
     ai_companion_lora_helper_api_url: str = ""
     ai_companion_lora_helper_api_key: str = ""
-    ai_companion_lora_helper_model: str = "glm-5.2"
+    ai_companion_lora_helper_model: str = "deepseek-flash"
     ai_companion_lora_helper_timeout: float = 120.0
     ai_companion_lora_helper_sample_limit: int = 0
     ai_companion_lora_helper_extra_body: dict[str, Any] = Field(default_factory=dict)
@@ -144,15 +147,14 @@ class AiCompanionConfig(BaseModel):
         '去掉命令、隐私、广告和重复噪声。只返回一个 JSON 对象，结构保持 {"messages": [...], "metadata": {...}}。'
     )
 
-    # 对话推理后端切换：mlx = 本地 Qwen MLX，glm = GLM 在线 API（OpenAI 兼容）。
-    ai_companion_inference_backend: Literal["mlx", "glm"] = "mlx"
-    # GLM 在线推理独立配置（与 lora_helper 辅助训练解耦，可用不同模型）。
+    # 对话推理后端切换：mlx = 本地 MLX，llm = 在线 LLM API（OpenAI 兼容；旧值 "glm" 仍可读）。
+    ai_companion_inference_backend: Literal["mlx", "llm"] = "mlx"
+    # 在线 LLM 推理独立配置（与 lora_helper 辅助训练解耦，可用不同模型/厂商）。
     ai_companion_online_api_url: str = ""
     ai_companion_online_api_key: str = ""
-    ai_companion_online_model: str = "glm-5.2"
+    ai_companion_online_model: str = "deepseek-flash"
     ai_companion_online_timeout: float = 90.0
-    # GLM 端点是否支持多模态。Coding 订阅端点只支持纯文本，默认 False：
-    # 遇到图片时丢弃图片仅发文字。普通 paas/v4 + API 资源包可设 True。
+    # 端点是否支持图片输入（多模态）。纯文本端点保持 False：遇到图片只发文字。
     ai_companion_online_multimodal: bool = False
 
     # 动漫图片识别：用 SauceNAO + iqdb 双路搜索角色/作品/画师，转文字描述进 prompt。
@@ -164,11 +166,11 @@ class AiCompanionConfig(BaseModel):
     ai_companion_saucenao_dbmask: int = 999
     # 命中阈值：相似度低于此值视为未识别，返回空（降级为文字标记）。
     ai_companion_anime_min_similarity: float = 80.0
-    # AI 视觉识图：用 GLM-4.6V-Flash（免费）理解任意图的内容（角色/场景/动作），
+    # AI 视觉识图：用多模态在线模型理解任意图的内容（角色/场景/动作），
     # 对插画/截图/同人都能识别，弥补 SauceNAO/iqdb 对冷门图命中率低的问题。
     ai_companion_anime_vision_enabled: bool = True
-    # 视觉模型名（z.ai 免费视觉模型）。glm-4.6v-flash 免费，glm-4.5v 需付费资源包。
-    ai_companion_anime_vision_model: str = "glm-4.6v-flash"
+    # 视觉模型名（任意多模态模型，如 deepseek-flash）。
+    ai_companion_anime_vision_model: str = "deepseek-flash"
     # 视觉模型 API（复用 z.ai key）。空则用 online_api_url/key 的同平台凭证。
     ai_companion_anime_vision_api_url: str = "https://api.z.ai/api/paas/v4/chat/completions"
     ai_companion_anime_vision_api_key: str = ""
@@ -198,7 +200,7 @@ class AiCompanionConfig(BaseModel):
     ai_companion_prompt_segment_order: list[str] = Field(default_factory=list)
     ai_companion_disabled_prompt_segments: list[str] = Field(default_factory=list)
 
-    # ---- 工具调用（默认关闭；GLM 在线后端支持 function calling 回路）----
+    # ---- 工具调用（默认关闭；在线 LLM 后端支持 function calling 回路）----
     ai_companion_enable_tool_calls: bool = False
     ai_companion_tool_max_rounds: int = 2
     ai_companion_tool_call_timeout_seconds: float = 15.0
@@ -225,7 +227,7 @@ class AiCompanionConfig(BaseModel):
     ai_companion_lora_auto_deploy: bool = True
 
     # ---- member_mimic 风格分析 ----
-    ai_companion_member_mimic_model: str = "glm-4.5-flash"
+    ai_companion_member_mimic_model: str = "deepseek-flash"
     ai_companion_member_mimic_sample_limit: int = 120
 
     model_config = ConfigDict(extra="ignore")
@@ -236,8 +238,10 @@ def effective_mlx_model(config: AiCompanionConfig) -> str:
 
 
 def effective_chat_model(config: AiCompanionConfig) -> str:
-    if config.ai_companion_inference_backend == "glm":
-        return (config.ai_companion_online_model or "glm-5.2").strip() or "glm-5.2"
+    from .providers.registry import normalize_provider_name
+
+    if normalize_provider_name(config.ai_companion_inference_backend) == "llm":
+        return (config.ai_companion_online_model or "deepseek-flash").strip() or "deepseek-flash"
     return effective_mlx_model(config)
 
 

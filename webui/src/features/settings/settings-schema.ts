@@ -46,7 +46,7 @@ export type BoundField = FieldSchema & {
 
 export const SETTINGS_SECTIONS: { key: SettingsSectionKey; title: string }[] = [
   { key: "model", title: "模型与推理" },
-  { key: "online", title: "GLM 在线推理" },
+  { key: "online", title: "在线 LLM 推理" },
   { key: "anime", title: "动漫图片识别" },
   { key: "learning", title: "学习与回复" },
   { key: "training", title: "训练策略" },
@@ -87,7 +87,7 @@ const contextScopeOptions = [
 
 const inferenceBackendOptions = [
   { value: "mlx", label: "本地 MLX", description: "使用本地加载的 MLX 模型推理。" },
-  { value: "glm", label: "GLM 在线", description: "使用 GLM 在线 API 推理（OpenAI 兼容）。" },
+  { value: "llm", label: "在线 LLM", description: "使用在线 LLM API 推理（OpenAI 兼容，如 DeepSeek / GLM）。" },
 ]
 
 const loraModuleOptions = [
@@ -115,7 +115,7 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   { name: "ai_companion_max_tokens", label: "最大回复 tokens", section: "model", control: "number", min: 1, max: 4096, step: 1 },
   { name: "ai_companion_request_timeout", label: "请求超时", section: "model", control: "number", min: 1, max: 600, step: 1 },
 
-  { name: "ai_companion_inference_backend", label: "推理后端", description: "选择对话推理走本地 MLX 还是 GLM 在线。切换即时生效，无需重启。", section: "online", control: "toggle", options: inferenceBackendOptions },
+  { name: "ai_companion_inference_backend", label: "推理后端", description: "选择对话推理走本地 MLX 还是在线 LLM API。切换即时生效，无需重启。", section: "online", control: "toggle", options: inferenceBackendOptions },
   { name: "ai_companion_online_api_url", label: "在线 API URL", description: "OpenAI 兼容 chat/completions 地址。", section: "online", control: "text" },
   { name: "ai_companion_online_api_key", label: "在线 API Key", section: "online", control: "password" },
   { name: "ai_companion_online_model", label: "在线模型", description: "从 model list 拉取，失败时显示兜底列表。", section: "online", control: "select" },
@@ -132,16 +132,16 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   { name: "ai_companion_tavily_api_key", label: "Tavily API Key", description: "搜索源选 tavily 时必填。", section: "online", control: "password" },
   { name: "ai_companion_searxng_url", label: "SearxNG 地址", description: "如 http://127.0.0.1:8888；搜索源选 searxng 时必填。", section: "online", control: "text" },
   { name: "ai_companion_search_result_limit", label: "搜索结果条数", section: "online", control: "number", min: 1, max: 10, step: 1 },
-  { name: "ai_companion_enable_tool_calls", label: "工具调用（function calling）", description: "开启后 GLM 在线后端可真实调用已注册工具（搜索/记忆查询/表情）。改后需重启以注册搜索工具。", section: "online", control: "switch" },
+  { name: "ai_companion_enable_tool_calls", label: "工具调用（function calling）", description: "开启后在线 LLM 后端可真实调用已注册工具（搜索/记忆查询/表情）。改后需重启以注册搜索工具。", section: "online", control: "switch" },
   { name: "ai_companion_tool_max_rounds", label: "工具调用轮次上限", section: "online", control: "number", min: 1, max: 5, step: 1 },
   { name: "ai_companion_tool_call_timeout_seconds", label: "单次工具超时(秒)", section: "online", control: "number", min: 3, max: 60, step: 1 },
   { name: "ai_companion_tool_result_max_chars", label: "工具结果回填上限(字符)", section: "online", control: "number", min: 200, max: 4000, step: 100 },
 
   { name: "ai_companion_anime_caption_enabled", label: "动漫图片识别", description: "开启后图片会走多路识别（AI视觉 + SauceNAO + iqdb），结果进 prompt。", section: "anime", control: "switch" },
-  { name: "ai_companion_anime_vision_enabled", label: "AI 视觉识图", description: "用 GLM-4.6V-Flash(免费)理解任意图：角色/场景/动作。弥补以图搜源对冷门图命中率低。", section: "anime", control: "switch" },
-  { name: "ai_companion_anime_vision_model", label: "视觉模型", description: "glm-4.6v-flash 免费。glm-4.5v 需付费资源包。", section: "anime", control: "text" },
+  { name: "ai_companion_anime_vision_enabled", label: "AI 视觉识图", description: "用多模态视觉模型理解任意图：角色/场景/动作。弥补以图搜源对冷门图命中率低。", section: "anime", control: "switch" },
+  { name: "ai_companion_anime_vision_model", label: "视觉模型", description: "多模态在线模型，如 deepseek-flash。", section: "anime", control: "text" },
   { name: "ai_companion_anime_vision_api_url", label: "视觉 API URL", section: "anime", control: "text" },
-  { name: "ai_companion_anime_vision_api_key", label: "视觉 API Key", description: "空则复用 GLM 在线推理 key。", section: "anime", control: "password" },
+  { name: "ai_companion_anime_vision_api_key", label: "视觉 API Key", description: "空则复用在线 LLM 推理 key。", section: "anime", control: "password" },
   { name: "ai_companion_saucenao_api_key", label: "SauceNAO API Key", description: "saucenao.com 免费注册获取。留空则跳过 SauceNAO。", section: "anime", control: "password" },
   { name: "ai_companion_saucenao_dbmask", label: "SauceNAO 库掩码", description: "999=动漫库默认全开。", section: "anime", control: "number", min: 1, max: 999999, step: 1 },
   { name: "ai_companion_anime_min_similarity", label: "SauceNAO 命中阈值", description: "低于此值视为未识别。视觉识图不受此限制。", section: "anime", control: "number", min: 0, max: 100, step: 1 },
@@ -168,7 +168,7 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
 
   { name: "ai_companion_enable_training", label: "定时训练", section: "training", control: "switch" },
   { name: "ai_companion_lora_auto_deploy", label: "训练后自动部署 adapter", description: "训练成功即激活新版本、持久化 adapter 路径，并在 MLX 后端模式下热重载。", section: "training", control: "switch" },
-  { name: "ai_companion_member_mimic_model", label: "风格分析模型", description: "生成/刷新群友模仿卡用的模型；留空默认 glm-4.5-flash。", section: "training", control: "text" },
+  { name: "ai_companion_member_mimic_model", label: "风格分析模型", description: "生成/刷新群友模仿卡用的模型；留空默认在线模型。", section: "training", control: "text" },
   { name: "ai_companion_member_mimic_sample_limit", label: "风格分析取样条数", section: "training", control: "number", min: 20, max: 500, step: 10 },
   { name: "ai_companion_train_times", label: "训练时间", description: "每行一个 HH:MM。", section: "training", control: "tokens" },
   { name: "ai_companion_dataset_limit", label: "数据集上限", section: "training", control: "number", min: 0, max: 20000, step: 100 },

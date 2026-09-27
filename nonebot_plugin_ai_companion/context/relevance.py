@@ -30,7 +30,7 @@ async def check_media_relevance(
             "只回复一个字：相关 或 无关"
         )
         model = str(getattr(config, "ai_companion_member_mimic_model", "") or "") or str(
-            getattr(config, "ai_companion_online_model", "") or "glm-4.5-flash"
+            getattr(config, "ai_companion_online_model", "") or "deepseek-flash"
         )
         content = await aux_chat(
             config,

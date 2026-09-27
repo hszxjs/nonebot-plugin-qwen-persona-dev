@@ -277,7 +277,7 @@ class AnimeCaptioner:
         return ""
 
     async def _search_both(self, image_bytes: bytes, content_hash: str, min_sim: float) -> str:
-        """多路并发：SauceNAO + iqdb + GLM-V 视觉识图，合并所有非空结果。
+        """多路并发：SauceNAO + iqdb + 视觉模型识图，合并所有非空结果。
 
         视觉模型理解任意图（角色/场景/动作），SauceNAO/iqdb 认知名角色（精确 tag），
         信息互补。任一路失败不影响其他。
@@ -314,7 +314,7 @@ class AnimeCaptioner:
     def _vision_creds(self) -> tuple[str, str]:
         url = (getattr(self.config, "ai_companion_anime_vision_api_url", "") or "").strip()
         key = (getattr(self.config, "ai_companion_anime_vision_api_key", "") or "").strip()
-        # key 空则复用 GLM 在线推理或辅助训练的 key（同平台）
+        # key 空则复用在线 LLM 推理或辅助训练的 key（同端点）
         if not key:
             key = (getattr(self.config, "ai_companion_online_api_key", "") or "").strip()
         if not key:
@@ -324,7 +324,7 @@ class AnimeCaptioner:
     async def _vision_describe_image(
         self, image_bytes: bytes, *, prompt_override: str = "", max_tokens: int = 1024
     ) -> str:
-        """用 GLM-4.6V-Flash(免费视觉模型)理解图片内容。
+        """用配置的视觉模型理解图片内容。
 
         能识别任意图片（角色/场景/动作/文字），弥补 SauceNAO 对冷门图命中率低。
         prompt_override 提供时使用通用提示词（梗图/截图/热点打趣模式）。
@@ -333,7 +333,7 @@ class AnimeCaptioner:
         url, key = self._vision_creds()
         if not url or not key:
             return ""
-        model = (getattr(self.config, "ai_companion_anime_vision_model", "glm-4.6v-flash") or "glm-4.6v-flash").strip()
+        model = (getattr(self.config, "ai_companion_anime_vision_model", "deepseek-flash") or "deepseek-flash").strip()
 
         # 缩放到视觉模型适中的尺寸（避免图太大传得慢）
         vision_bytes = _downscale_for_search(image_bytes, max_size=768)
