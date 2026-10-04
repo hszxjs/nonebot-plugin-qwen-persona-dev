@@ -120,106 +120,201 @@ def test_target_last_spoke_age() -> None:
     assert target_last_spoke_age(turns, target_user_id="77", now=1300.0) is None  # 没说过话
 
 
-# ---- 卡片 HTML（不泄露 QQ、图文齐全）----
+# ---- 区间合并（±3 相连合并）----
 
 
-def _card():
-    from nonebot_plugin_ai_companion.notify.model import FinderEntry, PingCard
-
-    card = PingCard(group_id="100", target_user_id="42", target_name="阿强")
-    card.finders.append(FinderEntry(user_id="3305167706", name="小红", text="@阿强 你看这个", reason="at"))
-    return card
-
-
-def test_card_html_contains_content_and_never_qq_ids() -> None:
-    from nonebot_plugin_ai_companion.notify.render import build_card_html
-
-    page = build_card_html(_card())
-    assert "阿强同学，有 1 人找你哦" in page
-    assert "小红" in page and "你看这个" in page
-    assert "3305167706" not in page  # QQ 号绝不进卡片
+def _turns(*texts: str) -> list[dict[str, object]]:
+    return [
+        {"source_message_id": f"m{index}", "created_at": 1000.0 + index, "turn": None, "thread_id": 0}
+        for index, text in enumerate(texts)
+    ]
 
 
-def test_card_title_pluralizes() -> None:
-    from nonebot_plugin_ai_companion.notify.model import FinderEntry, PingCard
+def test_merge_overlapping_and_adjacent_windows() -> None:
+    from nonebot_plugin_ai_companion.notify.digest import merge_context_blocks
 
-    card = PingCard(group_id="100", target_user_id="42", target_name="阿强")
-    card.finders.append(FinderEntry(user_id="1", name="小红", text="a"))
-    card.finders.append(FinderEntry(user_id="2", name="小刚", text="b"))
-    assert card.title == "阿强同学们，有 2 人找你哦"
-
-
-def test_card_html_escapes_hostile_text() -> None:
-    from nonebot_plugin_ai_companion.notify.render import build_card_html
-
-    card = _card()
-    card.finders[0].text = "<script>alert(1)</script>"
-    page = build_card_html(card)
-    assert "<script>" not in page and "&lt;script&gt;" in page
+    turns = _turns(*[f"第{i}条" for i in range(12)])
+    # 两个锚点相距 4 条：窗口 [a-3,a+3] 与 [b-3,b+3] 重叠 → 一个连续块
+    blocks, dropped = merge_context_blocks(turns, [("m2", 1002.0), ("m6", 1006.0)], context_lines=3, max_lines=40)
+    assert len(blocks) == 1 and dropped == 0
+    covered = [str(t["source_message_id"]) for t in blocks[0].turns]
+    assert covered == [f"m{i}" for i in range(0, 10)]
 
 
-def test_card_image_embedding_downscales() -> None:
+def test_merge_keeps_separate_blocks_when_gapped() -> None:
+    from nonebot_plugin_ai_companion.notify.digest import merge_context_blocks
+
+    turns = _turns(*[f"第{i}条" for i in range(14)])
+    # 相距 7 条：窗口之间有空隙 → 两个独立块
+    blocks, dropped = merge_context_blocks(turns, [("m1", 1001.0), ("m10", 1010.0)], context_lines=3, max_lines=40)
+    assert len(blocks) == 2 and dropped == 0
+    assert str(blocks[1].turns[0]["source_message_id"]) == "m7"
+
+
+def test_merge_caps_total_lines_dropping_oldest() -> None:
+    from nonebot_plugin_ai_companion.notify.digest import merge_context_blocks
+
+    turns = _turns(*[f"第{i}条" for i in range(20)])
+    blocks, dropped = merge_context_blocks(turns, [("m3", 1003.0), ("m15", 1015.0)], context_lines=3, max_lines=10)
+    total = sum(len(block.turns) for block in blocks)
+    assert total <= 10 and dropped > 0
+    # 最老的行先被截掉，锚点 m15 的窗口保留
+    last_block_ids = [str(t["source_message_id"]) for t in blocks[-1].turns]
+    assert "m15" in last_block_ids
+
+
+def test_merge_falls_back_to_time_anchor_for_unknown_message() -> None:
+    """触发消息没进时间线（如命令式 @）：按时间退化锚定，窗口仍成立。"""
+    from nonebot_plugin_ai_companion.notify.digest import merge_context_blocks
+
+    turns = _turns(*[f"第{i}条" for i in range(10)])
+    blocks, dropped = merge_context_blocks(turns, [("missing", 1005.5)], context_lines=2, max_lines=40)
+    assert len(blocks) == 1 and dropped == 0
+    ids = [str(t["source_message_id"]) for t in blocks[0].turns]
+    assert ids == ["m3", "m4", "m5", "m6", "m7"]
+
+
+# ---- 信箱仓库（持久化 + TTL）----
+
+
+async def test_inbox_add_list_delete_and_purge(persona_store) -> None:
+    repo = persona_store.db and _inbox(persona_store)
+    first = await repo.add(
+        session_key="group:100",
+        group_id="100",
+        target_user_id="42",
+        finder_user_id="1",
+        reason="at",
+        source_message_id="m1",
+        text="在吗",
+    )
+    await repo.add(
+        session_key="group:100",
+        group_id="100",
+        target_user_id="42",
+        finder_user_id="2",
+        reason="quote",
+        source_message_id="m2",
+        text="看看这个",
+    )
+    pending = await repo.list_for_target(session_key="group:100", target_user_id="42")
+    assert [entry.finder_user_id for entry in pending] == ["1", "2"]
+    assert pending[0].text == "在吗"
+
+    await repo.delete_entries([first])
+    assert len(await repo.list_for_target(session_key="group:100", target_user_id="42")) == 1
+
+    # TTL 清理：把两条都改成 25 小时前 → 24h TTL 全清
+    import time as _time
+
+    with persona_store.db.connection() as conn:
+        conn.execute("UPDATE ping_inbox SET created_at = ?", (_time.time() - 25 * 3600,))
+    expired = await repo.purge_expired(ttl_seconds=24 * 3600)
+    assert len(expired) == 1
+    assert await repo.list_for_target(session_key="group:100", target_user_id="42") == []
+
+
+def _inbox(store):
+    from nonebot_plugin_ai_companion.notify.inbox import PingInboxRepo
+
+    return PingInboxRepo(store.db)
+
+
+# ---- 摘要卡 HTML ----
+
+
+def _blocks():
+    from nonebot_plugin_ai_companion.conversation.model import ConversationTurn
+    from nonebot_plugin_ai_companion.notify.digest import DigestBlock
+
+    def turn(user_id, name, text, message_id, *, bot=False):
+        return {
+            "turn": ConversationTurn(
+                session_key="group:100",
+                speaker_kind="bot" if bot else "member",
+                text=text,
+                group_id="100",
+                user_id=user_id,
+                speaker_name=name,
+                source_message_id=message_id,
+            ),
+            "source_message_id": message_id,
+            "created_at": 1000.0,
+            "thread_id": 0,
+        }
+
+    block = DigestBlock(trigger_message_ids={"m2"})
+    block.turns = [turn("1", "小红", "在吗", "m1"), turn("42", "", "谁叫我", "m2")]
+    return [block]
+
+
+def test_digest_html_renders_trigger_badge_and_never_qq() -> None:
+    from nonebot_plugin_ai_companion.notify.render import build_digest_html
+
+    page = build_digest_html(
+        title="阿强同学，有人找过你",
+        subtitle="以下是你不在时被找的原话和上下文：",
+        blocks=_blocks(),
+        names={},
+    )
+    assert "阿强同学，有人找过你" in page
+    assert "在吗" in page and "谁叫我" in page
+    assert "找你" in page  # 触发行徽标
+    assert 'class="content trigger"' in page
+    assert "3305167706" not in page  # QQ 号绝不出现
+
+
+def test_digest_html_escapes_and_truncation_note() -> None:
+    from nonebot_plugin_ai_companion.notify.digest import DigestBlock
+    from nonebot_plugin_ai_companion.notify.render import build_digest_html
+
+    block = DigestBlock(trigger_message_ids=set())
+    block.turns = [
+        {
+            "turn": SimpleNamespace(  # 最小 duck 类型即可
+                is_bot=False,
+                user_id="1",
+                speaker_name="小红",
+                text="<b>粗体</b>",
+                sticker_keys=[],
+                source_message_id="m1",
+                reply_to_turn_id=0,
+            ),
+            "source_message_id": "m1",
+            "created_at": 1000.0,
+            "thread_id": 0,
+        }
+    ]
+    page = build_digest_html(
+        title="t",
+        subtitle="s",
+        blocks=[block],
+        dropped_lines=7,
+    )
+    assert "&lt;b&gt;" in page and "<b>" not in page
+    assert "更早的 7 条已省略" in page
+
+
+def test_digest_html_embeds_attachments() -> None:
     import io
 
     from PIL import Image
 
-    from nonebot_plugin_ai_companion.notify.render import build_card_html
+    from nonebot_plugin_ai_companion.notify.render import build_digest_html
 
     buffer = io.BytesIO()
-    Image.new("RGB", (1200, 800), (200, 60, 60)).save(buffer, format="JPEG")
-    page = build_card_html(_card(), image_bytes_list=[[buffer.getvalue()]])
+    Image.new("RGB", (900, 600), (60, 120, 200)).save(buffer, format="JPEG")
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+        handle.write(buffer.getvalue())
+        path = handle.name
+    blocks = _blocks()
+    page = build_digest_html(
+        title="t",
+        subtitle="s",
+        blocks=blocks,
+        attachments_by_message_id={"m2": [path]},
+    )
     assert "data:image/jpeg;base64," in page
-
-
-# ---- 风控 ----
-
-
-def _ping_service(store, config):
-    from nonebot_plugin_ai_companion.notify.service import PingService
-
-    return PingService(
-        config=config,
-        env=SimpleNamespace(),
-        store=store,
-        message_logs=store.message_logs,
-    )
-
-
-async def test_target_cooldown_blocks_second_ping(persona_store) -> None:
-    from nonebot_plugin_ai_companion.config import AiCompanionConfig
-
-    config = AiCompanionConfig(ai_companion_ping_target_cooldown_seconds=300)
-    service = _ping_service(persona_store, config)
-    assert service._target_blocked("100", "42", now=1000.0) == ""
-    service._mark_sent("100", "42", 1000.0)
-    assert service._target_blocked("100", "42", now=1100.0) == "target_cooldown"
-    assert service._target_blocked("100", "42", now=1400.0) == ""  # 冷却过了
-    assert service._target_blocked("100", "77", now=1100.0) == ""  # 别的目标不受影响
-
-
-async def test_group_hourly_limit(persona_store) -> None:
-    from nonebot_plugin_ai_companion.config import AiCompanionConfig
-
-    config = AiCompanionConfig(ai_companion_ping_hourly_limit=2, ai_companion_ping_target_cooldown_seconds=0)
-    service = _ping_service(persona_store, config)
-    service._mark_sent("100", "42", 1000.0)
-    service._mark_sent("100", "77", 1010.0)
-    assert service._target_blocked("100", "88", now=1020.0) == "group_hourly_limit"
-    assert service._target_blocked("200", "88", now=1020.0) == ""  # 别的群不受影响
-    assert service._target_blocked("100", "88", now=4700.0) == ""  # 一小时后窗口滑出
-
-
-async def test_ping_records_leave_a_trace(persona_store) -> None:
-    from nonebot_plugin_ai_companion.config import AiCompanionConfig
-    from nonebot_plugin_ai_companion.notify.model import PingCandidate
-
-    config = AiCompanionConfig()
-    service = _ping_service(persona_store, config)
-    candidate = PingCandidate(target_user_id="42", reason="at", finder_user_id="1")
-    await service._record("100", {"platform": "qq", "message_id": "m1"}, candidate, status="skipped_target_active")
-    rows = await persona_store.message_logs.list_logs(kind="ping", limit=5)
-    items = rows.get("items") if isinstance(rows, dict) else rows
-    assert any(
-        row["reply_kind"] == "ping" and row["status"] == "skipped_target_active" and row["user_id"] == "42"
-        for row in items
-    )
+    Path(path).unlink(missing_ok=True)

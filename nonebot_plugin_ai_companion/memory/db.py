@@ -471,6 +471,27 @@ class PersonaDatabase:
                 "CREATE INDEX IF NOT EXISTS idx_member_memories_member "
                 "ON member_memories(group_id, user_id, decayed, importance DESC)"
             )
+            # 「有人找你」离线信箱：被 @/引用时静默累积，目标上线后一次性投递。
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ping_inbox (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_key TEXT NOT NULL,
+                    group_id TEXT NOT NULL DEFAULT '',
+                    target_user_id TEXT NOT NULL,
+                    finder_user_id TEXT NOT NULL DEFAULT '',
+                    reason TEXT NOT NULL DEFAULT 'at',
+                    source_message_id TEXT NOT NULL DEFAULT '',
+                    text TEXT NOT NULL DEFAULT '',
+                    attachments TEXT NOT NULL DEFAULT '[]',
+                    created_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_ping_inbox_target "
+                "ON ping_inbox(session_key, target_user_id, created_at)"
+            )
             # 滚动话题摘要：每群一份，跨小时接上话题用（注入 scene 段）。
             conn.execute(
                 """

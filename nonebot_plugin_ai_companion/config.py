@@ -93,8 +93,10 @@ class AiCompanionConfig(BaseModel):
     ai_companion_ping_enabled: bool = True
     ai_companion_ping_quote_enabled: bool = True
     ai_companion_ping_idle_seconds: int = 600
-    ai_companion_ping_target_cooldown_seconds: int = 300
-    ai_companion_ping_hourly_limit: int = 10
+    ai_companion_ping_context_lines: int = 3
+    ai_companion_ping_max_lines: int = 40
+    ai_companion_ping_max_pending: int = 30
+    ai_companion_ping_ttl_hours: float = 24.0
     ai_companion_ping_at_target: bool = True
     ai_companion_min_meme_recent_count: int = 2
 
