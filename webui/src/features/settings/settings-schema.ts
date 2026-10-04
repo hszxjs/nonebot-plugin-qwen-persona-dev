@@ -312,14 +312,14 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   {
     name: "ai_companion_milestone_enabled",
     label: "群聊成就",
-    description: "成员总发言跨过阈值（100 / 1000 / 6666 / 整万数…）时，发一张成就卡：总发言、群内排名、击败百分比、表情包占比。",
+    description: "每群每人独立计数（含命令与黑名单消息，只计非 bot 消息），总发言跨过阈值时发一张成就卡：总发言、群内排名、击败百分比、表情包占比。被屏蔽的成员只计数不发卡。",
     section: "learning",
     control: "switch",
   },
   {
     name: "ai_companion_milestone_list",
     label: "成就阈值",
-    description: "触发成就卡的发言数阈值（空格分隔）；≥10000 的整万数无需配置自动触发。",
+    description: "触发成就卡的发言数阈值（空格分隔），如 50 100 250 325 500 666 888 1145 1314 1500 2000 …；≥10000 的整万数无需配置自动触发。每个阈值只播报一次。",
     section: "learning",
     control: "tokens",
   },

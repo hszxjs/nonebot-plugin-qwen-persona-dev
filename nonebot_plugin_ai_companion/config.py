@@ -101,7 +101,27 @@ class AiCompanionConfig(BaseModel):
     # ---- 群聊成就（里程碑卡）：总发言跨过阈值时发成就卡 ----
     ai_companion_milestone_enabled: bool = True
     ai_companion_milestone_list: list[int] = Field(
-        default_factory=lambda: [100, 500, 1000, 2000, 3000, 4000, 5000, 6666, 7777, 8888, 9999]
+        default_factory=lambda: [
+            50,
+            100,
+            250,
+            325,
+            500,
+            666,
+            888,
+            1000,
+            1145,
+            1314,
+            1500,
+            2000,
+            3000,
+            4000,
+            5000,
+            6666,
+            7777,
+            8888,
+            9999,
+        ]
     )
     ai_companion_min_meme_recent_count: int = 2
 

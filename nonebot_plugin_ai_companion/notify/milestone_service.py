@@ -1,4 +1,8 @@
-"""成就卡服务：成员发言使总数跨过阈值 → 渲染成就卡发进群。"""
+"""成就卡服务：成员发言使计数跨过阈值 → 渲染成就卡发进群。
+
+计数与学习管线解耦：命令、黑名单用户的消息同样 +1（见 .counters）；
+被屏蔽的成员只计数、不发卡（不给他庆祝），阈值照常推进。
+"""
 
 from __future__ import annotations
 
@@ -13,10 +17,10 @@ from ..config import AiCompanionConfig
 from ..conversation.window import safe_speaker_name
 from ..observability.message_log import MessageLogRepo
 from ..store import PersonaStore
+from .counters import MilestoneCounterRepo
 from .milestone import (
     fetch_avatar,
     fetch_member_stats,
-    is_milestone,
     render_milestone_png,
     save_milestone_png,
 )
@@ -37,6 +41,7 @@ class MilestoneService:
         self.env = env
         self.store = store
         self.message_logs = message_logs
+        self.counters = MilestoneCounterRepo(store.db)
         self._group_names: dict[str, str] = {}
 
     async def handle_message(self, bot: Bot, event: Event, matcher: Matcher) -> None:
@@ -52,14 +57,24 @@ class MilestoneService:
         if not user_id:
             return
 
-        # 计数在学习 matcher（priority 97）之后执行：这条消息已经进了时间线
         configured = [int(item) for item in getattr(self.config, "ai_companion_milestone_list", [])]
+        bump = await self.counters.bump(
+            group_id=group_id,
+            user_id=user_id,
+            configured=configured,
+            source_message_id=str(ids.get("message_id") or ""),
+        )
+        if bump.claimed is None:
+            return
+        milestone = int(bump.claimed)
+        if self.env.is_blacklisted(user_id, None, ""):
+            # 被屏蔽的成员照常计数，但不在群里给他庆祝
+            await self._record(group_id, ids, user_id, milestone, status="skipped_blocked")
+            return
+
         stats = await fetch_member_stats(self.store, group_id=group_id, user_id=user_id)
         if stats is None:
-            return
-        total = int(stats["total"])
-        if not is_milestone(total, configured):
-            return
+            stats = {"total": bump.total, "rank": 1, "total_members": 1, "sticker_count": 0}
 
         # 显示名：昵称表 → 兜底「群友xxxx」；QQ 号绝不进卡片
         names = await self.store.member_names.get_names(group_id=group_id, user_ids=[user_id])
@@ -74,7 +89,7 @@ class MilestoneService:
             png = await render_milestone_png(
                 badge="群聊成就",
                 name=name,
-                count=total,
+                count=milestone,
                 rank=int(stats["rank"]),
                 total_members=int(stats["total_members"]),
                 sticker_count=int(stats["sticker_count"]),
@@ -96,7 +111,7 @@ class MilestoneService:
                     Message(
                         MessageSegment.at(int(user_id))
                         + MessageSegment.text(
-                            f" 🏆 群聊成就：{name} 总发言突破 {total}！"
+                            f" 🏆 群聊成就：{name} 总发言突破 {milestone}！"
                             f"群内排名 #{stats['rank']}，超过 "
                             f"{(stats['total_members'] - stats['rank']) / max(1, stats['total_members']) * 100:.2f}%"
                             " 的活跃群友。"
@@ -105,13 +120,13 @@ class MilestoneService:
                 )
         except Exception as exc:  # noqa: BLE001 — 发送失败留痕
             logger.warning(f"milestone card send failed: {exc!r}")
-            await self._record(group_id, ids, user_id, total, status="send_error", detail={"error": str(exc)})
+            await self._record(group_id, ids, user_id, milestone, status="send_error", detail={"error": str(exc)})
             return
         await self._record(
             group_id,
             ids,
             user_id,
-            total,
+            milestone,
             status="success",
             detail={"rank": stats["rank"], "members": stats["total_members"], "render_error": render_error},
         )

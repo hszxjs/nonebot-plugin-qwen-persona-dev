@@ -1,12 +1,13 @@
 """群聊成就（里程碑卡）：成员总发言突破阈值时发一张成就卡。
 
-数据源是会话时间线（conversation_turns，成员消息，不含 bot 与命令噪声）：
-- 总发言数 = 该成员在该群的时间线条数；
-- 表情包数 = 其中 sticker_keys 非空的条数；
-- 群内排名 = 按发言数在全群成员中的名次；击败百分比 = (总人数 - 排名) / 总人数。
+数据源是独立计数器（member_message_counts，见 .counters）：每群每人一套计数，
+记录该群内该成员的**全部**消息（命令、黑名单消息也算，与学习管线解耦），
+所以数字就是"这个人在这群说过多少话"。表情包数仍取时间线（conversation_turns）
+里的表情条数——黑名单消息不入时间线，它只会小于等于总数，不会超过。
 
-触发：成员发言使总数恰好跨过某个阈值（100 / 1000 / 6666 / 10000 的整数倍…）。
-计数是精确的：一条消息 +1，跨线那一刻只触发一次，无需"已播报"标记。
+触发：本次计数跨过阈值、且该阈值尚未播报（announced_threshold 标记），取最大
+的一个播报一次。老群的计数行首次建立时用时间线回填基线并把已达成阈值视为
+"已播报"，因此部署不会给历史发言补发一摞卡；≥10000 的整万数总在触发集合里。
 """
 
 from __future__ import annotations
@@ -15,13 +16,34 @@ import asyncio
 import html
 import logging
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # 默认里程碑（趣味号 + 常规号）；>=10000 的整万数自动触发，无需配置
-MILESTONE_DEFAULTS: tuple[int, ...] = (100, 500, 1000, 2000, 3000, 4000, 5000, 6666, 7777, 8888, 9999)
+MILESTONE_DEFAULTS: tuple[int, ...] = (
+    50,
+    100,
+    250,
+    325,
+    500,
+    666,
+    888,
+    1000,
+    1145,
+    1314,
+    1500,
+    2000,
+    3000,
+    4000,
+    5000,
+    6666,
+    7777,
+    8888,
+    9999,
+)
 
 _CSS = """
 body { margin:0; padding:0; background:transparent;
@@ -52,14 +74,25 @@ body { margin:0; padding:0; background:transparent;
 """
 
 
-def is_milestone(count: int, configured: list[int] | tuple[int, ...] = MILESTONE_DEFAULTS) -> bool:
-    """是否跨过里程碑：命中配置号，或 >=10000 的整万数。"""
-    value = int(count)
-    if value <= 0:
-        return False
-    if value in {int(item) for item in configured}:
-        return True
-    return value >= 10000 and value % 10000 == 0
+def milestone_thresholds(configured: Iterable[int], *, up_to: int) -> list[int]:
+    """触发集合：配置阈值 ∪ ≥10000 的整万数，全部 ≤ up_to，升序去重。"""
+    limit = int(up_to)
+    values = {int(item) for item in configured if int(item) > 0 and int(item) <= limit}
+    if limit >= 10000:
+        values.update(range(10000, limit + 1, 10000))
+    return sorted(values)
+
+
+def crossed_milestone(total: int, announced: int, configured: Iterable[int]) -> int | None:
+    """本次跨过且尚未播报的最大阈值；没有则 None（未跨线或已播报过）。"""
+    candidates = [value for value in milestone_thresholds(configured, up_to=total) if value > int(announced)]
+    return candidates[-1] if candidates else None
+
+
+def milestone_baseline(total: int, configured: Iterable[int]) -> int:
+    """历史基线：已达成的最高阈值直接视为「已播报」，回填时静默、不补发。"""
+    values = milestone_thresholds(configured, up_to=max(0, int(total)))
+    return values[-1] if values else 0
 
 
 def _initial(name: str) -> str:
@@ -154,35 +187,44 @@ def save_milestone_png(data_dir: str | Path, png_bytes: bytes, *, user_id: str) 
 
 
 async def fetch_member_stats(store: Any, *, group_id: str, user_id: str) -> dict[str, int] | None:
-    """该成员在该群的（总发言，排名，活跃成员数，表情包数）。"""
+    """该成员在该群的（总发言，排名，活跃成员数，表情包数）。
+
+    总发言/排名/成员数来自独立计数器（含命令与黑名单消息）；表情包数取时间线
+    里的表情条数（黑名单消息不入时间线，所以它只会偏少，不会超过总数）。
+    """
 
     def _sync() -> dict[str, int] | None:
 
         with store.db.connection() as conn:
-            rows = conn.execute(
-                """
-                SELECT user_id, COUNT(*) AS c,
-                       SUM(CASE WHEN sticker_keys != '[]' AND sticker_keys != '' THEN 1 ELSE 0 END) AS stickers
-                FROM conversation_turns
-                WHERE group_id = ? AND speaker_kind = 'member'
-                  AND user_id IS NOT NULL AND user_id != ''
-                GROUP BY user_id ORDER BY c DESC
-                """,
+            row = conn.execute(
+                "SELECT message_count FROM member_message_counts WHERE group_id = ? AND user_id = ?",
+                (group_id, str(user_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            total = int(row["message_count"])
+            ahead = conn.execute(
+                "SELECT COUNT(*) AS c FROM member_message_counts WHERE group_id = ? AND message_count > ?",
+                (group_id, total),
+            ).fetchone()
+            members = conn.execute(
+                "SELECT COUNT(*) AS c FROM member_message_counts WHERE group_id = ?",
                 (group_id,),
-            ).fetchall()
-        total_members = len(rows)
-        for position, row in enumerate(rows, start=1):
-            if str(row["user_id"]) == str(user_id):
-                stickers_raw = row["stickers"]
-                sticker_count = int(stickers_raw) if stickers_raw is not None else 0
-                # 兼容：sticker_keys 存的是 JSON 数组字符串
-                return {
-                    "total": int(row["c"]),
-                    "rank": position,
-                    "total_members": total_members,
-                    "sticker_count": sticker_count,
-                }
-        return None
+            ).fetchone()
+            stickers = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM conversation_turns
+                WHERE group_id = ? AND user_id = ? AND speaker_kind = 'member'
+                  AND sticker_keys NOT IN ('', '[]')
+                """,
+                (group_id, str(user_id)),
+            ).fetchone()
+        return {
+            "total": total,
+            "rank": int(ahead["c"]) + 1,
+            "total_members": int(members["c"]),
+            "sticker_count": int(stickers["c"]),
+        }
 
     return await asyncio.to_thread(_sync)
 
@@ -190,9 +232,11 @@ async def fetch_member_stats(store: Any, *, group_id: str, user_id: str) -> dict
 __all__ = [
     "MILESTONE_DEFAULTS",
     "build_milestone_html",
+    "crossed_milestone",
     "fetch_avatar",
     "fetch_member_stats",
-    "is_milestone",
+    "milestone_baseline",
+    "milestone_thresholds",
     "render_milestone_png",
     "save_milestone_png",
 ]

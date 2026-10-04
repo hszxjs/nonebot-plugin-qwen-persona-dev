@@ -515,6 +515,20 @@ class PersonaDatabase:
                 )
                 """
             )
+            # 成就计数：每群每人独立计数，记录全部消息（含命令/黑名单，与学习管线解耦）。
+            # announced_threshold 为 NULL 表示历史基线尚未建立，下次计数时静默补齐。
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS member_message_counts (
+                    group_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    announced_threshold INTEGER,
+                    last_message_at REAL NOT NULL DEFAULT 0.0,
+                    PRIMARY KEY (group_id, user_id)
+                )
+                """
+            )
 
     def _ensure_columns(self, conn: sqlite3.Connection) -> None:
         """给已存在的表补新列（CREATE TABLE IF NOT EXISTS 不会改动老表）。
