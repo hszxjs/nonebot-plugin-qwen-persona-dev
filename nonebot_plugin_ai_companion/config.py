@@ -89,6 +89,13 @@ class AiCompanionConfig(BaseModel):
     # ---- 在线端点失败时降级到本地 MLX（不拉起未加载的模型，超时即放弃）----
     ai_companion_fallback_to_local: bool = True
     ai_companion_fallback_timeout_seconds: float = 120.0
+    # ---- 「有人找你」提醒：群里有人 @ / 引用某群友时，bot 攒一张卡片图提醒 ----
+    ai_companion_ping_enabled: bool = True
+    ai_companion_ping_quote_enabled: bool = True
+    ai_companion_ping_idle_seconds: int = 600
+    ai_companion_ping_target_cooldown_seconds: int = 300
+    ai_companion_ping_hourly_limit: int = 10
+    ai_companion_ping_at_target: bool = True
     ai_companion_min_meme_recent_count: int = 2
 
     ai_companion_min_sample_chars: int = 2

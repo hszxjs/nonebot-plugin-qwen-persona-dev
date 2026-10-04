@@ -29,6 +29,7 @@ from .finetune.schedule import install_training_schedule
 from .finetune.trainer import PersonaTrainer
 from .learning_service import LearningService
 from .model_manager.manager import ModelManager
+from .notify.service import PingService
 from .observability.bus import EventBus
 from .observability.message_log import MessageLogRepo, format_trace, quoted_message_id
 from .providers.client import QwenClient
@@ -417,6 +418,13 @@ async def _shutdown() -> None:
 # ---------------------------------------------------------------------------
 # matcher 路由
 # ---------------------------------------------------------------------------
+ping_service = PingService(
+    config=plugin_config,
+    env=env,
+    store=store,
+    message_logs=store.message_logs,
+)
+
 persona_learn = on_message(priority=plugin_config.ai_companion_learning_priority, block=False)
 
 
@@ -431,6 +439,17 @@ persona_chat = on_message(priority=plugin_config.ai_companion_reply_priority, bl
 @persona_chat.handle()
 async def _chat(bot: Bot, event: Event, matcher: Matcher) -> None:
     await chat_service.handle_chat(bot, event, matcher)
+
+
+persona_ping = on_message(priority=plugin_config.ai_companion_learning_priority + 1, block=False)
+
+
+@persona_ping.handle()
+async def _ping(bot: Bot, event: Event, matcher: Matcher) -> None:
+    try:
+        await ping_service.handle_message(bot, event, matcher)
+    except Exception as exc:  # noqa: BLE001 — 提醒是附加服务，任何异常都不影响其他 matcher
+        logger.debug(f"ping service skipped: {exc!r}")
 
 
 persona_poke = on_notice(priority=plugin_config.ai_companion_reply_priority - 1, block=False)
