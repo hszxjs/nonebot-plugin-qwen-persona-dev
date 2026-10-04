@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from ..context.envelope import MessageContextEnvelope
 from .model import PingCandidate, PingDecision
 
@@ -59,26 +57,4 @@ def detect_ping_candidates(
     return PingDecision(candidates=tuple(candidates))
 
 
-def target_last_spoke_age(
-    turns: list[dict[str, Any]],
-    *,
-    target_user_id: str,
-    now: float,
-) -> float | None:
-    """目标最近一次（以成员身份）说话距 now 多少秒；没说过返回 None。
-
-    turns 需按时间正序，元素含 user_id/speaker_kind/created_at。
-    """
-    target = str(target_user_id or "").strip()
-    if not target:
-        return None
-    for turn in reversed(turns):
-        if str(turn.get("speaker_kind") or "") == "bot":
-            continue
-        if str(turn.get("user_id") or "").strip() == target:
-            created = float(turn.get("created_at") or 0.0)
-            return max(0.0, now - created)
-    return None
-
-
-__all__ = ["detect_ping_candidates", "target_last_spoke_age"]
+__all__ = ["detect_ping_candidates"]

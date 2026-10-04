@@ -92,7 +92,7 @@ class AiCompanionConfig(BaseModel):
     # ---- 「有人找你」提醒：群里有人 @ / 引用某群友时，bot 攒一张卡片图提醒 ----
     ai_companion_ping_enabled: bool = True
     ai_companion_ping_quote_enabled: bool = True
-    ai_companion_ping_idle_seconds: int = 600
+    ai_companion_ping_grace_seconds: int = 600  # @ 之后目标这么久没说话才算「错过」
     ai_companion_ping_context_lines: int = 3
     ai_companion_ping_max_lines: int = 40
     ai_companion_ping_max_pending: int = 30

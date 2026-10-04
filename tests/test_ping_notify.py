@@ -105,19 +105,28 @@ def test_quote_can_be_disabled() -> None:
     assert decision.candidates == ()
 
 
-# ---- 在场判定 ----
+# ---- 宽限期判定（@ 后 10 分钟没说话才算错过）----
 
 
-def test_target_last_spoke_age() -> None:
-    from nonebot_plugin_ai_companion.notify.detector import target_last_spoke_age
+def test_split_pending_by_grace() -> None:
+    from nonebot_plugin_ai_companion.notify.service import split_pending
 
-    turns = [
-        {"user_id": "42", "speaker_kind": "member", "created_at": 1000.0},
-        {"user_id": "1", "speaker_kind": "member", "created_at": 1100.0},
-        {"user_id": "999", "speaker_kind": "bot", "created_at": 1150.0},  # bot 的发言不算
+    entries = [
+        SimpleNamespace(created_at=1000.0, id=1),  # 12 分钟前 → 错过
+        SimpleNamespace(created_at=1360.0, id=2),  # 4 分钟前 → 在场看到，作废
     ]
-    assert target_last_spoke_age(turns, target_user_id="42", now=1300.0) == 300.0
-    assert target_last_spoke_age(turns, target_user_id="77", now=1300.0) is None  # 没说过话
+    missed, fresh = split_pending(entries, now=1720.0, grace_seconds=600.0)
+    assert [entry.id for entry in missed] == [1]
+    assert [entry.id for entry in fresh] == [2]
+
+    # 宽限期 = 0：全部视为错过（不看时间）
+    missed, fresh = split_pending(entries, now=1720.0, grace_seconds=0)
+    assert len(missed) == 2 and fresh == []
+
+    # 恰好 10 分钟：算错过（用户口径是「10 分钟以上」，边界归入错过）
+    boundary = [SimpleNamespace(created_at=1120.0, id=3)]
+    missed, fresh = split_pending(boundary, now=1720.0, grace_seconds=600.0)
+    assert [entry.id for entry in missed] == [3]
 
 
 # ---- 区间合并（±3 相连合并）----

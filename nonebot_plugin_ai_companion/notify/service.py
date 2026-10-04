@@ -47,6 +47,21 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_PENDING = 30
 
 
+def split_pending(pending: list[Any], *, now: float, grace_seconds: float) -> tuple[list[Any], list[Any]]:
+    """把信箱记录分成（错过，在场看到）。
+
+    @ 之后目标在宽限期内开过口 → 那条算"在场看到"（作废）；
+    超过宽限期都没开口 → 算"错过"（待投递）。
+    """
+    if grace_seconds <= 0:
+        return list(pending), []
+    missed: list[Any] = []
+    fresh: list[Any] = []
+    for entry in pending:
+        (missed if now - float(entry.created_at or 0.0) >= grace_seconds else fresh).append(entry)
+    return missed, fresh
+
+
 class PingService:
     def __init__(
         self,
@@ -75,14 +90,36 @@ class PingService:
         session_key = f"group:{group_id}"
         sender_user_id = str(ids.get("user_id") or "")
 
-        # 1) 上线投递：目标自己发了消息，把攒的卡片发给他（任何消息都算上线）
+        # 1) 投递判定：目标自己发了消息。
+        #    @ 之后过了宽限期（默认 10 分钟）B 才开口 → 这些是"错过"的，投递；
+        #    宽限期内就开口 → 他当时在场看到了，那些记录直接作废。
         pending = await self.inbox.list_for_target(session_key=session_key, target_user_id=sender_user_id)
         if pending:
-            await self._deliver(
-                bot, matcher, group_id=group_id, ids=ids, target_user_id=sender_user_id, pending=pending
-            )
+            grace = float(getattr(self.config, "ai_companion_ping_grace_seconds", 600) or 0)
+            missed, fresh = split_pending(pending, now=time.time(), grace_seconds=grace)
+            if fresh:
+                await self.inbox.delete_entries([entry.id for entry in fresh])
+                for entry in fresh:
+                    delete_attachments(entry.attachments)
+                await self._record_group(
+                    group_id,
+                    ids,
+                    sender_user_id,
+                    status="dropped_seen_live",
+                    detail={"count": len(fresh)},
+                )
+            if missed:
+                await self._deliver(
+                    bot,
+                    matcher,
+                    group_id=group_id,
+                    ids=ids,
+                    target_user_id=sender_user_id,
+                    pending=missed,
+                    exclude_message_id=str(ids.get("message_id") or ""),
+                )
 
-        # 2) 触发累积：消息里有 @ 或引用才继续
+        # 2) 触发累积：消息里有 @ 或引用才继续（无条件记，宽限期内开口的会在下次说话时作废）
         try:
             message = event.get_message()
         except Exception:
@@ -102,28 +139,7 @@ class PingService:
         if not decision.candidates:
             return
 
-        now = time.time()
-        idle_seconds = float(self.config.ai_companion_ping_idle_seconds or 0)
         for candidate in decision.candidates:
-            if idle_seconds > 0:
-                turns = await self.store.conversation.recent_turns(session_key=session_key, limit=30)
-                from .detector import target_last_spoke_age
-
-                age = target_last_spoke_age(
-                    [
-                        {
-                            "user_id": turn.user_id,
-                            "speaker_kind": turn.speaker_kind,
-                            "created_at": turn.created_at,
-                        }
-                        for turn in turns
-                    ],
-                    target_user_id=candidate.target_user_id,
-                    now=now,
-                )
-                if age is not None and age < idle_seconds:
-                    await self._record(group_id, ids, candidate, status="skipped_target_active")
-                    continue
             await self._accumulate(
                 group_id=group_id, session_key=session_key, ids=ids, candidate=candidate, event=event
             )
@@ -189,6 +205,7 @@ class PingService:
         ids: dict[str, str | None],
         target_user_id: str,
         pending: list[Any],
+        exclude_message_id: str = "",
     ) -> None:
         session_key = f"group:{group_id}"
         started = time.perf_counter()
@@ -213,6 +230,13 @@ class PingService:
             context_lines=int(getattr(self.config, "ai_companion_ping_context_lines", 3) or 3),
             max_lines=int(getattr(self.config, "ai_companion_ping_max_lines", 40) or 40),
         )
+        if exclude_message_id:
+            # 目标"上线"的那条消息本身不算错过的内容
+            for block in blocks:
+                block.turns = [
+                    item for item in block.turns if str(item.get("source_message_id") or "") != exclude_message_id
+                ]
+            blocks = [block for block in blocks if block.turns]
 
         user_ids = [target_user_id, *[entry.finder_user_id for entry in pending if entry.finder_user_id]]
         names = await self.store.member_names.get_names(group_id=group_id, user_ids=user_ids)

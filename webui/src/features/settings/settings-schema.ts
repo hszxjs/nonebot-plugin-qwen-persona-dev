@@ -298,7 +298,7 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
   {
     name: "ai_companion_ping_enabled",
     label: "有人找你提醒",
-    description: "群里有人 @ 或引用某群友（10 分钟没说话）时静默记下原话与上下 ±3 条；等他发言（=上线）时 bot @ 他，把错过的内容画成卡片一次性发给他。",
+    description: "每次有人 @ / 引用某群友都静默记下原话与上下 ±3 条；若被找的人 10 分钟内没再说话（=错过了），等他下次发言时 bot @ 他、把错过的内容画成卡片。10 分钟内就回话的记录自动作废。",
     section: "learning",
     control: "switch",
   },
@@ -310,9 +310,9 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
     control: "switch",
   },
   {
-    name: "ai_companion_ping_idle_seconds",
-    label: "在场判定窗口（秒）",
-    description: "目标在该窗口内说过话就不提醒（人还在场）。",
+    name: "ai_companion_ping_grace_seconds",
+    label: "错过判定宽限（秒）",
+    description: "@ 之后目标这么久没说话才算「错过」；宽限期内回话的记录作废。",
     section: "learning",
     control: "number",
     min: 0,
