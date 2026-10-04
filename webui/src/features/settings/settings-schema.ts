@@ -310,6 +310,20 @@ export const SETTINGS_FIELDS: FieldSchema[] = [
     control: "switch",
   },
   {
+    name: "ai_companion_milestone_enabled",
+    label: "群聊成就",
+    description: "成员总发言跨过阈值（100 / 1000 / 6666 / 整万数…）时，发一张成就卡：总发言、群内排名、击败百分比、表情包占比。",
+    section: "learning",
+    control: "switch",
+  },
+  {
+    name: "ai_companion_milestone_list",
+    label: "成就阈值",
+    description: "触发成就卡的发言数阈值（空格分隔）；≥10000 的整万数无需配置自动触发。",
+    section: "learning",
+    control: "tokens",
+  },
+  {
     name: "ai_companion_ping_grace_seconds",
     label: "错过判定宽限（秒）",
     description: "@ 之后目标这么久没说话才算「错过」；宽限期内回话的记录作废。",

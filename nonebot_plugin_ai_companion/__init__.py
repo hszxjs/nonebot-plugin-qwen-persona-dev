@@ -29,6 +29,7 @@ from .finetune.schedule import install_training_schedule
 from .finetune.trainer import PersonaTrainer
 from .learning_service import LearningService
 from .model_manager.manager import ModelManager
+from .notify.milestone_service import MilestoneService
 from .notify.service import PingService
 from .observability.bus import EventBus
 from .observability.message_log import MessageLogRepo, format_trace, quoted_message_id
@@ -425,6 +426,13 @@ ping_service = PingService(
     message_logs=store.message_logs,
 )
 
+milestone_service = MilestoneService(
+    config=plugin_config,
+    env=env,
+    store=store,
+    message_logs=store.message_logs,
+)
+
 persona_learn = on_message(priority=plugin_config.ai_companion_learning_priority, block=False)
 
 
@@ -450,6 +458,17 @@ async def _ping(bot: Bot, event: Event, matcher: Matcher) -> None:
         await ping_service.handle_message(bot, event, matcher)
     except Exception as exc:  # noqa: BLE001 — 提醒是附加服务，任何异常都不影响其他 matcher
         logger.debug(f"ping service skipped: {exc!r}")
+
+
+persona_milestone = on_message(priority=plugin_config.ai_companion_learning_priority + 2, block=False)
+
+
+@persona_milestone.handle()
+async def _milestone(bot: Bot, event: Event, matcher: Matcher) -> None:
+    try:
+        await milestone_service.handle_message(bot, event, matcher)
+    except Exception as exc:  # noqa: BLE001 — 成就卡是附加服务，任何异常不影响其他 matcher
+        logger.debug(f"milestone service skipped: {exc!r}")
 
 
 persona_poke = on_notice(priority=plugin_config.ai_companion_reply_priority - 1, block=False)
