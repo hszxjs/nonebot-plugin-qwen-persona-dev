@@ -366,6 +366,17 @@ async def _memory_extraction_loop() -> None:
     while True:
         try:
             await asyncio.sleep(max(60, int(plugin_config.ai_companion_memory_extract_check_seconds or 300)))
+            # 找人信箱 TTL：超时未投递的记录连同附件滚动清理，
+            # 避免长期不上线的人攒下陈年积压、上线时被一次性补发。
+            if bool(getattr(plugin_config, "ai_companion_ping_enabled", True)):
+                try:
+                    ttl_hours = float(getattr(plugin_config, "ai_companion_ping_ttl_hours", 24.0) or 0.0)
+                    if ttl_hours > 0:
+                        purged = await ping_service.purge_expired(ttl_seconds=ttl_hours * 3600)
+                        if purged:
+                            logger.info(f"ai companion ping inbox purged {purged} expired entries")
+                except Exception as exc:  # noqa: BLE001 — 清理失败不影响记忆循环
+                    logger.warning(f"ai companion ping purge failed: {exc!r}")
             if plugin_config.ai_companion_summary_enabled:
                 try:
                     summaries = await run_summary_round(

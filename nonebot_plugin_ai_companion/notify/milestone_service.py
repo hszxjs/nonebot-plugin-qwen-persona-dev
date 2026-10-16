@@ -24,6 +24,7 @@ from .milestone import (
     render_milestone_png,
     save_milestone_png,
 )
+from .render import local_file_uri
 
 logger = logging.getLogger(__name__)
 
@@ -102,33 +103,61 @@ class MilestoneService:
 
         from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
-        try:
-            if png:
+        text_message = Message(
+            MessageSegment.at(int(user_id))
+            + MessageSegment.text(
+                f" 🏆 群聊成就：{name} 总发言突破 {milestone}！"
+                f"群内排名 #{stats['rank']}，超过 "
+                f"{(stats['total_members'] - stats['rank']) / max(1, stats['total_members']) * 100:.2f}%"
+                " 的活跃群友。"
+            )
+        )
+        sent = False
+        image_error = ""
+        if png:
+            try:
                 path = save_milestone_png(self.config.ai_companion_data_dir, png, user_id=user_id)
-                await matcher.send(Message(MessageSegment.image(f"file://{path}")))
-            else:
-                await matcher.send(
-                    Message(
-                        MessageSegment.at(int(user_id))
-                        + MessageSegment.text(
-                            f" 🏆 群聊成就：{name} 总发言突破 {milestone}！"
-                            f"群内排名 #{stats['rank']}，超过 "
-                            f"{(stats['total_members'] - stats['rank']) / max(1, stats['total_members']) * 100:.2f}%"
-                            " 的活跃群友。"
-                        )
-                    )
+                await matcher.send(Message(MessageSegment.image(local_file_uri(path))))
+                sent = True
+            except Exception as exc:  # noqa: BLE001 — 图片发不出去（如 NapCat 读不到文件）就降级纯文本
+                image_error = f"{type(exc).__name__}: {exc}"
+                logger.warning(f"milestone card image send failed, falling back to text: {exc!r}")
+        if not sent:
+            try:
+                await matcher.send(text_message)
+                sent = True
+            except Exception as exc:  # noqa: BLE001 — 彻底失败：回滚认领，该成员下条消息自然重试
+                logger.warning(f"milestone card send failed: {exc!r}")
+                rolled_back = await self.counters.rollback_claim(
+                    group_id=group_id,
+                    user_id=user_id,
+                    claimed=milestone,
+                    previous=bump.previous,
                 )
-        except Exception as exc:  # noqa: BLE001 — 发送失败留痕
-            logger.warning(f"milestone card send failed: {exc!r}")
-            await self._record(group_id, ids, user_id, milestone, status="send_error", detail={"error": str(exc)})
-            return
+                await self._record(
+                    group_id,
+                    ids,
+                    user_id,
+                    milestone,
+                    status="send_error",
+                    detail={
+                        "error": image_error or f"{type(exc).__name__}: {exc}",
+                        "rolled_back": rolled_back,
+                    },
+                )
+                return
         await self._record(
             group_id,
             ids,
             user_id,
             milestone,
             status="success",
-            detail={"rank": stats["rank"], "members": stats["total_members"], "render_error": render_error},
+            detail={
+                "rank": stats["rank"],
+                "members": stats["total_members"],
+                "render_error": render_error,
+                "downgraded": image_error,
+            },
         )
 
     async def _group_label(self, bot: Bot, group_id: str) -> str:

@@ -67,6 +67,8 @@ class PersonaTrainer:
         self.store = store
         self.deploy_callback = deploy_callback
         self._lock = asyncio.Lock()
+        # 端点拒绝过 thinking / max_tokens（400）后记在这里，后续样本不再携带
+        self._lora_helper_dropped_params: set[str] = set()
         self._progress: dict[str, Any] = {
             "stage": "idle",
             "status": "",
@@ -460,15 +462,20 @@ class PersonaTrainer:
     ) -> str:
         return f"[lora_helper_progress] read={total} attempted={attempted} processed={processed} fallback={fallback}"
 
-    async def _assist_lora_record(self, *, api_url: str, record: dict[str, Any]) -> dict[str, Any]:
-        headers = {"Content-Type": "application/json"}
-        if self.config.ai_companion_lora_helper_api_key.strip():
-            headers["Authorization"] = f"Bearer {self.config.ai_companion_lora_helper_api_key.strip()}"
+    def _build_lora_helper_payload(self, record: dict[str, Any]) -> dict[str, Any]:
+        """清洗请求载荷。
 
-        extra_body = dict(self.config.ai_companion_lora_helper_extra_body)
-        # response_format 对部分 OpenAI 兼容端点（DeepSeek / GLM 等）是可选的，
-        # 部分中转/官方网关对 json_object 支持不稳定。默认开启，用户可在
-        # extra_body 里用 _disable_response_format=true 关闭，或直接覆盖 response_format。
+        思考型模型（deepseek-flash 等）默认把预算烧在 reasoning 上：实测逐样本
+        清洗每次生成 ~3.5k 输出 tokens，而清洗只是改写任务、思考链无价值——因此
+        默认关闭思考、并按样本长度设输出上限（上限只作保险，禁思考后输出≈输入
+        量级）。端点不认识这两个参数（400）时由 _drop_lora_helper_unsupported
+        去参重试，且此后不再携带。
+
+        response_format 对部分 OpenAI 兼容端点（DeepSeek / GLM 等）是可选的，
+        部分中转/官方网关对 json_object 支持不稳定。默认开启，用户可在
+        extra_body 里用 _disable_response_format=true 关闭，或直接覆盖 response_format。
+        """
+        record_text = json.dumps(record, ensure_ascii=False, default=str)
         payload: dict[str, Any] = {
             "model": self.config.ai_companion_lora_helper_model,
             "messages": [
@@ -478,16 +485,39 @@ class PersonaTrainer:
                 },
                 {
                     "role": "user",
-                    "content": json.dumps(record, ensure_ascii=False, default=str),
+                    "content": record_text,
                 },
             ],
             "temperature": 0.2,
         }
+        if "thinking" not in self._lora_helper_dropped_params:
+            payload["thinking"] = {"type": "disabled"}
+        if "max_tokens" not in self._lora_helper_dropped_params:
+            payload["max_tokens"] = max(1024, int(len(record_text) * 1.2) + 512)
+        extra_body = dict(self.config.ai_companion_lora_helper_extra_body)
         disable_rf = bool(extra_body.pop("_disable_response_format", False))
         if not disable_rf and "response_format" not in extra_body:
             payload["response_format"] = {"type": "json_object"}
         # 用户自定义字段最后合并，可覆盖任何上述默认值。
         payload.update(extra_body)
+        return payload
+
+    def _drop_lora_helper_unsupported(self, payload: dict[str, Any]) -> list[str]:
+        """端点 400 时逐个去掉我们新增的可选参数（thinking / max_tokens）。"""
+        dropped: list[str] = []
+        for name in ("thinking", "max_tokens"):
+            if name in payload:
+                payload.pop(name)
+                self._lora_helper_dropped_params.add(name)
+                dropped.append(name)
+        return dropped
+
+    async def _assist_lora_record(self, *, api_url: str, record: dict[str, Any]) -> dict[str, Any]:
+        headers = {"Content-Type": "application/json"}
+        if self.config.ai_companion_lora_helper_api_key.strip():
+            headers["Authorization"] = f"Bearer {self.config.ai_companion_lora_helper_api_key.strip()}"
+
+        payload = self._build_lora_helper_payload(record)
 
         timeout = float(self.config.ai_companion_lora_helper_timeout)
         # 仅对限流和网关错误退避重试；4xx（鉴权/参数错误等）直接抛出走 fallback。
@@ -499,6 +529,13 @@ class PersonaTrainer:
             for attempt in range(max_retries + 1):
                 try:
                     response = await client.post(api_url, headers=headers, json=payload)
+                    # 端点不认识 thinking / max_tokens（400）：去参立即重试，并记住后续样本不再带
+                    while response.status_code == 400:
+                        dropped = self._drop_lora_helper_unsupported(payload)
+                        if not dropped:
+                            break
+                        logger.info(f"ai companion lora helper: endpoint rejected {dropped}, retrying without")
+                        response = await client.post(api_url, headers=headers, json=payload)
                     if response.status_code in retryable_status:
                         raise httpx.HTTPStatusError(
                             f"helper status {response.status_code}",

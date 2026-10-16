@@ -131,6 +131,15 @@ def card_output_dir(data_dir: str | Path) -> Path:
     return Path(data_dir) / "ping_cards"
 
 
+def local_file_uri(path: str | Path) -> str:
+    """本地图片发送用的绝对 file:// URI。
+
+    data_dir 是相对路径（data/qwen_persona），直接拼 `file://{path}` 时 NapCat
+    会按自己的 CWD 解析相对路径、报 ENOENT——必须先 resolve 成绝对路径再发送。
+    """
+    return Path(path).resolve().as_uri()
+
+
 def attachment_dir(data_dir: str | Path) -> Path:
     return Path(data_dir) / "ping_attachments"
 
@@ -221,6 +230,7 @@ __all__ = [
     "card_output_dir",
     "delete_attachments",
     "image_bytes_from_part",
+    "local_file_uri",
     "render_digest_png",
     "save_attachment",
     "save_card_png",

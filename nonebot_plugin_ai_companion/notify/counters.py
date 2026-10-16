@@ -30,6 +30,7 @@ class MilestoneBump:
     total: int
     claimed: int | None  # 本次跨过且尚未播报的阈值（取最大的一个）；无则 None
     announced: int  # 更新后的已播报阈值
+    previous: int  # 本次认领前的已播报阈值（发送失败回滚用）
 
 
 class MilestoneCounterRepo:
@@ -109,6 +110,7 @@ class MilestoneCounterRepo:
                 announced = milestone_baseline(max(0, total - 1), thresholds)
             else:
                 announced = int(announced_raw)
+            previous = announced
             claimed = crossed_milestone(total, announced, thresholds)
             if claimed is not None:
                 announced = claimed
@@ -122,7 +124,28 @@ class MilestoneCounterRepo:
             total=total,
             claimed=claimed,
             announced=announced,
+            previous=previous,
         )
+
+    async def rollback_claim(self, *, group_id: str, user_id: str, claimed: int, previous: int) -> bool:
+        """发送彻底失败时撤销本次认领，让该成员下条消息自然重试。
+
+        只在 announced 仍等于本次认领值时回滚（已被后续消息推进或回滚过则不动）。
+        """
+        return await asyncio.to_thread(
+            self._rollback_sync, str(group_id), str(user_id), int(claimed), max(0, int(previous))
+        )
+
+    def _rollback_sync(self, group_id: str, user_id: str, claimed: int, previous: int) -> bool:
+        self.db.ensure_schema()
+        with self.db.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                "UPDATE member_message_counts SET announced_threshold = ? "
+                "WHERE group_id = ? AND user_id = ? AND announced_threshold = ?",
+                (previous, group_id, user_id, claimed),
+            )
+            return bool(cursor.rowcount)
 
 
 __all__ = ["MilestoneBump", "MilestoneCounterRepo"]

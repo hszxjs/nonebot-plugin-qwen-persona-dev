@@ -36,6 +36,7 @@ from .inbox import PingInboxRepo
 from .render import (
     delete_attachments,
     image_bytes_from_part,
+    local_file_uri,
     render_digest_png,
     save_attachment,
     save_card_png,
@@ -76,6 +77,13 @@ class PingService:
         self.store = store
         self.message_logs = message_logs
         self.inbox = PingInboxRepo(store.db)
+
+    async def purge_expired(self, *, ttl_seconds: float) -> int:
+        """清理超时未投递的信箱条目与附件（后台循环滚动调用），返回清理条数。"""
+        expired = await self.inbox.purge_expired(ttl_seconds=ttl_seconds)
+        for entry in expired:
+            delete_attachments(entry.attachments)
+        return len(expired)
 
     # ---- 主入口 ----
     async def handle_message(self, bot: Bot, event: Event, matcher: Matcher) -> None:
@@ -282,7 +290,7 @@ class PingService:
                 message += MessageSegment.at(int(target_user_id))
             if png:
                 path = save_card_png(self.config.ai_companion_data_dir, png, target_user_id=target_user_id)
-                message += MessageSegment.image(f"file://{path}")
+                message += MessageSegment.image(local_file_uri(path))
             else:
                 finder_summary = "、".join(sorted(finder_names)[:5])
                 message += MessageSegment.text(f" {title}。{finder_summary} 找过你，详见上面的聊天记录。")

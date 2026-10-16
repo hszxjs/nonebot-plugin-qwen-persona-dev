@@ -327,3 +327,38 @@ def test_digest_html_embeds_attachments() -> None:
     )
     assert "data:image/jpeg;base64," in page
     Path(path).unlink(missing_ok=True)
+
+
+async def test_service_purge_expired_clears_inbox(persona_store) -> None:
+    """TTL 清理接线：超时未投递的信箱条目被清掉（后台循环滚动调用）。"""
+    import time as _time
+
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
+    from nonebot_plugin_ai_companion.notify.service import PingService
+
+    service = PingService(
+        config=AiCompanionConfig(),
+        env=object(),
+        store=persona_store,
+        message_logs=persona_store.message_logs,
+    )
+    await service.inbox.add(
+        session_key="group:100",
+        group_id="100",
+        target_user_id="42",
+        source_message_id="m1",
+        text="在吗",
+    )
+    await service.inbox.add(
+        session_key="group:100",
+        group_id="100",
+        target_user_id="42",
+        source_message_id="m2",
+        text="刚说的",
+    )
+    with persona_store.db.connection() as conn:
+        conn.execute("UPDATE ping_inbox SET created_at = ? WHERE source_message_id = 'm1'", (_time.time() - 25 * 3600,))
+
+    assert await service.purge_expired(ttl_seconds=24 * 3600) == 1
+    remaining = await service.inbox.list_for_target(session_key="group:100", target_user_id="42")
+    assert [entry.source_message_id for entry in remaining] == ["m2"]

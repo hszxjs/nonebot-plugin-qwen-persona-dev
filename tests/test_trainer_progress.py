@@ -181,3 +181,43 @@ def test_lora_helper_fallback_log_includes_http_error_body(tmp_path: Path) -> No
     )
 
     assert "model test is not available" in trainer.progress_snapshot()["log_tail"]
+
+
+def test_lora_helper_payload_disables_thinking_and_caps_tokens(tmp_path: Path) -> None:
+    """清洗请求默认禁 thinking + 按样本长度设输出上限；extra_body 可覆盖；400 去参后不再携带。"""
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
+    from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
+
+    class Store:
+        pass
+
+    record = {"messages": [{"role": "assistant", "content": "你好" * 200}]}
+    trainer = PersonaTrainer(
+        AiCompanionConfig(
+            ai_companion_data_dir=str(tmp_path),
+            ai_companion_lora_helper_system_prompt="sp",
+        ),
+        Store(),
+    )
+    payload = trainer._build_lora_helper_payload(record)
+    assert payload["thinking"] == {"type": "disabled"}
+    assert int(payload["max_tokens"]) >= 1024
+    assert payload["response_format"] == {"type": "json_object"}
+
+    # extra_body 是逃生门：可覆盖任意默认字段
+    override = PersonaTrainer(
+        AiCompanionConfig(
+            ai_companion_data_dir=str(tmp_path),
+            ai_companion_lora_helper_extra_body={"max_tokens": 77, "thinking": {"type": "enabled"}},
+        ),
+        Store(),
+    )
+    overridden = override._build_lora_helper_payload(record)
+    assert overridden["max_tokens"] == 77
+    assert overridden["thinking"] == {"type": "enabled"}
+
+    # 端点不认识参数（400）去参后：本次及后续样本都不再携带
+    assert trainer._drop_lora_helper_unsupported(payload) == ["thinking", "max_tokens"]
+    assert "thinking" not in payload and "max_tokens" not in payload
+    rebuilt = trainer._build_lora_helper_payload(record)
+    assert "thinking" not in rebuilt and "max_tokens" not in rebuilt

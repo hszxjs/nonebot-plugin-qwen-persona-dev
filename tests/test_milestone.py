@@ -142,6 +142,23 @@ async def test_counter_is_per_group_and_per_member(persona_store) -> None:
     ]
 
 
+async def test_counter_rollback_allows_reclaim(persona_store) -> None:
+    """发送彻底失败回滚后：同一条消息下回发言时重新认领同一个阈值。"""
+    repo = _counter(persona_store)
+    bump = None
+    for _ in range(3):
+        bump = await repo.bump(group_id="100", user_id="42", configured=[3])
+    assert bump is not None and bump.claimed == 3 and bump.previous == 0
+
+    assert await repo.rollback_claim(group_id="100", user_id="42", claimed=3, previous=bump.previous) is True
+    # 已回滚到 0：重复回滚（announced 不再等于 claimed）不再生效
+    assert await repo.rollback_claim(group_id="100", user_id="42", claimed=3, previous=bump.previous) is False
+
+    again = await repo.bump(group_id="100", user_id="42", configured=[3])
+    assert again.claimed == 3  # 下一条消息重新认领
+    assert again.previous == 0
+
+
 # ---- 统计查询（排名/表情包）----
 
 
@@ -197,19 +214,27 @@ class _FakeEnv:
 
 
 class _FakeMatcher:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_always: bool = False, fail_image: bool = False) -> None:
         self.sent: list[object] = []
+        self.fail_always = fail_always
+        self.fail_image = fail_image
 
     async def send(self, message):
+        rendered = str(message)
+        if self.fail_always or (self.fail_image and "[CQ:image" in rendered):
+            raise RuntimeError("send boom")
         self.sent.append(message)
 
 
-def _service(store, *, env, thresholds):
+def _service(store, *, env, thresholds, data_dir: str | None = None):
     from nonebot_plugin_ai_companion.config import AiCompanionConfig
     from nonebot_plugin_ai_companion.notify.milestone_service import MilestoneService
 
+    values: dict[str, object] = {"ai_companion_milestone_list": list(thresholds)}
+    if data_dir is not None:
+        values["ai_companion_data_dir"] = data_dir
     return MilestoneService(
-        config=AiCompanionConfig(ai_companion_milestone_list=list(thresholds)),
+        config=AiCompanionConfig(**values),
         env=env,
         store=store,
         message_logs=store.message_logs,
@@ -256,6 +281,76 @@ async def test_crossing_sends_once_and_falls_back_to_text(persona_store, monkeyp
     assert len(matcher.sent) == 1
     text = str(matcher.sent[0])
     assert "42" in text and "总发言突破 3" in text
+
+
+def _stub_render(monkeypatch, module, png: bytes) -> None:
+    async def _no_avatar(qq: str):
+        return None
+
+    async def _fake_render(**kwargs):
+        return png
+
+    monkeypatch.setattr(module, "fetch_avatar", _no_avatar)
+    monkeypatch.setattr(module, "render_milestone_png", _fake_render)
+
+
+async def test_image_card_uses_absolute_file_uri(persona_store, tmp_path, monkeypatch) -> None:
+    """回归：图片段必须是绝对 file:/// URI——相对路径会被 NapCat 按自己的 CWD 解析报 ENOENT。"""
+    from nonebot_plugin_ai_companion.notify import milestone_service as module
+
+    _stub_render(monkeypatch, module, b"\x89PNG fake")
+    service = _service(persona_store, env=_FakeEnv(), thresholds=[3], data_dir=str(tmp_path))
+    matcher = _FakeMatcher()
+    for index in range(3):
+        await service.handle_message(object(), _event("42", index), matcher)
+
+    assert len(matcher.sent) == 1
+    assert "[CQ:image,file=file:///" in str(matcher.sent[0])
+
+
+async def test_image_send_failure_downgrades_to_text(persona_store, tmp_path, monkeypatch) -> None:
+    """图片发不出去（如 NapCat 读不到文件）→ 降级纯文本 @，仍算成功送达。"""
+    from nonebot_plugin_ai_companion.notify import milestone_service as module
+
+    _stub_render(monkeypatch, module, b"\x89PNG fake")
+    service = _service(persona_store, env=_FakeEnv(), thresholds=[3], data_dir=str(tmp_path))
+    matcher = _FakeMatcher(fail_image=True)
+    for index in range(3):
+        await service.handle_message(object(), _event("42", index), matcher)
+
+    assert len(matcher.sent) == 1
+    assert "[CQ:at,qq=42]" in str(matcher.sent[0])
+    with persona_store.db.connection() as conn:
+        rows = conn.execute("SELECT status, decision_detail FROM message_logs WHERE reply_kind='milestone'").fetchall()
+    assert [str(row["status"]) for row in rows] == ["success"]
+    assert "send boom" in str(rows[0]["decision_detail"])  # downgraded 里留了降级原因
+
+
+async def test_total_send_failure_rolls_back_claim_and_retries(persona_store, monkeypatch) -> None:
+    """图片和文本都发不出去 → 回滚认领；该成员下条消息自动重新认领同一阈值。"""
+    from nonebot_plugin_ai_companion.notify import milestone_service as module
+
+    _stub_render(monkeypatch, module, b"")  # 直接走文本路径
+    service = _service(persona_store, env=_FakeEnv(), thresholds=[3])
+    failing = _FakeMatcher(fail_always=True)
+    for index in range(3):
+        await service.handle_message(object(), _event("42", index), failing)
+    assert failing.sent == []
+
+    with persona_store.db.connection() as conn:
+        row = conn.execute(
+            "SELECT message_count, announced_threshold FROM member_message_counts WHERE user_id = '42'"
+        ).fetchone()
+        logs = conn.execute("SELECT status, decision_detail FROM message_logs WHERE reply_kind='milestone'").fetchall()
+    assert int(row["message_count"]) == 3
+    assert int(row["announced_threshold"]) == 0  # 已回滚，等重新认领
+    assert [str(item["status"]) for item in logs] == ["send_error"]
+    assert '"rolled_back": true' in str(logs[0]["decision_detail"])
+
+    # 下一条消息：重新认领 3 并成功发出
+    good = _FakeMatcher()
+    await service.handle_message(object(), _event("42", 99), good)
+    assert len(good.sent) == 1 and "总发言突破 3" in str(good.sent[0])
 
 
 # ---- 卡片 HTML ----
