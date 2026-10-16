@@ -58,6 +58,16 @@ class MilestoneService:
         if not user_id:
             return
 
+        # 会抛的准备工作（适配器可用性、QQ 号转换）必须在认领之前做完：
+        # 认领一旦提交，之后任何异常都必须走回滚，否则该阈值永久丢失。
+        try:
+            import nonebot.adapters.onebot.v11  # noqa: F401 — 可用性探测：不可用就不认领
+
+            user_id_int = int(user_id)
+        except Exception as exc:  # noqa: BLE001 — 非 OneBot 适配器或非法 QQ 号：本服务不适用
+            logger.debug(f"milestone service skipped for user {user_id!r}: {exc!r}")
+            return
+
         configured = [int(item) for item in getattr(self.config, "ai_companion_milestone_list", [])]
         bump = await self.counters.bump(
             group_id=group_id,
@@ -68,6 +78,50 @@ class MilestoneService:
         if bump.claimed is None:
             return
         milestone = int(bump.claimed)
+
+        try:
+            await self._announce(
+                bot,
+                matcher,
+                ids,
+                group_id=group_id,
+                user_id=user_id,
+                user_id_int=user_id_int,
+                milestone=milestone,
+                previous=bump.previous,
+                fallback_total=bump.total,
+            )
+        except Exception as exc:  # noqa: BLE001 — 认领已提交：兜底回滚，该成员下条消息重试
+            logger.warning(f"milestone announce failed: {exc!r}")
+            rolled_back = await self.counters.rollback_claim(
+                group_id=group_id,
+                user_id=user_id,
+                claimed=milestone,
+                previous=bump.previous,
+            )
+            await self._record(
+                group_id,
+                ids,
+                user_id,
+                milestone,
+                status="send_error",
+                detail={"error": f"{type(exc).__name__}: {exc}", "rolled_back": rolled_back},
+            )
+
+    async def _announce(
+        self,
+        bot: Bot,
+        matcher: Matcher,
+        ids: dict[str, str | None],
+        *,
+        group_id: str,
+        user_id: str,
+        user_id_int: int,
+        milestone: int,
+        previous: int,
+        fallback_total: int,
+    ) -> None:
+        """认领成功后的播报流程；彻底发不出去时自行回滚并留痕。"""
         if self.env.is_blacklisted(user_id, None, ""):
             # 被屏蔽的成员照常计数，但不在群里给他庆祝
             await self._record(group_id, ids, user_id, milestone, status="skipped_blocked")
@@ -75,7 +129,7 @@ class MilestoneService:
 
         stats = await fetch_member_stats(self.store, group_id=group_id, user_id=user_id)
         if stats is None:
-            stats = {"total": bump.total, "rank": 1, "total_members": 1, "sticker_count": 0}
+            stats = {"total": fallback_total, "rank": 1, "total_members": 1, "sticker_count": 0}
 
         # 显示名：昵称表 → 兜底「群友xxxx」；QQ 号绝不进卡片
         names = await self.store.member_names.get_names(group_id=group_id, user_ids=[user_id])
@@ -104,7 +158,7 @@ class MilestoneService:
         from nonebot.adapters.onebot.v11 import Message, MessageSegment
 
         text_message = Message(
-            MessageSegment.at(int(user_id))
+            MessageSegment.at(user_id_int)
             + MessageSegment.text(
                 f" 🏆 群聊成就：{name} 总发言突破 {milestone}！"
                 f"群内排名 #{stats['rank']}，超过 "
@@ -132,7 +186,7 @@ class MilestoneService:
                     group_id=group_id,
                     user_id=user_id,
                     claimed=milestone,
-                    previous=bump.previous,
+                    previous=previous,
                 )
                 await self._record(
                     group_id,

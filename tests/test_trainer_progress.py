@@ -216,8 +216,90 @@ def test_lora_helper_payload_disables_thinking_and_caps_tokens(tmp_path: Path) -
     assert overridden["max_tokens"] == 77
     assert overridden["thinking"] == {"type": "enabled"}
 
-    # 端点不认识参数（400）去参后：本次及后续样本都不再携带
-    assert trainer._drop_lora_helper_unsupported(payload) == ["thinking", "max_tokens"]
-    assert "thinking" not in payload and "max_tokens" not in payload
+    # 与参数无关的 400 不去参（绝不能把禁思考悄悄删掉，否则后续样本退回烧钱模式）
+    assert trainer._drop_lora_helper_unsupported(payload, body_text="context length exceeded") == []
+    assert "thinking" in payload and "max_tokens" in payload
+
+    # 端点点名某参数才去参，并记住（后续样本不再携带；没被点名的保留）
+    named = '{"error":{"message":"Unrecognized request argument supplied: thinking"}}'
+    assert trainer._drop_lora_helper_unsupported(payload, body_text=named) == ["thinking"]
+    assert "thinking" not in payload and "max_tokens" in payload
     rebuilt = trainer._build_lora_helper_payload(record)
-    assert "thinking" not in rebuilt and "max_tokens" not in rebuilt
+    assert "thinking" not in rebuilt and "max_tokens" in rebuilt
+
+    # 去参记忆覆盖 extra_body 提供的同名字段（否则端点拒绝时每条样本都要 400 白试一次）
+    override._lora_helper_dropped_params.add("thinking")
+    filtered = override._build_lora_helper_payload(record)
+    assert "thinking" not in filtered and filtered["max_tokens"] == 77
+
+
+async def test_assist_lora_record_drops_named_param_only(tmp_path: Path, monkeypatch) -> None:
+    """假 transport：400 点名 thinking → 去参重试成功；后续样本不再带 thinking、max_tokens 保留。"""
+    import httpx
+
+    from nonebot_plugin_ai_companion.config import AiCompanionConfig
+    from nonebot_plugin_ai_companion.finetune import trainer as trainer_module
+    from nonebot_plugin_ai_companion.finetune.trainer import PersonaTrainer
+
+    class Store:
+        pass
+
+    calls: list[dict] = []
+    scripted: list[tuple[str, str]] = [
+        ("400", '{"error":{"message":"Unrecognized request argument supplied: thinking"}}'),
+        ("200", ""),
+    ]
+
+    class FakeResponse:
+        def __init__(self, status_code: int, text: str = "", payload: dict | None = None) -> None:
+            self.status_code = status_code
+            self.text = text
+            self._payload = payload or {}
+
+        def json(self) -> dict:
+            return self._payload
+
+        def raise_for_status(self) -> None:
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    "boom",
+                    request=httpx.Request("POST", "http://x"),
+                    response=httpx.Response(self.status_code),
+                )
+
+    class FakeClient:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args) -> bool:
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            calls.append(dict(json or {}))
+            kind, text = scripted.pop(0)
+            if kind == "400":
+                return FakeResponse(400, text=text)
+            return FakeResponse(
+                200,
+                payload={"choices": [{"message": {"content": '{"messages":[{"role":"assistant","content":"ok"}]}'}}]},
+            )
+
+    monkeypatch.setattr(trainer_module.httpx, "AsyncClient", FakeClient)
+    trainer = PersonaTrainer(AiCompanionConfig(ai_companion_data_dir=str(tmp_path)), Store())
+    record = {"messages": [{"role": "user", "content": "hi"}]}
+
+    out = await trainer._assist_lora_record(api_url="http://x/v1/chat/completions", record=record)
+    assert out["messages"][0]["content"] == "ok"
+    assert len(calls) == 2  # 400 → 去参 → 重发
+    assert calls[0]["thinking"] == {"type": "disabled"} and "thinking" not in calls[1]
+    assert trainer._lora_helper_dropped_params == {"thinking"}
+
+    # 下一个样本：不再携带 thinking（只发 1 次），max_tokens 仍在
+    calls.clear()
+    scripted.append(("200", ""))
+    await trainer._assist_lora_record(api_url="http://x/v1/chat/completions", record=record)
+    assert len(calls) == 1
+    assert "thinking" not in calls[0] and "max_tokens" in calls[0]

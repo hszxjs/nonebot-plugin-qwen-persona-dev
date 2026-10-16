@@ -345,6 +345,8 @@ class PersonaTrainer:
         if not api_url:
             return raw_dataset_path, ""
 
+        # 每轮重新探测端点能力：配置可能已换模型/网关，旧的"去参"结论不再适用
+        self._lora_helper_dropped_params.clear()
         assisted_path = raw_dataset_path.with_name(f"ai_companion_{run_id}.assisted.jsonl")
         limit = self.config.ai_companion_lora_helper_sample_limit
         attempted = 0
@@ -500,13 +502,22 @@ class PersonaTrainer:
             payload["response_format"] = {"type": "json_object"}
         # 用户自定义字段最后合并，可覆盖任何上述默认值。
         payload.update(extra_body)
+        # 去参记忆对 extra_body 提供的同名字段同样生效：否则端点拒绝该字段时，
+        # 每条样本都要「400 → 去参 → 重发」白试一次。
+        for name in self._lora_helper_dropped_params:
+            payload.pop(name, None)
         return payload
 
-    def _drop_lora_helper_unsupported(self, payload: dict[str, Any]) -> list[str]:
-        """端点 400 时逐个去掉我们新增的可选参数（thinking / max_tokens）。"""
+    def _drop_lora_helper_unsupported(self, payload: dict[str, Any], *, body_text: str = "") -> list[str]:
+        """端点 400 且响应体点名了某个可选参数时，去掉它并记住（后续样本不再携带）。
+
+        只认点名的 400：与参数无关的 400（上下文超长、网关抖动）绝不能把禁思考
+        删掉，否则后续样本会悄悄退回「思考链烧钱」模式。
+        """
+        lowered = (body_text or "").lower()
         dropped: list[str] = []
         for name in ("thinking", "max_tokens"):
-            if name in payload:
+            if name in payload and name in lowered:
                 payload.pop(name)
                 self._lora_helper_dropped_params.add(name)
                 dropped.append(name)
@@ -529,9 +540,15 @@ class PersonaTrainer:
             for attempt in range(max_retries + 1):
                 try:
                     response = await client.post(api_url, headers=headers, json=payload)
-                    # 端点不认识 thinking / max_tokens（400）：去参立即重试，并记住后续样本不再带
+                    # 端点不认识 thinking / max_tokens（400 且响应体点名）才去参重试；
+                    # 其余 400 原样上抛走 fallback，不留下"永久去参"的副作用
                     while response.status_code == 400:
-                        dropped = self._drop_lora_helper_unsupported(payload)
+                        body_text = ""
+                        try:
+                            body_text = str(response.text or "")
+                        except Exception:  # noqa: BLE001 — 读不到 body 就按"未点名"处理
+                            body_text = ""
+                        dropped = self._drop_lora_helper_unsupported(payload, body_text=body_text)
                         if not dropped:
                             break
                         logger.info(f"ai companion lora helper: endpoint rejected {dropped}, retrying without")

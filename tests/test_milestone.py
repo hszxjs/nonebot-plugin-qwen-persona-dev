@@ -295,17 +295,33 @@ def _stub_render(monkeypatch, module, png: bytes) -> None:
 
 
 async def test_image_card_uses_absolute_file_uri(persona_store, tmp_path, monkeypatch) -> None:
-    """回归：图片段必须是绝对 file:/// URI——相对路径会被 NapCat 按自己的 CWD 解析报 ENOENT。"""
+    """回归：图片段必须是绝对 file:/// URI。
+
+    故意用相对 data_dir（data_dir 配置默认就是相对路径）——修复前这里会产出
+    `file://data/...`，NapCat 按自己的 CWD 解析报 ENOENT；修复后是 resolve 过的绝对路径。
+    """
+    import re
+    from pathlib import Path
+    from urllib.parse import unquote, urlparse
+
     from nonebot_plugin_ai_companion.notify import milestone_service as module
 
     _stub_render(monkeypatch, module, b"\x89PNG fake")
-    service = _service(persona_store, env=_FakeEnv(), thresholds=[3], data_dir=str(tmp_path))
+    monkeypatch.chdir(tmp_path)  # 相对路径按进程 CWD 解析，模拟 bot 的运行目录
+    service = _service(persona_store, env=_FakeEnv(), thresholds=[3], data_dir="data/qwen_persona")
     matcher = _FakeMatcher()
     for index in range(3):
         await service.handle_message(object(), _event("42", index), matcher)
 
     assert len(matcher.sent) == 1
-    assert "[CQ:image,file=file:///" in str(matcher.sent[0])
+    rendered = str(matcher.sent[0])
+    assert "file://data/" not in rendered  # 旧的相对写法必须不再出现
+    # CQ 渲染形如 [CQ:image,file=file:///abs/x.png,cache=true,proxy=true]：
+    # file 与 cache/proxy 以逗号分隔，file 值本身不含逗号。
+    match = re.search(r"file=(file:///[^,\]]+)", rendered)
+    assert match, f"应为绝对 file:/// URI: {rendered}"
+    referenced = Path(unquote(urlparse(match.group(1)).path))
+    assert referenced.is_absolute() and referenced.exists()  # NapCat 侧能真正打开的文件
 
 
 async def test_image_send_failure_downgrades_to_text(persona_store, tmp_path, monkeypatch) -> None:
@@ -351,6 +367,78 @@ async def test_total_send_failure_rolls_back_claim_and_retries(persona_store, mo
     good = _FakeMatcher()
     await service.handle_message(object(), _event("42", 99), good)
     assert len(good.sent) == 1 and "总发言突破 3" in str(good.sent[0])
+
+
+async def test_post_claim_failure_rolls_back(persona_store, monkeypatch) -> None:
+    """认领后（统计/渲染准备阶段）的意外异常也必须回滚，不能把阈值静默吞掉。"""
+    from nonebot_plugin_ai_companion.notify import milestone_service as module
+
+    _stub_render(monkeypatch, module, b"")
+    original_stats = module.fetch_member_stats
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("stats boom")
+
+    monkeypatch.setattr(module, "fetch_member_stats", _boom)
+    service = _service(persona_store, env=_FakeEnv(), thresholds=[3])
+    matcher = _FakeMatcher()
+    for index in range(3):
+        await service.handle_message(object(), _event("42", index), matcher)
+    assert matcher.sent == []
+
+    with persona_store.db.connection() as conn:
+        row = conn.execute(
+            "SELECT message_count, announced_threshold FROM member_message_counts WHERE user_id = '42'"
+        ).fetchone()
+        logs = conn.execute("SELECT status, decision_detail FROM message_logs WHERE reply_kind='milestone'").fetchall()
+    assert int(row["message_count"]) == 3
+    assert int(row["announced_threshold"]) == 0  # 已回滚
+    assert [str(item["status"]) for item in logs] == ["send_error"]
+    assert '"rolled_back": true' in str(logs[0]["decision_detail"])
+
+    # 异常排除后：下一条消息重新认领并成功
+    monkeypatch.setattr(module, "fetch_member_stats", original_stats)
+    good = _FakeMatcher()
+    await service.handle_message(object(), _event("42", 99), good)
+    assert len(good.sent) == 1 and "总发言突破 3" in str(good.sent[0])
+
+
+async def test_non_numeric_user_id_skipped_before_claim(persona_store) -> None:
+    """非数字 user_id（异常数据/非 OneBot 适配器）：认领之前就退出，不留半截状态。"""
+    service = _service(persona_store, env=_FakeEnv(), thresholds=[1])
+    matcher = _FakeMatcher()
+    await service.handle_message(
+        object(),
+        {"group_id": "100", "user_id": "user_abc", "message_id": "m1", "platform": "qq"},
+        matcher,
+    )
+    assert matcher.sent == []
+    with persona_store.db.connection() as conn:
+        count = conn.execute("SELECT COUNT(*) AS c FROM member_message_counts").fetchone()
+        logs = conn.execute("SELECT COUNT(*) AS c FROM message_logs WHERE reply_kind='milestone'").fetchone()
+    assert int(count["c"]) == 0  # 计数也没发生：失败发生在 bump 之前
+    assert int(logs["c"]) == 0
+
+
+async def test_seed_exclusion_scoped_to_current_user(persona_store) -> None:
+    """同一 message id 出现在两个用户的历史行（异常数据）：只排当前用户那一行。"""
+    await _record_turn(persona_store, user_id="42", message_id="dup")
+    await _record_turn(persona_store, user_id="77", message_id="dup")
+    repo = _counter(persona_store)
+    bump = await repo.bump(group_id="100", user_id="42", configured=[50], source_message_id="dup")
+    assert bump.total == 1  # 42：自己的那行被排除 + 本次 +1
+    with persona_store.db.connection() as conn:
+        other = conn.execute("SELECT message_count FROM member_message_counts WHERE user_id = '77'").fetchone()
+    assert int(other["message_count"]) == 1  # 77 的历史行不受影响
+
+
+def test_local_file_uri_resolves_relative_paths(tmp_path, monkeypatch) -> None:
+    from nonebot_plugin_ai_companion.notify.render import local_file_uri
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "sub").mkdir()
+    uri = local_file_uri("sub/x.png")
+    assert uri.startswith("file:///") and uri.endswith("/sub/x.png")
 
 
 # ---- 卡片 HTML ----

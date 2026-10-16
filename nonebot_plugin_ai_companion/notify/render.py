@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..conversation.window import render_turn_line
+from ..conversation.window import render_turn_line, safe_speaker_name
 from .digest import DigestBlock
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,14 @@ def _files_to_data_urls(paths: list[str]) -> list[str]:
     return urls
 
 
+def _empty_turn_speaker(turn: Any, name_map: dict[str, str]) -> str:
+    """空文本行（纯图片/表情消息）的说话人：拿不到行文本时的兜底渲染。"""
+    if getattr(turn, "is_bot", False):
+        return "你"
+    name = getattr(turn, "speaker_name", "") or name_map.get(str(getattr(turn, "user_id", "") or ""), "")
+    return safe_speaker_name(name, user_id=getattr(turn, "user_id", None))
+
+
 def build_digest_html(
     *,
     title: str,
@@ -96,13 +104,17 @@ def build_digest_html(
             if turn_obj is None:
                 continue
             line = render_turn_line(turn_obj, names=name_map)
-            if not line:
-                continue
             is_trigger = message_id in block.trigger_message_ids
-            speaker, _, body = line.partition("：")
             images = "".join(
                 f'<img src="{url}" alt="图片" />' for url in _files_to_data_urls(attachment_map.get(message_id, []))
             )
+            # 纯图片消息在时间线里是空文本行：触发行与带附件的行必须照常渲染，
+            # 否则丢的恰好是被 @ 时发的那张图与「找你」标记本身。
+            if not line and not images and not is_trigger:
+                continue
+            speaker, _, body = line.partition("：")
+            if not line:
+                speaker = _empty_turn_speaker(turn_obj, name_map)
             badge = '<span class="badge">找你</span>' if is_trigger else ""
             body_html = html.escape(body).replace("\n", "<br />") or "（图片消息）"
             lines.append(

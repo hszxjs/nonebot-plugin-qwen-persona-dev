@@ -65,6 +65,8 @@ class MilestoneCounterRepo:
         now = time.time()
         # 当前消息可能已经被学习管线写进时间线（学习 matcher 优先级在前）：
         # 回填时排除它，否则「回填 + 本次 +1」会把这条消息算两遍。
+        # 排除范围限定为「本用户 + 本条 id」：同一 id 的其它用户历史行（id 重复的
+        # 异常数据）不受影响；id 缺失时哨兵不匹配任何行（这种情况回填可能 ±1）。
         exclude_message_id = source_message_id or "\x00"
         with self.db.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -81,11 +83,11 @@ class MilestoneCounterRepo:
                     FROM conversation_turns
                     WHERE group_id = ? AND speaker_kind = 'member'
                       AND user_id IS NOT NULL AND user_id != ''
-                      AND source_message_id != ?
+                      AND NOT (user_id = ? AND source_message_id = ?)
                     GROUP BY user_id
                     ON CONFLICT(group_id, user_id) DO NOTHING
                     """,
-                    (group_id, exclude_message_id),
+                    (group_id, user_id, exclude_message_id),
                 )
             conn.execute(
                 """

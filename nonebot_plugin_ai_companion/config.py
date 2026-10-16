@@ -7,6 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 MLX_LORA_MODULES: tuple[str, ...] = ("language", "projection", "vision_tower")
 
 
+def _milestone_defaults() -> list[int]:
+    """默认成就阈值：单一来源在 notify.milestone.MILESTONE_DEFAULTS（懒导入避免导入环）。"""
+    from .notify.milestone import MILESTONE_DEFAULTS
+
+    return list(MILESTONE_DEFAULTS)
+
+
 class AiCompanionConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
@@ -100,29 +107,7 @@ class AiCompanionConfig(BaseModel):
     ai_companion_ping_at_target: bool = True
     # ---- 群聊成就（里程碑卡）：总发言跨过阈值时发成就卡 ----
     ai_companion_milestone_enabled: bool = True
-    ai_companion_milestone_list: list[int] = Field(
-        default_factory=lambda: [
-            50,
-            100,
-            250,
-            325,
-            500,
-            666,
-            888,
-            1000,
-            1145,
-            1314,
-            1500,
-            2000,
-            3000,
-            4000,
-            5000,
-            6666,
-            7777,
-            8888,
-            9999,
-        ]
-    )
+    ai_companion_milestone_list: list[int] = Field(default_factory=_milestone_defaults)
     ai_companion_min_meme_recent_count: int = 2
 
     ai_companion_min_sample_chars: int = 2

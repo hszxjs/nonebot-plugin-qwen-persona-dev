@@ -329,8 +329,8 @@ def test_digest_html_embeds_attachments() -> None:
     Path(path).unlink(missing_ok=True)
 
 
-async def test_service_purge_expired_clears_inbox(persona_store) -> None:
-    """TTL 清理接线：超时未投递的信箱条目被清掉（后台循环滚动调用）。"""
+async def test_service_purge_expired_clears_inbox(persona_store, tmp_path) -> None:
+    """TTL 清理接线：超时未投递的信箱条目与附件文件一起被清掉（后台循环滚动调用）。"""
     import time as _time
 
     from nonebot_plugin_ai_companion.config import AiCompanionConfig
@@ -342,12 +342,15 @@ async def test_service_purge_expired_clears_inbox(persona_store) -> None:
         store=persona_store,
         message_logs=persona_store.message_logs,
     )
+    attachment = tmp_path / "att.jpg"
+    attachment.write_bytes(b"fake-image")
     await service.inbox.add(
         session_key="group:100",
         group_id="100",
         target_user_id="42",
         source_message_id="m1",
         text="在吗",
+        attachments=[str(attachment)],
     )
     await service.inbox.add(
         session_key="group:100",
@@ -360,5 +363,52 @@ async def test_service_purge_expired_clears_inbox(persona_store) -> None:
         conn.execute("UPDATE ping_inbox SET created_at = ? WHERE source_message_id = 'm1'", (_time.time() - 25 * 3600,))
 
     assert await service.purge_expired(ttl_seconds=24 * 3600) == 1
+    assert not attachment.exists()  # 附件文件不残留
     remaining = await service.inbox.list_for_target(session_key="group:100", target_user_id="42")
     assert [entry.source_message_id for entry in remaining] == ["m2"]
+
+
+def test_digest_html_keeps_pure_image_trigger_attachment_and_badge() -> None:
+    """纯图片触发（时间线里是空文本行）：附件图与「找你」徽标必须照常出现。"""
+    import io
+    import tempfile
+
+    from PIL import Image
+
+    from nonebot_plugin_ai_companion.notify.digest import DigestBlock
+    from nonebot_plugin_ai_companion.notify.render import build_digest_html
+
+    block = DigestBlock(trigger_message_ids={"m9"})
+    block.turns = [
+        {
+            "turn": SimpleNamespace(  # 纯图片消息：text 为空
+                is_bot=False,
+                user_id="42",
+                speaker_name="阿强",
+                text="",
+                sticker_keys=[],
+                source_message_id="m9",
+                reply_to_turn_id=0,
+            ),
+            "source_message_id": "m9",
+            "created_at": 1000.0,
+            "thread_id": 0,
+        }
+    ]
+    buffer = io.BytesIO()
+    Image.new("RGB", (400, 300), (10, 200, 90)).save(buffer, format="JPEG")
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+        handle.write(buffer.getvalue())
+        path = handle.name
+    try:
+        page = build_digest_html(
+            title="t",
+            subtitle="s",
+            blocks=[block],
+            attachments_by_message_id={"m9": [path]},
+        )
+    finally:
+        Path(path).unlink(missing_ok=True)
+    assert "data:image/jpeg;base64," in page  # 附件图不丢
+    assert "找你" in page and 'class="content trigger"' in page  # 徽标不丢
+    assert "（图片消息）" in page and "阿强" in page  # 空文本行用占位渲染
